@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+.venv/
+*.egg-info/
+dist/
+build/
+reports/*.html
+node_modules/
+.promptfoo/
+.bi-evals/
+.ruff_cache/
+tmp/

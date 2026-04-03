@@ -1,0 +1,36 @@
+[project]
+name = "bi-evals"
+version = "0.1.0"
+description = "Evaluation framework for SQL-generating BI agents"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "anthropic>=0.40",
+    "jinja2>=3.1",
+    "snowflake-connector-python>=3.0",
+    "sqlglot>=20.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+bi-evals = "bi_evals.cli:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bi_evals"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: requires external services (Snowflake, Anthropic API)",
+]
