@@ -26,12 +26,25 @@ class ToolConfig(BaseModel):
     config: dict[str, Any] = {}
 
 
+class ApiEndpointConfig(BaseModel):
+    url: str = ""
+    method: str = "POST"
+    headers: dict[str, str] = {}
+    # JSONPath-like keys to extract fields from the response JSON
+    response_sql_key: str = "sql"  # where to find the SQL in the response
+    response_text_key: str = "text"  # where to find the text answer
+    timeout: int = 60
+
+
 class AgentConfig(BaseModel):
-    model: str
-    system_prompt: str  # relative path to system prompt file
+    type: str = "anthropic_tool_loop"  # "anthropic_tool_loop" or "api_endpoint"
+    model: str = ""
+    system_prompt: str = ""  # relative path to system prompt file
     tools: list[ToolConfig] = []
     max_rounds: int = 10
     api_key_env: str = "ANTHROPIC_API_KEY"
+    # For api_endpoint type
+    endpoint: ApiEndpointConfig = ApiEndpointConfig()
 
 
 class DatabaseConnection(BaseModel):
