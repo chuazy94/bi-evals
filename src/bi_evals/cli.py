@@ -117,15 +117,29 @@ project:
   name: "My BI Agent Evals"
 
 agent:
+  # Option 1: "anthropic_tool_loop" — eval runs Claude with your skill files
+  # Option 2: "api_endpoint" — eval calls your existing agent API
+  type: "anthropic_tool_loop"
+
+  # --- Settings for anthropic_tool_loop ---
   model: "claude-sonnet-4-5-20250929"
-  # Path to your system prompt file
-  system_prompt: "path/to/your/system-prompt.md"
+  system_prompt: "path/to/your/system-prompt.md"     # Path to your system prompt
   tools:
-    - name: read_skill_file          # Tool name the agent uses
+    - name: read_skill_file                           # Tool name the agent uses
       type: file_reader
       config:
-        base_dir: "path/to/your/skill/"  # Path to your existing skill/knowledge files
+        base_dir: "path/to/your/skill/"               # Path to your existing skill/knowledge files
   max_rounds: 10
+
+  # --- Settings for api_endpoint ---
+  # endpoint:
+  #   url: "https://your-agent-api.com/ask"
+  #   method: POST
+  #   headers:
+  #     Authorization: "Bearer ${API_TOKEN}"
+  #   response_sql_key: "sql"           # JSONPath to SQL in the response
+  #   response_text_key: "text"         # JSONPath to text answer in the response
+  #   timeout: 60
 
 database:
   type: snowflake
