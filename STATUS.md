@@ -1,9 +1,21 @@
 # bi-evals — Implementation Status
 
-## Overview
+## Summary
 
-Configurable Python framework for evaluating SQL-generating BI agents.
-Promptfoo as test runner, 9-dimension binary accuracy scoring.
+bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is used as the test runner engine; all custom logic (provider, tools, scoring) is Python. Phases 1–3 are complete — the config system, CLI scaffolding, tool abstraction, both provider types, database client, golden test model, and 9-dimension scorer are built and tested.
+
+What works today:
+- `bi-evals init` scaffolds a new eval project (config, directories, golden test stub)
+- Config system loads `bi-evals.yaml` with env var substitution and path resolution
+- `anthropic_tool_loop` provider runs the full multi-turn Claude tool-calling loop with trace capture, SQL extraction, and cost tracking
+- `api_endpoint` provider calls external agent APIs with configurable response parsing
+- `FileReaderTool` serves skill/knowledge files to Claude with path traversal protection
+- Provider entry point dispatches based on `agent.type` and writes trace JSON for the scorer
+- `SnowflakeClient` executes SQL and returns structured results with error handling
+- `GoldenTest` model loads expected results from YAML (reference SQL, required columns, skill path, row comparison config)
+- 9-dimension binary scorer evaluates: execution, table alignment, column alignment, filter correctness, row completeness, row precision, value accuracy, no hallucinated columns, skill path correctness
+- Scorer entry point `get_assert()` integrates with Promptfoo's assertion interface
+- 101 unit tests, all passing (+ demo/integration tests)
 
 ---
 
@@ -39,28 +51,35 @@ Promptfoo as test runner, 9-dimension binary accuracy scoring.
   - Both write trace JSON to `results/traces/` for the scorer
 - **`tests/test_agent_loop.py`** — 24 tests (SQL extraction, cost, trace, mocked agent loop, file reader)
 - **`tests/test_api_endpoint.py`** — 11 tests (response parsing, nested keys, trace capture, error handling, real HTTP mock server)
-- **`test_live.py`** — manual test script for running the Anthropic loop against real Claude API
+- **`tests/test_demo_routing.py`** — demo test (requires live API)
 
-**Total tests: 46, all passing.**
+### Phase 3: Database + Golden Tests + 9-Dimension Scorer
 
-----------
+- **`src/bi_evals/db/client.py`** — `DatabaseClient` protocol + `QueryResult` dataclass
+- **`src/bi_evals/db/snowflake.py`** — `SnowflakeClient` (executes SQL, catches errors, uppercases column names)
+- **`src/bi_evals/db/factory.py`** — `create_db_client()` factory
+- **`src/bi_evals/golden/model.py`** — `GoldenTest` Pydantic model + nested types (`ExpectedSkillPath`, `SkillStep`, `ValueCheck`, `RowComparison`, `ExpectedResults`)
+- **`src/bi_evals/golden/loader.py`** — `load_golden_test()` and `load_golden_tests()` YAML loaders
+- **`src/bi_evals/scorer/sql_utils.py`** — sqlglot helpers (`extract_tables`, `extract_filter_columns`)
+- **`src/bi_evals/scorer/dimensions.py`** — 9 dimension evaluator functions + `DimensionResult` dataclass
+- **`src/bi_evals/scorer/entry.py`** — `get_assert()` Promptfoo scorer entry point (loads trace, golden test, executes SQL, runs dimensions, returns results)
+- **`tests/test_db.py`** — 9 tests
+- **`tests/test_golden.py`** — 7 tests
+- **`tests/test_scorer.py`** — 39 tests
+- **`tests/test_demo_scorer_phase_3.py`** — end-to-end demo (real API call + mock DB + all 9 dimensions)
+
+**Total: 101 unit tests, all passing. 2 demo/integration tests.**
+
+---
 
 ## Remaining
-
-### Phase 3: Database + Scorer — 9 Dimensions
-- `DatabaseClient` protocol + `SnowflakeClient`
-- `GoldenTest` Pydantic model + YAML loader
-- SQL parser (sqlglot) for table/column extraction
-- Row-level result comparator with tolerance
-- 9 dimension evaluators (execution, table alignment, column alignment, filter correctness, row completeness, row precision, value accuracy, no hallucinated columns, skill path correctness)
-- Promptfoo scorer entry point (`get_assert`)
 
 ### Phase 4: Promptfoo Bridge + `bi-evals run`
 - Generate `promptfooconfig.yaml` from `bi-evals.yaml`
 - Wire up CLI `run` command (end-to-end: config → promptfoo → results)
 
 ### Phase 5: Reporting + Regression
-- HTML report generator (single-file, self-contained)
+- HTML report generator (single-file, self-contained) (`src/bi_evals/report/` — empty stub)
 - Regression comparison (`bi-evals compare`)
 - CLI `report` and `compare` commands
 
@@ -79,8 +98,13 @@ Promptfoo as test runner, 9-dimension binary accuracy scoring.
 | Decision | Rationale |
 |----------|-----------|
 | Framework, not hardcoded project | Users bring their own skill files, golden tests, and DB credentials |
+| Python over original JS design | MVP doc described JS; implemented in Python for consistency with data tooling ecosystem |
 | `bi-evals init` scaffolds eval infra only | No opinion on skill/knowledge file structure — users point to theirs |
 | Two provider types | `anthropic_tool_loop` for Claude-native agents, `api_endpoint` for existing APIs |
+| Provider owns the full tool loop | Promptfoo's standard providers don't execute tool callbacks in a loop — our code handles send/tool_use/tool_result cycles |
 | File-based trace communication | Provider writes JSON, scorer reads it — handles Promptfoo process isolation |
+| Protocols over inheritance | `Tool`, `DatabaseClient` use `typing.Protocol` for extensibility |
 | Snowflake only for MVP | `DatabaseClient` protocol designed for adding Postgres/BigQuery later |
 | sqlglot for SQL parsing | Handles Snowflake dialect, aliases, CTEs without regex |
+| QueryResult.error not raised | Execution failures stored in result, not thrown — lets execution dimension report cleanly and other dimensions cascade |
+| Row comparison opt-in | `row_comparison.enabled` gates dimensions 5-7 — golden tests without expected result sets skip row comparison automatically |
