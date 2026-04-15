@@ -33,7 +33,7 @@ def config_dir(tmp_path: Path) -> Path:
           connection:
             account: "test-account"
             user: "test-user"
-            password: "test-pass"
+            private_key_path: "/path/to/key.p8"
             warehouse: "test-wh"
             database: "test-db"
             schema: "test-schema"
@@ -86,6 +86,7 @@ class TestBiEvalsConfig:
         assert config.agent.max_rounds == 5
         assert config.database.type == "snowflake"
         assert config.database.connection.account == "test-account"
+        assert config.database.connection.private_key_path == "/path/to/key.p8"
         assert config.database.connection.schema_ == "test-schema"
         assert config.database.query_timeout == 15
 
@@ -106,6 +107,46 @@ class TestBiEvalsConfig:
         config = BiEvalsConfig.load(config_dir / "bi-evals.yaml")
         resolved = config.resolve_path("prompts/system.md")
         assert resolved == (config_dir / "prompts" / "system.md").resolve()
+
+    def test_dotenv_loaded_from_config_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("DOTENV_ONLY_VAR", raising=False)
+        (tmp_path / ".env").write_text("DOTENV_ONLY_VAR=value-from-dotenv\n")
+        config_content = dedent("""\
+            project:
+              name: "Dotenv Test"
+            agent:
+              model: "claude-sonnet-4-5-20250929"
+              system_prompt: "prompts/system.md"
+            database:
+              type: snowflake
+              connection:
+                account: "${DOTENV_ONLY_VAR}"
+        """)
+        config_file = tmp_path / "bi-evals.yaml"
+        config_file.write_text(config_content)
+
+        config = BiEvalsConfig.load(config_file)
+        assert config.database.connection.account == "value-from-dotenv"
+
+    def test_dotenv_does_not_override_shell(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DOTENV_PRIORITY", "from-shell")
+        (tmp_path / ".env").write_text("DOTENV_PRIORITY=from-dotenv-file\n")
+        config_content = dedent("""\
+            project:
+              name: "Priority Test"
+            agent:
+              model: "claude-sonnet-4-5-20250929"
+              system_prompt: "prompts/system.md"
+            database:
+              type: snowflake
+              connection:
+                account: "${DOTENV_PRIORITY}"
+        """)
+        config_file = tmp_path / "bi-evals.yaml"
+        config_file.write_text(config_content)
+
+        config = BiEvalsConfig.load(config_file)
+        assert config.database.connection.account == "from-shell"
 
     def test_env_var_resolution(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TEST_ACCOUNT", "my-snowflake-account")

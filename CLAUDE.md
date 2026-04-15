@@ -38,7 +38,7 @@ uv run bi-evals compare <run1.json> <run2.json>
 
 ### Configuration-driven design
 
-Everything is driven by `bi-evals.yaml`. The `BiEvalsConfig` Pydantic model (`src/bi_evals/config.py`) is the central dependency — almost every module loads it. Config supports `${ENV_VAR}` substitution and resolves all paths relative to the config file location.
+Everything is driven by `bi-evals.yaml`. The `BiEvalsConfig` Pydantic model (`src/bi_evals/config.py`) is the central dependency — almost every module loads it. Config supports `${ENV_VAR}` substitution and resolves all paths relative to the config file location. On load, if `.env` exists in the same directory as `bi-evals.yaml`, it is applied automatically (`override=False`: already-exported shell variables win).
 
 The framework does NOT own or scaffold skill/knowledge files. Users point `agent.tools[].config.base_dir` to their existing files.
 

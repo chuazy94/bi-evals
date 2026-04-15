@@ -31,3 +31,22 @@ def load_golden_tests(config: BiEvalsConfig) -> list[GoldenTest]:
     for yml_file in sorted(golden_dir.glob("**/*.yml")):
         tests.append(load_golden_test(yml_file))
     return tests
+
+
+def load_golden_tests_with_paths(config: BiEvalsConfig) -> list[tuple[GoldenTest, str]]:
+    """Load all golden tests, returning (test, relative_path) pairs.
+
+    The relative path is relative to the config file's base directory,
+    matching how the scorer resolves golden_file paths.
+    """
+    golden_dir = config.resolve_path(config.golden_tests.dir)
+    if not golden_dir.exists():
+        return []
+
+    results: list[tuple[GoldenTest, str]] = []
+    for pattern in ("**/*.yaml", "**/*.yml"):
+        for yaml_file in sorted(golden_dir.glob(pattern)):
+            test = load_golden_test(yaml_file)
+            rel = str(yaml_file.relative_to(config._base_dir))
+            results.append((test, rel))
+    return results

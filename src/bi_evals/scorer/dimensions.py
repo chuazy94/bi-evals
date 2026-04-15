@@ -8,7 +8,7 @@ from typing import Any
 from bi_evals.config import ScoringConfig
 from bi_evals.db.client import QueryResult
 from bi_evals.golden.model import GoldenTest
-from bi_evals.scorer.sql_utils import extract_filter_columns, extract_tables
+from bi_evals.scorer.sql_utils import extract_filter_columns, extract_select_columns, extract_tables
 
 
 @dataclass
@@ -75,21 +75,33 @@ def check_table_alignment(generated_sql: str, reference_sql: str) -> DimensionRe
 # Dimension 3: Column Alignment
 # ---------------------------------------------------------------------------
 
-def check_column_alignment(generated: QueryResult, golden: GoldenTest) -> DimensionResult:
+def check_column_alignment(generated_sql: str, golden: GoldenTest) -> DimensionResult:
+    """Check that the generated SQL references the required source columns.
+
+    Parses SELECT expressions to extract the underlying column names (ignoring
+    aliases and aggregation wrappers) and compares against required_columns.
+    """
     required = {c.upper() for c in golden.expected.required_columns}
     if not required:
         return _skip("column_alignment", "no required_columns defined")
 
-    actual = {c.upper() for c in generated.columns}
-    missing = required - actual
+    try:
+        gen_cols = extract_select_columns(generated_sql)
+    except Exception as e:
+        return DimensionResult(
+            name="column_alignment", passed=False, score=0.0,
+            reason=f"SQL parse error: {e}",
+        )
+
+    missing = required - gen_cols
     if not missing:
         return DimensionResult(
             name="column_alignment", passed=True, score=1.0,
-            reason=f"All required columns present: {sorted(required)}",
+            reason=f"All required source columns present: {sorted(required)}",
         )
     return DimensionResult(
         name="column_alignment", passed=False, score=0.0,
-        reason=f"Missing required columns: {sorted(missing)}",
+        reason=f"Missing required source columns: {sorted(missing)}",
     )
 
 
@@ -233,6 +245,23 @@ def check_row_precision(
 # Dimension 7: Value Accuracy
 # ---------------------------------------------------------------------------
 
+def _build_column_map(
+    ref_columns: list[str],
+    gen_columns: list[str],
+    key_cols: list[str],
+) -> list[tuple[str, str]]:
+    """Map reference value columns to generated value columns by position.
+
+    Strips key columns from both lists, then pairs the remaining columns
+    by ordinal position. This handles alias differences (e.g. TOTAL_CASES
+    in the reference vs TOTAL_CONFIRMED_CASES in the generated result).
+    """
+    key_set = {c.upper() for c in key_cols}
+    ref_val = [c for c in ref_columns if c.upper() not in key_set]
+    gen_val = [c for c in gen_columns if c.upper() not in key_set]
+    return list(zip(ref_val, gen_val))
+
+
 def check_value_accuracy(
     generated: QueryResult,
     reference: QueryResult,
@@ -250,10 +279,16 @@ def check_value_accuracy(
         )
 
     key_cols = rc.key_columns or reference.columns
-    val_cols = [c.upper() for c in rc.value_columns] if rc.value_columns else reference.columns
     tolerance = rc.value_tolerance
 
-    # Build lookup: key -> row for reference
+    if rc.value_columns:
+        col_pairs = [(c.upper(), c.upper()) for c in rc.value_columns]
+    else:
+        col_pairs = _build_column_map(reference.columns, generated.columns, key_cols)
+
+    if not col_pairs:
+        return _skip("value_accuracy", "no value columns to compare")
+
     ref_by_key: dict[tuple, dict[str, Any]] = {}
     for row in reference.rows:
         k = _row_key(row, key_cols, tolerance)
@@ -268,18 +303,18 @@ def check_value_accuracy(
         if ref_row is None:
             continue
         matched_count += 1
-        for col in val_cols:
-            gen_val = row.get(col.upper())
-            ref_val = ref_row.get(col.upper())
+        for ref_col, gen_col in col_pairs:
+            gen_val = row.get(gen_col.upper())
+            ref_val = ref_row.get(ref_col.upper())
             if gen_val is None and ref_val is None:
                 continue
             if gen_val is None or ref_val is None:
-                mismatches.append(f"{col}: {gen_val} vs {ref_val}")
+                mismatches.append(f"{ref_col}: {gen_val} vs {ref_val}")
                 continue
             if isinstance(gen_val, (int, float)) and isinstance(ref_val, (int, float)):
                 denom = max(abs(ref_val), 1)
                 if abs(gen_val - ref_val) / denom > tolerance:
-                    mismatches.append(f"{col}: {gen_val} vs {ref_val}")
+                    mismatches.append(f"{ref_col}: {gen_val} vs {ref_val}")
 
     if matched_count == 0:
         return DimensionResult(
@@ -303,23 +338,33 @@ def check_value_accuracy(
 # ---------------------------------------------------------------------------
 
 def check_no_hallucinated_columns(
-    generated: QueryResult, reference: QueryResult,
+    generated_sql: str, reference_sql: str,
 ) -> DimensionResult:
-    ref_cols = {c.upper() for c in reference.columns}
-    gen_cols = {c.upper() for c in generated.columns}
+    """Check the generated SQL doesn't reference source columns absent from the reference.
+
+    Compares the underlying column names in SELECT expressions (ignoring aliases).
+    """
+    try:
+        gen_cols = extract_select_columns(generated_sql)
+        ref_cols = extract_select_columns(reference_sql)
+    except Exception as e:
+        return DimensionResult(
+            name="no_hallucinated_columns", passed=False, score=0.0,
+            reason=f"SQL parse error: {e}",
+        )
 
     if not ref_cols:
-        return _skip("no_hallucinated_columns", "reference has no columns")
+        return _skip("no_hallucinated_columns", "reference SQL has no select columns")
 
     extra = gen_cols - ref_cols
     if not extra:
         return DimensionResult(
             name="no_hallucinated_columns", passed=True, score=1.0,
-            reason="No extra columns beyond reference",
+            reason="No hallucinated source columns beyond reference",
         )
     return DimensionResult(
         name="no_hallucinated_columns", passed=False, score=0.0,
-        reason=f"Hallucinated columns: {sorted(extra)}",
+        reason=f"Hallucinated source columns: {sorted(extra)}",
     )
 
 
