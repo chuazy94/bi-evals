@@ -44,10 +44,10 @@ def _make_test_id_slug(prompt: str, vars_: dict[str, Any]) -> str:
     return test_id.replace("/", "_").replace(".", "_")
 
 
-def get_assert(output: str, context: dict[str, Any]) -> list[dict[str, Any]]:
+def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
     """Promptfoo scorer entry point.
 
-    Returns a list of assertion results, one per enabled dimension.
+    Returns a GradingResult dict with componentResults (one per dimension).
     """
     provider_config = context.get("config", {})
     config_path = provider_config.get("config_path", "bi-evals.yaml")
@@ -59,11 +59,11 @@ def get_assert(output: str, context: dict[str, Any]) -> list[dict[str, Any]]:
     # Load golden test
     golden_file = vars_.get("golden_file", "")
     if not golden_file:
-        return [{"pass": False, "score": 0.0, "reason": "No golden_file in test vars"}]
+        return {"pass": False, "score": 0.0, "reason": "No golden_file in test vars"}
 
     golden_path = config.resolve_path(golden_file)
     if not golden_path.exists():
-        return [{"pass": False, "score": 0.0, "reason": f"Golden test not found: {golden_file}"}]
+        return {"pass": False, "score": 0.0, "reason": f"Golden test not found: {golden_file}"}
 
     golden = load_golden_test(golden_path)
 
@@ -77,7 +77,7 @@ def get_assert(output: str, context: dict[str, Any]) -> list[dict[str, Any]]:
     trace_steps = trace_data.get("trace", [])
 
     if not generated_sql:
-        return [{"pass": False, "score": 0.0, "reason": "No generated SQL found in trace"}]
+        return {"pass": False, "score": 0.0, "reason": "No generated SQL found in trace"}
 
     reference_sql = golden.reference_sql
 
@@ -105,13 +105,7 @@ def get_assert(output: str, context: dict[str, Any]) -> list[dict[str, Any]]:
         results.append(check_table_alignment(generated_sql, reference_sql))
 
     if "column_alignment" in enabled:
-        if execution_passed:
-            results.append(check_column_alignment(generated_result, golden))
-        else:
-            results.append(DimensionResult(
-                name="column_alignment", passed=False, score=0.0,
-                reason="skipped: SQL execution failed",
-            ))
+        results.append(check_column_alignment(generated_sql, golden))
 
     if "filter_correctness" in enabled and reference_sql:
         results.append(check_filter_correctness(generated_sql, reference_sql))
@@ -143,25 +137,30 @@ def get_assert(output: str, context: dict[str, Any]) -> list[dict[str, Any]]:
                 reason="skipped: SQL execution failed",
             ))
 
-    if "no_hallucinated_columns" in enabled:
-        if execution_passed and reference_result.success:
-            results.append(check_no_hallucinated_columns(generated_result, reference_result))
-        else:
-            results.append(DimensionResult(
-                name="no_hallucinated_columns", passed=False, score=0.0,
-                reason="skipped: SQL execution failed",
-            ))
+    if "no_hallucinated_columns" in enabled and reference_sql:
+        results.append(check_no_hallucinated_columns(generated_sql, reference_sql))
 
     if "skill_path_correctness" in enabled:
         results.append(check_skill_path_correctness(trace_steps, golden))
 
-    # Convert to Promptfoo assertion format
-    return [
+    # Convert to Promptfoo GradingResult with componentResults
+    component_results = [
         {
             "pass": r.passed,
             "score": r.score,
             "reason": r.reason,
-            "metric": r.name,
+            "namedScores": {r.name: r.score},
         }
         for r in results
     ]
+
+    total = len(results)
+    passed = sum(1 for r in results if r.passed)
+    overall_score = passed / total if total else 0.0
+
+    return {
+        "pass": all(r.passed for r in results),
+        "score": overall_score,
+        "reason": f"{passed}/{total} dimensions passed",
+        "componentResults": component_results,
+    }

@@ -31,7 +31,7 @@ from bi_evals.scorer.dimensions import (
     check_table_alignment,
     check_value_accuracy,
 )
-from bi_evals.scorer.sql_utils import extract_filter_columns, extract_tables
+from bi_evals.scorer.sql_utils import extract_filter_columns, extract_select_columns, extract_tables
 
 
 # ---------------------------------------------------------------------------
@@ -100,10 +100,46 @@ class TestExtractTables:
         assert "T1" in tables
         assert "T2" in tables
 
+    def test_cte_excluded_from_tables(self) -> None:
+        """CTE names like MAX_ACROSS_REGIONS are not real tables."""
+        sql = """WITH MAX_ACROSS_REGIONS AS (
+            SELECT x FROM db.schema.real_table
+        ) SELECT * FROM MAX_ACROSS_REGIONS"""
+        tables = extract_tables(sql)
+        assert tables == {"DB.SCHEMA.REAL_TABLE"}
+        assert "MAX_ACROSS_REGIONS" not in tables
+
     def test_subquery(self) -> None:
         sql = "SELECT * FROM (SELECT a FROM inner_t) sub"
         tables = extract_tables(sql)
         assert "INNER_T" in tables
+
+
+class TestExtractSelectColumns:
+    def test_simple_column(self) -> None:
+        cols = extract_select_columns("SELECT COUNTRY FROM t")
+        assert cols == {"COUNTRY"}
+
+    def test_aggregation_unwrapped(self) -> None:
+        cols = extract_select_columns("SELECT SUM(DIFFERENCE) AS TOTAL FROM t")
+        assert cols == {"DIFFERENCE"}
+
+    def test_multiple_with_alias(self) -> None:
+        cols = extract_select_columns("SELECT STATE, MAX(DEATHS) AS TOTAL_DEATHS FROM t GROUP BY STATE")
+        assert cols == {"STATE", "DEATHS"}
+
+    def test_cte_intermediate_aliases_excluded(self) -> None:
+        """Intermediate aliases (s) defined in inner SELECT should be excluded."""
+        sql = "WITH cte AS (SELECT a, SUM(b) AS s FROM t GROUP BY a) SELECT a, s FROM cte"
+        cols = extract_select_columns(sql)
+        assert "A" in cols
+        assert "B" in cols
+        assert "S" not in cols
+
+    def test_window_function(self) -> None:
+        sql = "SELECT CASES - LAG(CASES) OVER (PARTITION BY STATE ORDER BY DATE) AS DAILY FROM t"
+        cols = extract_select_columns(sql)
+        assert cols == {"CASES", "STATE", "DATE"}
 
 
 class TestExtractFilterColumns:
@@ -167,23 +203,31 @@ class TestTableAlignment:
 # ---------------------------------------------------------------------------
 
 class TestColumnAlignment:
-    def test_pass(self) -> None:
+    def test_pass_source_columns(self) -> None:
         r = check_column_alignment(
-            _qr(["NAME", "VALUE", "EXTRA"]),
+            "SELECT NAME, SUM(VALUE) AS TOTAL FROM t GROUP BY NAME",
             _golden(required_columns=["NAME", "VALUE"]),
         )
         assert r.passed
 
-    def test_fail_missing(self) -> None:
+    def test_fail_missing_source_column(self) -> None:
         r = check_column_alignment(
-            _qr(["NAME"]),
+            "SELECT NAME FROM t",
             _golden(required_columns=["NAME", "VALUE"]),
         )
         assert not r.passed
         assert "VALUE" in r.reason
 
+    def test_alias_ignored(self) -> None:
+        """Alias TOTAL_CASES doesn't matter; source column DIFFERENCE is what counts."""
+        r = check_column_alignment(
+            "SELECT SUM(DIFFERENCE) AS TOTAL_CASES FROM t",
+            _golden(required_columns=["DIFFERENCE"]),
+        )
+        assert r.passed
+
     def test_skip_no_required(self) -> None:
-        r = check_column_alignment(_qr(["A"]), _golden())
+        r = check_column_alignment("SELECT A FROM t", _golden())
         assert r.passed
         assert "skipped" in r.reason
 
@@ -292,6 +336,34 @@ class TestValueAccuracy:
         r = check_value_accuracy(gen, ref, _golden(row_comparison=rc), _scoring())
         assert r.passed
 
+    def test_pass_positional_column_mapping(self) -> None:
+        """Different column aliases should still match by position."""
+        ref = _qr(
+            ["COUNTRY_REGION", "TOTAL_CASES"],
+            [{"COUNTRY_REGION": "US", "TOTAL_CASES": 100.0}],
+        )
+        gen = _qr(
+            ["COUNTRY_REGION", "TOTAL_CONFIRMED_CASES"],
+            [{"COUNTRY_REGION": "US", "TOTAL_CONFIRMED_CASES": 100.0}],
+        )
+        rc = RowComparison(enabled=True, key_columns=["COUNTRY_REGION"])
+        r = check_value_accuracy(gen, ref, _golden(row_comparison=rc), _scoring())
+        assert r.passed
+
+    def test_fail_positional_column_value_differs(self) -> None:
+        """Positional mapping should still catch real value mismatches."""
+        ref = _qr(
+            ["COUNTRY_REGION", "TOTAL_CASES"],
+            [{"COUNTRY_REGION": "US", "TOTAL_CASES": 100.0}],
+        )
+        gen = _qr(
+            ["COUNTRY_REGION", "TOTAL_CONFIRMED_CASES"],
+            [{"COUNTRY_REGION": "US", "TOTAL_CONFIRMED_CASES": 999.0}],
+        )
+        rc = RowComparison(enabled=True, key_columns=["COUNTRY_REGION"])
+        r = check_value_accuracy(gen, ref, _golden(row_comparison=rc), _scoring())
+        assert not r.passed
+
     def test_skip_disabled(self) -> None:
         r = check_value_accuracy(_qr([]), _qr([]), _golden(), _scoring())
         assert r.passed
@@ -303,20 +375,35 @@ class TestValueAccuracy:
 # ---------------------------------------------------------------------------
 
 class TestNoHallucinatedColumns:
-    def test_pass_no_extra(self) -> None:
+    def test_pass_same_source_columns(self) -> None:
         r = check_no_hallucinated_columns(
-            _qr(["A", "B"]),
-            _qr(["A", "B", "C"]),
+            "SELECT A, SUM(B) AS TOTAL FROM t GROUP BY A",
+            "SELECT A, SUM(B) AS DIFFERENT_ALIAS FROM t GROUP BY A",
         )
         assert r.passed
 
-    def test_fail_extra_columns(self) -> None:
+    def test_pass_subset(self) -> None:
         r = check_no_hallucinated_columns(
-            _qr(["A", "B", "PHANTOM"]),
-            _qr(["A", "B"]),
+            "SELECT A FROM t",
+            "SELECT A, B FROM t",
+        )
+        assert r.passed
+
+    def test_fail_extra_source_column(self) -> None:
+        r = check_no_hallucinated_columns(
+            "SELECT A, B, PHANTOM FROM t",
+            "SELECT A, B FROM t",
         )
         assert not r.passed
         assert "PHANTOM" in r.reason
+
+    def test_alias_difference_passes(self) -> None:
+        """Different aliases for the same source column should pass."""
+        r = check_no_hallucinated_columns(
+            "SELECT SUM(DIFFERENCE) AS NEW_CONFIRMED_CASES FROM t",
+            "SELECT SUM(DIFFERENCE) AS DAILY_NEW_CASES FROM t",
+        )
+        assert r.passed
 
 
 # ---------------------------------------------------------------------------
@@ -451,10 +538,11 @@ class TestGetAssert:
             "prompt": "What is total revenue?",
         })
 
-        assert isinstance(results, list)
-        assert len(results) == 3  # execution, table_alignment, skill_path_correctness
-        metrics = {r["metric"] for r in results}
-        assert metrics == {"execution", "table_alignment", "skill_path_correctness"}
+        assert isinstance(results, dict)
+        assert "componentResults" in results
+        assert len(results["componentResults"]) == 3
+        assert results["pass"] is True
+        assert results["score"] == 1.0
         mock_client.close.assert_called_once()
 
     @patch("bi_evals.scorer.entry.create_db_client")
@@ -481,8 +569,10 @@ class TestGetAssert:
             "prompt": "Q",
         })
 
-        execution_result = next(r for r in results if r["metric"] == "execution")
-        assert execution_result["pass"] is False
+        assert isinstance(results, dict)
+        assert results["pass"] is False
+        execution_component = results["componentResults"][0]
+        assert execution_component["pass"] is False
 
     def test_missing_golden_file(self, tmp_path: Path) -> None:
         config_content = dedent("""\
@@ -503,9 +593,9 @@ class TestGetAssert:
             "config": {"config_path": str(config_file)},
             "vars": {"golden_file": "nonexistent.yaml"},
         })
-        assert len(results) == 1
-        assert results[0]["pass"] is False
-        assert "not found" in results[0]["reason"]
+        assert isinstance(results, dict)
+        assert results["pass"] is False
+        assert "not found" in results["reason"]
 
     def test_no_golden_file_var(self, tmp_path: Path) -> None:
         config_content = dedent("""\
@@ -526,6 +616,6 @@ class TestGetAssert:
             "config": {"config_path": str(config_file)},
             "vars": {},
         })
-        assert len(results) == 1
-        assert results[0]["pass"] is False
-        assert "golden_file" in results[0]["reason"]
+        assert isinstance(results, dict)
+        assert results["pass"] is False
+        assert "golden_file" in results["reason"]

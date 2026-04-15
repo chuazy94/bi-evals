@@ -6,6 +6,7 @@ from pathlib import Path
 
 from bi_evals.config import BiEvalsConfig, ToolConfig
 from bi_evals.tools.base import Tool
+from bi_evals.tools.describe_table import DescribeTableTool
 from bi_evals.tools.file_reader import FileReaderTool
 
 
@@ -16,8 +17,10 @@ def build_tools(tool_configs: list[ToolConfig], config: BiEvalsConfig) -> list[T
         if tc.type == "file_reader":
             base_dir = config.resolve_path(tc.config.get("base_dir", "."))
             tools.append(FileReaderTool(tool_name=tc.name, base_dir=base_dir))
+        elif tc.type == "describe_table":
+            tools.append(DescribeTableTool(tool_name=tc.name, db_config=config.database))
         else:
             raise ValueError(
-                f"Unknown tool type '{tc.type}'. Available types: file_reader"
+                f"Unknown tool type '{tc.type}'. Available types: file_reader, describe_table"
             )
     return tools

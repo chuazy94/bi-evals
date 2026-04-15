@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import click
+import yaml
 
 from bi_evals.config import BiEvalsConfig
+from bi_evals.promptfoo.bridge import (
+    generate_promptfoo_config,
+    run_promptfoo,
+    write_promptfoo_config,
+)
 
 
 @click.group()
@@ -44,20 +51,78 @@ def init(target_dir: str) -> None:
     click.echo("  1. Edit bi-evals.yaml — point agent.tools[].config.base_dir to your skill/knowledge files")
     click.echo("  2. Edit bi-evals.yaml — configure your database connection")
     click.echo("  3. Create golden tests in golden/")
-    click.echo("  4. Set environment variables (see .env.example)")
+    click.echo("  4. Edit .env with your API keys and Snowflake credentials (next to bi-evals.yaml; loaded automatically)")
     click.echo("  5. Run: bi-evals run")
 
 
 @cli.command()
 @click.option("--filter", "-f", "filter_pattern", help="Run only tests matching pattern.")
 @click.option("--dry-run", is_flag=True, help="Generate promptfoo config without running.")
+@click.option("--verbose", "-v", is_flag=True, help="Enable verbose Promptfoo output.")
+@click.option("--no-cache", is_flag=True, help="Disable Promptfoo provider cache (force fresh API calls).")
 @click.pass_context
-def run(ctx: click.Context, filter_pattern: str | None, dry_run: bool) -> None:
+def run(ctx: click.Context, filter_pattern: str | None, dry_run: bool, verbose: bool, no_cache: bool) -> None:
     """Run the eval suite via Promptfoo."""
-    config = BiEvalsConfig.load(ctx.obj["config_path"])
-    click.echo(f"Running evals for: {config.project.name}")
-    # TODO: implement in Phase 4
-    click.echo("Not yet implemented. Coming in Phase 4.")
+    config_path = ctx.obj["config_path"]
+    config = BiEvalsConfig.load(config_path)
+
+    pf_config = generate_promptfoo_config(config, config_path, filter_pattern)
+    test_count = len(pf_config.get("tests", []))
+
+    if test_count == 0:
+        if filter_pattern:
+            raise click.ClickException(f"No tests match filter '{filter_pattern}'.")
+        raise click.ClickException(
+            "No golden tests found. Add tests to the golden/ directory."
+        )
+
+    click.echo(f"Project: {config.project.name}")
+    click.echo(f"Tests:   {test_count}")
+
+    if dry_run:
+        click.echo("\n--- Generated promptfooconfig.yaml ---")
+        click.echo(yaml.dump(pf_config, default_flow_style=False, sort_keys=False))
+        return
+
+    results_dir = config.resolve_path(config.reporting.results_dir)
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    pf_config_path = results_dir / f"promptfooconfig_{timestamp}.yaml"
+    results_output = results_dir / f"eval_{timestamp}.json"
+
+    write_promptfoo_config(pf_config, pf_config_path)
+    click.echo(f"Config:  {pf_config_path}")
+    click.echo(f"Results: {results_output}")
+    click.echo()
+
+    exit_code = run_promptfoo(pf_config_path, results_output, verbose=verbose, no_cache=no_cache)
+
+    if exit_code != 0:
+        raise click.ClickException(f"Promptfoo exited with code {exit_code}")
+
+    click.echo(f"\nDone. View results: npx promptfoo view")
+
+
+@cli.command()
+@click.option("--port", "-p", default=15500, help="Port for the web UI.")
+def view(port: int) -> None:
+    """Open the Promptfoo web UI to browse eval results."""
+    import shutil
+    import subprocess
+    import sys
+
+    if shutil.which("npx") is None:
+        raise click.ClickException(
+            "Promptfoo not found. Install it: npm install -g promptfoo"
+        )
+
+    click.echo(f"Opening Promptfoo UI on http://localhost:{port} ...")
+    subprocess.run(
+        ["npx", "promptfoo", "view", "--port", str(port)],
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    )
 
 
 @cli.command()
@@ -91,10 +156,15 @@ def _scaffold_project(target: Path) -> None:
     if not config_file.exists():
         config_file.write_text(_TEMPLATE_CONFIG)
 
-    # .env.example
-    env_file = target / ".env.example"
-    if not env_file.exists():
-        env_file.write_text(_TEMPLATE_ENV)
+    # .env.example (reference; safe to commit if you version this folder)
+    env_example = target / ".env.example"
+    if not env_example.exists():
+        env_example.write_text(_TEMPLATE_ENV)
+
+    # .env (sample placeholders; fill with real values — do not commit secrets)
+    dot_env = target / ".env"
+    if not dot_env.exists():
+        dot_env.write_text(_SAMPLE_DOT_ENV)
 
     # Directory structure — eval infrastructure only
     for d in ["golden", "results", "reports"]:
@@ -146,7 +216,8 @@ database:
   connection:
     account: "${SNOWFLAKE_ACCOUNT}"
     user: "${SNOWFLAKE_USER}"
-    password: "${SNOWFLAKE_PASSWORD}"
+    private_key_path: "${SNOWFLAKE_PRIVATE_KEY_PATH}"
+    private_key_passphrase: "${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}"  # optional, if key is encrypted
     warehouse: "${SNOWFLAKE_WAREHOUSE}"
     database: "${SNOWFLAKE_DATABASE}"
     schema: "${SNOWFLAKE_SCHEMA}"
@@ -180,7 +251,22 @@ _TEMPLATE_ENV = """\
 ANTHROPIC_API_KEY=sk-ant-...
 SNOWFLAKE_ACCOUNT=
 SNOWFLAKE_USER=
-SNOWFLAKE_PASSWORD=
+SNOWFLAKE_PRIVATE_KEY_PATH=~/.ssh/snowflake_rsa_key.p8
+SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
+SNOWFLAKE_WAREHOUSE=
+SNOWFLAKE_DATABASE=
+SNOWFLAKE_SCHEMA=
+"""
+
+_SAMPLE_DOT_ENV = """\
+# Local credentials for this eval project (gitignored in bi-evals repo root).
+# Replace placeholder values before running bi-evals run.
+
+ANTHROPIC_API_KEY=sk-ant-...
+SNOWFLAKE_ACCOUNT=
+SNOWFLAKE_USER=
+SNOWFLAKE_PRIVATE_KEY_PATH=~/.ssh/snowflake_rsa_key.p8
+SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
 SNOWFLAKE_WAREHOUSE=
 SNOWFLAKE_DATABASE=
 SNOWFLAKE_SCHEMA=

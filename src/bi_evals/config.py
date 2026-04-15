@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from dotenv import load_dotenv
 from pydantic import BaseModel, model_validator
 
 
@@ -50,7 +51,8 @@ class AgentConfig(BaseModel):
 class DatabaseConnection(BaseModel):
     account: str = ""
     user: str = ""
-    password: str = ""
+    private_key_path: str = ""
+    private_key_passphrase: str = ""
     warehouse: str = ""
     database: str = ""
     schema_: str = ""
@@ -123,10 +125,20 @@ class BiEvalsConfig(BaseModel):
 
     @classmethod
     def load(cls, path: Path | str = "bi-evals.yaml") -> BiEvalsConfig:
-        """Load config from YAML, resolving env vars and relative paths."""
+        """Load config from YAML, resolving env vars and relative paths.
+
+        If ``<config-dir>/.env`` exists, it is loaded first (``python-dotenv``,
+        ``override=False``) so ``${VAR}`` placeholders in YAML can be filled
+        without manually ``source``-ing the file. Shell-exported vars win.
+        """
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Config file not found: {path}")
+
+        env_file = path.parent / ".env"
+        if env_file.is_file():
+            # Do not override variables already set in the shell / process.
+            load_dotenv(env_file, override=False)
 
         raw = path.read_text()
         resolved = _resolve_env_vars(raw)
