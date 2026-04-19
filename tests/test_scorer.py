@@ -619,3 +619,144 @@ class TestGetAssert:
         assert isinstance(results, dict)
         assert results["pass"] is False
         assert "golden_file" in results["reason"]
+
+
+class TestTieredScoring:
+    """Verify the tiered/weighted pass logic."""
+
+    def _setup(self, tmp_path: Path, dimensions: list[str], extra_scoring: str = "") -> Path:
+        config_content = dedent(f"""\
+            project:
+              name: "Test"
+            agent:
+              model: "claude-sonnet-4-5-20250929"
+              system_prompt: "p.md"
+            database:
+              type: snowflake
+            scoring:
+              dimensions:
+{chr(10).join(f'                - {d}' for d in dimensions)}
+{extra_scoring}
+        """)
+        config_file = tmp_path / "bi-evals.yaml"
+        config_file.write_text(config_content)
+
+        golden_dir = tmp_path / "golden"
+        golden_dir.mkdir()
+        (golden_dir / "test-001.yaml").write_text(dedent("""\
+            id: test-001
+            question: "Q"
+            reference_sql: "SELECT a FROM t"
+            expected:
+              row_comparison:
+                enabled: true
+                key_columns: [A]
+                completeness_threshold: 0.95
+                precision_threshold: 0.95
+        """))
+
+        trace_dir = tmp_path / "results" / "traces"
+        trace_dir.mkdir(parents=True)
+        (trace_dir / "golden_test-001_yaml.json").write_text(json.dumps({
+            "test_id": "golden/test-001.yaml",
+            "generated_sql": "SELECT a FROM t",
+            "trace": [],
+        }))
+        return config_file
+
+    @patch("bi_evals.scorer.entry.create_db_client")
+    def test_diagnostic_failure_does_not_fail_test(
+        self, mock_create: MagicMock, tmp_path: Path,
+    ) -> None:
+        """A diagnostic-only failure (table_alignment) should not fail the test
+        if all critical dimensions pass and weighted score >= threshold."""
+        config_file = self._setup(
+            tmp_path,
+            ["execution", "row_completeness", "value_accuracy", "table_alignment"],
+        )
+
+        mock_client = MagicMock()
+        mock_client.execute.return_value = QueryResult(
+            columns=["A"], rows=[{"A": 1}], row_count=1,
+        )
+        mock_create.return_value = mock_client
+
+        from bi_evals.scorer.entry import get_assert
+
+        # Generated SQL references a different table (table_alignment fails),
+        # but executes successfully and returns matching rows/values.
+        results = get_assert("output", {
+            "config": {"config_path": str(config_file)},
+            "vars": {"golden_file": "golden/test-001.yaml"},
+            "prompt": "Q",
+        })
+
+        # 3/4 pass; weighted score is high since the failed one (table_alignment)
+        # has weight 1.0 vs the 3 critical dimensions at weight 3.0 each.
+        assert results["pass"] is True
+        assert results["score"] >= 0.75
+
+    @patch("bi_evals.scorer.entry.create_db_client")
+    def test_critical_failure_fails_test(
+        self, mock_create: MagicMock, tmp_path: Path,
+    ) -> None:
+        """A critical-dimension failure (execution) fails the test even if score is high."""
+        config_file = self._setup(
+            tmp_path,
+            ["execution", "table_alignment"],
+        )
+
+        mock_client = MagicMock()
+        mock_client.execute.return_value = QueryResult(
+            columns=[], rows=[], row_count=0, error="syntax error",
+        )
+        mock_create.return_value = mock_client
+
+        from bi_evals.scorer.entry import get_assert
+
+        results = get_assert("output", {
+            "config": {"config_path": str(config_file)},
+            "vars": {"golden_file": "golden/test-001.yaml"},
+            "prompt": "Q",
+        })
+
+        assert results["pass"] is False
+        assert "critical" in results["reason"].lower()
+
+    @patch("bi_evals.scorer.entry.create_db_client")
+    def test_below_threshold_fails(
+        self, mock_create: MagicMock, tmp_path: Path,
+    ) -> None:
+        """Even with all critical dimensions passing, low weighted score fails the test."""
+        # Bump pass_threshold high so non-critical failures sink the score.
+        config_file = self._setup(
+            tmp_path,
+            ["execution", "row_completeness", "value_accuracy",
+             "table_alignment", "filter_correctness", "no_hallucinated_columns"],
+            extra_scoring="              pass_threshold: 0.95",
+        )
+
+        mock_client = MagicMock()
+        mock_client.execute.return_value = QueryResult(
+            columns=["A"], rows=[{"A": 1}], row_count=1,
+        )
+        mock_create.return_value = mock_client
+
+        # Generated SQL very different from reference so diagnostic dims fail.
+        trace_file = tmp_path / "results" / "traces" / "golden_test-001_yaml.json"
+        trace_file.write_text(json.dumps({
+            "test_id": "golden/test-001.yaml",
+            "generated_sql": "SELECT a, b, c FROM other_table WHERE x = 1",
+            "trace": [],
+        }))
+
+        from bi_evals.scorer.entry import get_assert
+
+        results = get_assert("output", {
+            "config": {"config_path": str(config_file)},
+            "vars": {"golden_file": "golden/test-001.yaml"},
+            "prompt": "Q",
+        })
+
+        assert results["pass"] is False
+        assert "threshold" in results["reason"].lower()

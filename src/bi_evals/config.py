@@ -91,10 +91,36 @@ ALL_DIMENSIONS = [
     "skill_path_correctness",
 ]
 
+# Default tiers: result-based correctness checks are critical, structural
+# alignment checks are diagnostic (helpful to debug, not gating).
+DEFAULT_CRITICAL_DIMENSIONS = [
+    "execution",
+    "row_completeness",
+    "value_accuracy",
+]
+
+DEFAULT_DIMENSION_WEIGHTS = {
+    "execution": 3.0,
+    "row_completeness": 3.0,
+    "value_accuracy": 3.0,
+    "row_precision": 2.0,
+    "column_alignment": 2.0,
+    "table_alignment": 1.0,
+    "filter_correctness": 1.0,
+    "no_hallucinated_columns": 1.0,
+    "skill_path_correctness": 1.0,
+}
+
 
 class ScoringConfig(BaseModel):
     dimensions: list[str] = ALL_DIMENSIONS.copy()
     thresholds: ScoringThresholds = ScoringThresholds()
+    # Critical dimensions must all pass for the test to pass, regardless of score.
+    critical_dimensions: list[str] = DEFAULT_CRITICAL_DIMENSIONS.copy()
+    # Per-dimension weights for the overall score (defaults applied for any missing key).
+    dimension_weights: dict[str, float] = DEFAULT_DIMENSION_WEIGHTS.copy()
+    # Minimum weighted score (0.0–1.0) required to pass once critical dimensions pass.
+    pass_threshold: float = 0.75
 
 
 class GoldenTestsConfig(BaseModel):

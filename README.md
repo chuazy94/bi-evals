@@ -9,21 +9,56 @@ A configurable Python framework for evaluating SQL-generating BI agents. You pro
 1. **You define golden tests** in YAML -- each contains a natural-language question, reference SQL, expected skill path, and scoring criteria.
 2. **The framework sends each question to your agent** (either via a built-in Claude tool-calling loop or an HTTP endpoint).
 3. **The agent generates SQL** using tools you configure (file reader for skill/knowledge files, `describe_table` for schema discovery).
-4. **The scorer runs both the generated and reference SQL** against your database and compares results across 9 dimensions.
+4. **The scorer runs both the generated and reference SQL** against your database and compares results across 9 dimensions. See [Scoring](#scoring) for details.
 
-### Scoring dimensions
+## Scoring
 
-| Dimension | What it checks |
-|---|---|
-| execution | Generated SQL runs without error |
-| table_alignment | Correct physical tables referenced |
-| column_alignment | Correct source columns used (alias-agnostic) |
-| filter_correctness | WHERE clause matches reference |
-| row_completeness | Generated results contain the expected rows |
-| row_precision | No spurious extra rows |
-| value_accuracy | Numeric values match within tolerance |
-| no_hallucinated_columns | No fabricated source columns in the SQL |
-| skill_path_correctness | Agent read the right files / called the right tools |
+A test produces 9 independent dimension results, then a single pass/fail verdict via tiered/weighted aggregation.
+
+### Dimensions
+
+| Dimension | Tier | Default weight | What it checks |
+|---|---|---|---|
+| `execution` | critical | 3.0 | Generated SQL runs without error |
+| `row_completeness` | critical | 3.0 | Generated results contain the expected rows (executes both queries against the live DB and compares row keys) |
+| `value_accuracy` | critical | 3.0 | Numeric values in matching rows are within `value_tolerance`; column matching falls back to position when aliases differ |
+| `row_precision` | important | 2.0 | No spurious extra rows beyond the reference |
+| `column_alignment` | important | 2.0 | The SQL references the source columns listed in the golden test's `required_columns` (aliases ignored) |
+| `table_alignment` | diagnostic | 1.0 | Correct physical tables referenced (CTE names excluded) |
+| `filter_correctness` | diagnostic | 1.0 | WHERE-clause column/operator structure matches the reference |
+| `no_hallucinated_columns` | diagnostic | 1.0 | No fabricated source columns in the SQL beyond what the reference uses |
+| `skill_path_correctness` | diagnostic | 1.0 | Agent read the right files and invoked the expected tools |
+
+### Pass/fail rule
+
+A test passes when **both** conditions hold:
+
+1. Every dimension listed in `scoring.critical_dimensions` passes (default: `execution`, `row_completeness`, `value_accuracy`).
+2. The weighted score across all dimensions is at least `scoring.pass_threshold` (default: `0.75`).
+
+If any critical dimension fails, the test fails regardless of the weighted score. This means the result-based correctness checks are gating, while structural checks (table/column/filter alignment) act as diagnostic signals that influence the score but don't independently fail the test.
+
+### Tuning
+
+All values are configurable in `bi-evals.yaml` under `scoring`:
+
+```yaml
+scoring:
+  dimensions: [...]              # which dimensions to run
+  critical_dimensions: [...]     # which must pass; others are advisory
+  dimension_weights: { ... }     # per-dimension weight in the overall score
+  pass_threshold: 0.75           # minimum weighted score to pass
+  thresholds:
+    completeness: 0.95           # row_completeness ratio threshold
+    precision: 0.95              # row_precision ratio threshold
+    value_tolerance: 0.0001      # numeric tolerance for value_accuracy
+```
+
+Common adjustments:
+
+- **Stricter eval**: raise `pass_threshold` (e.g. `0.9`), or add diagnostic dimensions to `critical_dimensions`.
+- **Looser eval**: lower `pass_threshold`, drop noisy dimensions (e.g. remove `filter_correctness` from `dimensions`), or set `value_tolerance` higher.
+- **Result-only mode**: enable just `execution`, `row_completeness`, `row_precision`, `value_accuracy` and ignore structural checks entirely.
 
 ## Quick start
 

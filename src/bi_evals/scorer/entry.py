@@ -154,13 +154,49 @@ def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
         for r in results
     ]
 
-    total = len(results)
-    passed = sum(1 for r in results if r.passed)
-    overall_score = passed / total if total else 0.0
+    # Tiered scoring:
+    #   1. All critical dimensions must pass (e.g. execution, row_completeness,
+    #      value_accuracy). If any critical dimension fails, the test fails.
+    #   2. Otherwise, compute a weighted score across all dimensions and require
+    #      it to be >= pass_threshold.
+    weights = config.scoring.dimension_weights
+    critical = set(config.scoring.critical_dimensions)
+
+    total_weight = sum(weights.get(r.name, 1.0) for r in results)
+    weighted_score = (
+        sum(weights.get(r.name, 1.0) * r.score for r in results) / total_weight
+        if total_weight else 0.0
+    )
+
+    failed_critical = [
+        r.name for r in results if r.name in critical and not r.passed
+    ]
+    passed_dims = sum(1 for r in results if r.passed)
+    total_dims = len(results)
+
+    if failed_critical:
+        overall_pass = False
+        reason = (
+            f"Failed critical dimension(s): {failed_critical} "
+            f"({passed_dims}/{total_dims} dimensions passed, "
+            f"weighted score {weighted_score:.2f})"
+        )
+    elif weighted_score >= config.scoring.pass_threshold:
+        overall_pass = True
+        reason = (
+            f"Passed: {passed_dims}/{total_dims} dimensions, "
+            f"weighted score {weighted_score:.2f} >= {config.scoring.pass_threshold:.2f}"
+        )
+    else:
+        overall_pass = False
+        reason = (
+            f"Weighted score {weighted_score:.2f} below threshold "
+            f"{config.scoring.pass_threshold:.2f} ({passed_dims}/{total_dims} dimensions passed)"
+        )
 
     return {
-        "pass": all(r.passed for r in results),
-        "score": overall_score,
-        "reason": f"{passed}/{total} dimensions passed",
+        "pass": overall_pass,
+        "score": weighted_score,
+        "reason": reason,
         "componentResults": component_results,
     }
