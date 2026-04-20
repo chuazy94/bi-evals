@@ -2,20 +2,23 @@
 
 ## Summary
 
-bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is used as the test runner engine; all custom logic (provider, tools, scoring) is Python. Phases 1–3 are complete — the config system, CLI scaffolding, tool abstraction, both provider types, database client, golden test model, and 9-dimension scorer are built and tested.
+bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is used as the test runner engine; all custom logic (provider, tools, scoring, storage, reporting) is Python. Phases 1–5 are complete — the full pipeline from `bi-evals run` through DuckDB-backed reporting and regression compare is built and tested.
 
 What works today:
 - `bi-evals init` scaffolds a new eval project (config, directories, golden test stub)
+- `bi-evals run` runs the full eval end-to-end (generates `promptfooconfig.yaml`, invokes Promptfoo, auto-ingests results into DuckDB)
+- `bi-evals ingest <path>` backfills existing eval JSON into the store
+- `bi-evals report [--run-id ID]` generates a self-contained HTML report (category dashboard, weakest dimensions, cost by model)
+- `bi-evals compare <a> <b>` generates an HTML regression diff with tiered verdict (🟢/🟡/🔴); supports `latest` / `prev` shortcuts
 - Config system loads `bi-evals.yaml` with env var substitution and path resolution
 - `anthropic_tool_loop` provider runs the full multi-turn Claude tool-calling loop with trace capture, SQL extraction, and cost tracking
 - `api_endpoint` provider calls external agent APIs with configurable response parsing
-- `FileReaderTool` serves skill/knowledge files to Claude with path traversal protection
-- Provider entry point dispatches based on `agent.type` and writes trace JSON for the scorer
+- `FileReaderTool` + `DescribeTableTool` serve skill files and DB schema to the agent
 - `SnowflakeClient` executes SQL and returns structured results with error handling
 - `GoldenTest` model loads expected results from YAML (reference SQL, required columns, skill path, row comparison config)
-- 9-dimension binary scorer evaluates: execution, table alignment, column alignment, filter correctness, row completeness, row precision, value accuracy, no hallucinated columns, skill path correctness
-- Scorer entry point `get_assert()` integrates with Promptfoo's assertion interface
-- 101 unit tests, all passing (+ demo/integration tests)
+- Tiered/weighted 9-dimension scorer: critical dims (execution, row_completeness, value_accuracy) gate overall pass; remaining dims contribute a weighted score
+- DuckDB store with idempotent ingest, 3-table schema (`runs`, `test_results`, `dimension_results`), golden metadata snapshotted at ingest time
+- 187 unit tests passing, 0 warnings
 
 ---
 
@@ -68,28 +71,75 @@ What works today:
 - **`tests/test_scorer.py`** — 39 tests
 - **`tests/test_demo_scorer_phase_3.py`** — end-to-end demo (real API call + mock DB + all 9 dimensions)
 
-**Total: 101 unit tests, all passing. 2 demo/integration tests.**
+### Phase 4: Promptfoo Bridge + `bi-evals run`
+
+- **`src/bi_evals/runner/config_generator.py`** — translates `bi-evals.yaml` + goldens into `promptfooconfig.yaml`
+- **`src/bi_evals/runner/executor.py`** — invokes `npx promptfoo eval`, streams output, returns path to results JSON
+- **`src/bi_evals/cli.py`** — `bi-evals run` wired end-to-end (filters by category, writes `results/eval_<ts>.json` + `results/traces/*.json`)
+- **`src/bi_evals/tools/describe_table.py`** — new tool that exposes DB schema to the agent
+- Scorer refinements: tiered/weighted pass threshold, critical-dim gating
+
+### Phase 5: Storage + Reporting + Regression Compare
+
+- **`src/bi_evals/store/`** — DuckDB layer
+  - `schema.py` — 3 tables (`runs`, `test_results`, `dimension_results`) + indexes
+  - `client.py` — `connect(db_path)` context manager with retry on lock contention
+  - `ingest.py` — idempotent ingest (DELETE-then-INSERT per run_id), snapshots golden metadata, inlines traces
+  - `queries.py` — frozen-dataclass read helpers (`latest_run_id`, `get_run`, `aggregate_by_category`, `dimension_pass_rates`, `cost_by_model`, `test_diff`, …)
+- **`src/bi_evals/compare/diff.py`** — pure regression classifier (buckets: regressed / fixed / unchanged / added / removed) + tiered verdict (🟢/🟡/🔴)
+- **`src/bi_evals/report/`** — Jinja2 templates (`_base.html.j2`, `report.html.j2`, `compare.html.j2`) rendered via `builder.py`. Inline CSS, no external URLs.
+- **`src/bi_evals/cli.py`** — `ingest`, `report`, `compare` commands; auto-ingest on successful `run`
+- **`tests/fixtures/eval_sample/`** — real Promptfoo output with known regression
+- **`tests/test_store_schema.py`** — 3 tests
+- **`tests/test_store_ingest.py`** — 7 tests (3-table population, nested componentResult unwrap, golden snapshot, idempotent re-ingest, missing-trace tolerance)
+- **`tests/test_store_queries.py`** — 8 tests
+- **`tests/test_compare_diff.py`** — 13 tests (all bucket transitions, verdict red/amber/green, category + dimension deltas)
+- **`tests/test_report_builder.py`** — 6 tests (content presence, self-contained HTML, red verdict for seeded regression)
+- **`tests/test_cli_report.py`** — 3 end-to-end CLI smoke tests
+
+**Total: 187 unit tests passing, 0 warnings.**
 
 ---
 
 ## Remaining
 
-### Phase 4: Promptfoo Bridge + `bi-evals run`
-- Generate `promptfooconfig.yaml` from `bi-evals.yaml`
-- Wire up CLI `run` command (end-to-end: config → promptfoo → results)
+### Phase 6: Evaluation Quality — Variance, Drift, Freshness
 
-### Phase 5: Reporting + Regression
-- HTML report generator (single-file, self-contained) (`src/bi_evals/report/` — empty stub)
-- Regression comparison (`bi-evals compare`)
-- CLI `report` and `compare` commands
+Inspired by Criteo's agentic-evaluation write-up and ongoing operational experience. Three features:
 
-### Phase 6: Example Project — COVID-19
-- Complete working example in `examples/covid-19/`
-- Skill/knowledge files for COVID-19 Snowflake dataset
-- 5-8 golden tests across categories
+- **Repeat-run variance** (`repeats: N` per golden or `--repeats N` CLI flag)
+  - Aggregate pass rate and confidence interval per test across N trials
+  - Compare semantics: "pass rate dropped from 0.95±0.02 to 0.70±0.15" replaces strict T→F flip
+  - Foundation for Pillar 3 (pass@k / pass^k)
+- **Prompt-drift detection**
+  - Hash every skill/knowledge file read during a run; store hashes in `runs.prompt_snapshot`
+  - `compare` surfaces which skill files changed between runs alongside the regression — makes "what caused this?" answerable
+- **Dataset staleness tracking**
+  - `last_verified_at` field on goldens (optional)
+  - `bi-evals run` warns for goldens older than configurable threshold
+  - `report` includes a staleness section
 
-### Phase 7: CI/CD (optional)
-- GitHub Actions for PR gating and nightly runs
+### Phase 7: Polish the COVID-19 example project
+
+A working COVID-19 example already exists under `tmp/my-evals/` (config + skill files + 3 golden categories + 16+ prior runs ingested). Phase 7 promotes it from a scratch directory into a first-class, repo-shipped example and closes the gaps needed for end-to-end usability:
+
+- Move `tmp/my-evals/` → `examples/covid-19/` with cleaned-up config (no local creds, `.env.example` instead)
+- Trim results history to 2–3 representative runs (keep one with a seeded regression for the compare walkthrough)
+- Write an `examples/covid-19/README.md` with a full walkthrough: setup, `bi-evals run`, `report`, `compare`
+- Fill obvious golden-coverage gaps (aim for 8–10 tests across cases / joins / us-states / time-series / aggregations)
+- Verify the example runs cleanly on a fresh clone (new Snowflake trial or DuckDB-backed mock)
+
+### Phase 8: UI for authoring, running, and reviewing evals
+
+CLI + HTML reports cover the engineering loop. A UI is what unlocks non-developer contributors (analysts, PMs, domain experts) who should be writing goldens and reviewing regressions. Scope:
+
+- **Golden authoring** — web form to create/edit goldens: question, reference SQL, category, skill-path expectations, row comparison config. Validates against DB schema (via `DescribeTableTool`), previews row output, writes YAML to `goldens/`.
+- **Run triggering** — start a `bi-evals run` from the UI with filters (category, tags) and repeats; live progress via streaming logs
+- **Report/compare browsing** — render the existing HTML reports inline; let users pick any two runs for a compare diff without shelling out
+- **Regression drilldown** — click a regressed test → see full trace, SQL diff, skill files read, dimension failures side-by-side
+- **Auth/access** — minimal (local single-user at first); design leaves room for multi-user when the DB moves to Postgres
+
+Open design questions: embedded Flask/FastAPI + HTMX vs. a proper SPA; ship bundled with the CLI or a separate package; reuse Jinja templates or rebuild in React. Resolve before implementation starts.
 
 ---
 
@@ -108,3 +158,7 @@ What works today:
 | sqlglot for SQL parsing | Handles Snowflake dialect, aliases, CTEs without regex |
 | QueryResult.error not raised | Execution failures stored in result, not thrown — lets execution dimension report cleanly and other dimensions cascade |
 | Row comparison opt-in | `row_comparison.enabled` gates dimensions 5-7 — golden tests without expected result sets skip row comparison automatically |
+| DuckDB for local store | Embedded, file-backed, zero infra; same SQL/schema ports cleanly to Postgres later. JSON results remain source of truth; DB is the queryable view |
+| Golden metadata snapshotted at ingest | Editing a golden YAML never mutates historical runs — compare remains accurate over time |
+| Tiered regression semantics | Critical dims (execution, row_completeness, value_accuracy) can flip verdict red even if overall score masks the failure |
+| Auto-ingest at end of `run` | Single-command workflow; ingest failure warns but doesn't fail the run (JSON still on disk for retry) |

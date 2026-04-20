@@ -1,0 +1,131 @@
+{% extends "_base.html.j2" %}
+{% block title %}{{ run.project_name }} — {{ run.run_id }}{% endblock %}
+{% block content %}
+
+<h1>{{ run.project_name }}</h1>
+<div class="subtitle">
+  Run <span class="mono">{{ run.run_id }}</span>
+  {% if run.timestamp %} · {{ run.timestamp }}{% endif %}
+</div>
+
+<div class="summary-grid">
+  <div class="stat">
+    <div class="label">Tests</div>
+    <div class="value">{{ run.test_count }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Passed</div>
+    <div class="value">{{ run.pass_count }}<span class="muted" style="font-size:13px; font-weight:400;"> / {{ run.test_count }}</span></div>
+  </div>
+  <div class="stat">
+    <div class="label">Pass rate</div>
+    <div class="value">{{ overall_pass_rate_pct }}%</div>
+  </div>
+  <div class="stat">
+    <div class="label">Cost</div>
+    <div class="value">${{ "%.4f"|format(run.total_cost_usd or 0) }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Latency</div>
+    <div class="value">{{ total_latency_s }}s</div>
+  </div>
+  <div class="stat">
+    <div class="label">Tokens</div>
+    <div class="value">{{ total_tokens }}</div>
+  </div>
+</div>
+
+<h2>Category dashboard</h2>
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>Category</th>
+        <th class="num">Pass rate</th>
+        <th></th>
+        <th class="num">Avg score</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in categories %}
+      <tr>
+        <td>{{ c.category }}</td>
+        <td class="num">{{ c.pass_count }}/{{ c.test_count }}</td>
+        <td style="min-width: 200px;">
+          <div class="bar-row">
+            <div class="bar"><span class="{{ bar_class(c.pass_rate) }}" style="width: {{ (c.pass_rate * 100)|round(0, 'floor') }}%;"></span></div>
+            <div class="bar-value">{{ (c.pass_rate * 100)|round(0, 'floor') }}%</div>
+          </div>
+        </td>
+        <td class="num">{{ "%.2f"|format(c.avg_score) }}</td>
+        <td>
+          {% if c.pass_rate >= 0.9 %}<span class="pill pass">strong</span>
+          {% elif c.pass_rate >= 0.6 %}<span class="pill warn">review</span>
+          {% else %}<span class="pill fail">weak</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Dimension pass rates</h2>
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>Dimension</th>
+        <th class="num">Pass rate</th>
+        <th></th>
+        <th>Tier</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in dimensions %}
+      <tr>
+        <td>{{ d.dimension }}</td>
+        <td class="num">{{ d.pass_count }}/{{ d.total }}</td>
+        <td style="min-width: 220px;">
+          <div class="bar-row">
+            <div class="bar"><span class="{{ bar_class(d.pass_rate) }}" style="width: {{ (d.pass_rate * 100)|round(0, 'floor') }}%;"></span></div>
+            <div class="bar-value">{{ (d.pass_rate * 100)|round(0, 'floor') }}%</div>
+          </div>
+        </td>
+        <td>{% if d.is_critical %}<span class="pill fail">critical</span>{% else %}<span class="pill neutral">diagnostic</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Cost by model</h2>
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>Model</th>
+        <th class="num">Tests</th>
+        <th class="num">Cost</th>
+        <th class="num">Tokens</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in models %}
+      <tr>
+        <td class="mono">{{ m.model }}</td>
+        <td class="num">{{ m.test_count }}</td>
+        <td class="num">${{ "%.4f"|format(m.total_cost_usd) }}</td>
+        <td class="num">{{ m.total_tokens }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<p class="muted" style="margin-top: 24px;">
+  For per-test deep-dive (SQL, trace, skill path), open Promptfoo's viewer with
+  <span class="kbd">bi-evals view</span>.
+</p>
+
+{% endblock %}

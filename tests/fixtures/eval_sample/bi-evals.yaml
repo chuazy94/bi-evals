@@ -1,0 +1,27 @@
+project:
+  name: "Test Fixture Evals"
+
+agent:
+  type: "anthropic_tool_loop"
+  model: "claude-sonnet-4-5-20250929"
+  system_prompt: "system-prompt.md"
+  tools: []
+  max_rounds: 10
+
+database:
+  type: snowflake
+  connection:
+    account: "fake"
+    user: "fake"
+    private_key_path: "/tmp/fake.p8"
+
+golden_tests:
+  dir: "golden/"
+
+reporting:
+  output_dir: "reports/"
+  results_dir: "results/"
+
+storage:
+  db_path: "results/bi-evals.duckdb"
+  auto_ingest: true

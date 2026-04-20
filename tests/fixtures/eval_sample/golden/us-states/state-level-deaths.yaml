@@ -1,0 +1,43 @@
+id: us-states-001
+category: us-states
+difficulty: medium
+question: "What are the total COVID-19 deaths by state in the US? Show the top 10 states."
+
+expected_skill_path:
+  required_skills:
+    - tool: read_skill_file
+      input_contains: "SKILL.md"
+    - tool: read_skill_file
+      input_contains: "US_STATE_DATA.md"
+    - tool: describe_table
+      input_contains: "NYT_US_COVID19"
+  sequence_matters: false
+  allow_extra_skills: true
+
+reference_sql: |
+  SELECT STATE, MAX(DEATHS) AS TOTAL_DEATHS
+  FROM COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.NYT_US_COVID19
+  GROUP BY STATE
+  ORDER BY TOTAL_DEATHS DESC
+  LIMIT 10
+
+expected:
+  min_rows: 10
+  required_columns:
+    - STATE
+    - DEATHS
+  checks:
+    - column: TOTAL_DEATHS
+      condition: type
+      value: positive_number
+  row_comparison:
+    enabled: true
+    key_columns: [STATE]
+    value_columns: [TOTAL_DEATHS]
+    completeness_threshold: 0.95
+    precision_threshold: 0.95
+    value_tolerance: 0.0001
+    ignore_order: true
+
+tags: [us-states, deaths, aggregation]
+notes: "Must use NYT_US_COVID19 (not JHU). DEATHS is cumulative so MAX(DEATHS) gives the total."

@@ -14,6 +14,11 @@ from bi_evals.promptfoo.bridge import (
     run_promptfoo,
     write_promptfoo_config,
 )
+from bi_evals.report import build_compare_html, build_report_html
+from bi_evals.report.builder import sanitize_for_filename
+from bi_evals.store import connect as store_connect
+from bi_evals.store import queries as store_queries
+from bi_evals.store.ingest import ingest_run
 
 
 @click.group()
@@ -101,6 +106,19 @@ def run(ctx: click.Context, filter_pattern: str | None, dry_run: bool, verbose: 
     if exit_code != 0:
         raise click.ClickException(f"Promptfoo exited with code {exit_code}")
 
+    if config.storage.auto_ingest:
+        try:
+            db_path = config.resolve_path(config.storage.db_path)
+            with store_connect(db_path) as conn:
+                run_id = ingest_run(conn, results_output, config)
+            click.echo(f"Ingested: {run_id}")
+            click.echo(f"Report:   bi-evals report --run-id {run_id}")
+        except Exception as e:
+            click.echo(
+                f"Warning: ingest failed ({e}). Raw JSON still at {results_output}",
+                err=True,
+            )
+
     click.echo(f"\nDone. View results: npx promptfoo view")
 
 
@@ -126,20 +144,101 @@ def view(port: int) -> None:
 
 
 @cli.command()
-@click.option("--run-id", help="Specific run to report on (default: latest).")
+@click.argument("eval_json_path", type=click.Path(exists=True, dir_okay=False))
+@click.option("--force", is_flag=True, help="No-op; ingest is already idempotent.")
 @click.pass_context
-def report(ctx: click.Context, run_id: str | None) -> None:
-    """Generate HTML report from eval results."""
-    click.echo("Not yet implemented. Coming in Phase 5.")
+def ingest(ctx: click.Context, eval_json_path: str, force: bool) -> None:
+    """Ingest a Promptfoo eval_*.json into the local DuckDB store."""
+    config = BiEvalsConfig.load(ctx.obj["config_path"])
+    db_path = config.resolve_path(config.storage.db_path)
+    with store_connect(db_path) as conn:
+        run_id = ingest_run(conn, eval_json_path, config)
+    click.echo(f"Ingested: {run_id}")
+    click.echo(f"DB:       {db_path}")
 
 
 @cli.command()
-@click.argument("run1")
-@click.argument("run2")
+@click.option("--run-id", help="Specific run (default: latest in DB).")
+@click.option("--out", "out_path", type=click.Path(dir_okay=False), help="Output HTML path.")
 @click.pass_context
-def compare(ctx: click.Context, run1: str, run2: str) -> None:
-    """Compare two eval runs for regressions."""
-    click.echo("Not yet implemented. Coming in Phase 5.")
+def report(ctx: click.Context, run_id: str | None, out_path: str | None) -> None:
+    """Generate an HTML summary report from the ingested run."""
+    config = BiEvalsConfig.load(ctx.obj["config_path"])
+    db_path = config.resolve_path(config.storage.db_path)
+
+    if not db_path.exists():
+        raise click.ClickException(
+            "No runs in the DuckDB store. Run `bi-evals run` or `bi-evals ingest <path>` first."
+        )
+
+    with store_connect(db_path, read_only=True) as conn:
+        rid = run_id or store_queries.latest_run_id(conn)
+        if rid is None:
+            raise click.ClickException(
+                "No runs in the DuckDB store. Run `bi-evals run` or `bi-evals ingest <path>` first."
+            )
+        try:
+            html = build_report_html(conn, rid)
+        except KeyError:
+            raise click.ClickException(
+                f"Run '{rid}' not found in DB. Ingest it with `bi-evals ingest <eval_json>`."
+            )
+
+    out = _resolve_report_output(config, out_path, f"report_{sanitize_for_filename(rid)}.html")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(html)
+    click.echo(f"Report: {out}")
+
+
+@cli.command()
+@click.argument("run_a")
+@click.argument("run_b")
+@click.option("--out", "out_path", type=click.Path(dir_okay=False), help="Output HTML path.")
+@click.pass_context
+def compare(ctx: click.Context, run_a: str, run_b: str, out_path: str | None) -> None:
+    """Compare two runs (by run-id, or shortcuts 'latest' / 'prev')."""
+    config = BiEvalsConfig.load(ctx.obj["config_path"])
+    db_path = config.resolve_path(config.storage.db_path)
+
+    if not db_path.exists():
+        raise click.ClickException(
+            "No runs in the DuckDB store. Run `bi-evals run` or `bi-evals ingest <path>` first."
+        )
+
+    with store_connect(db_path, read_only=True) as conn:
+        a_id = _resolve_run_ref(conn, run_a)
+        b_id = _resolve_run_ref(conn, run_b)
+        try:
+            html = build_compare_html(conn, a_id, b_id)
+        except KeyError as e:
+            raise click.ClickException(str(e))
+
+    filename = f"compare_{sanitize_for_filename(a_id)}__vs__{sanitize_for_filename(b_id)}.html"
+    out = _resolve_report_output(config, out_path, filename)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(html)
+    click.echo(f"Compare: {out}")
+
+
+def _resolve_run_ref(conn, ref: str) -> str:
+    """Translate 'latest' / 'prev' to actual run_ids; otherwise return as-is."""
+    if ref == "latest":
+        rid = store_queries.latest_run_id(conn)
+        if rid is None:
+            raise click.ClickException("No runs in DB for 'latest'.")
+        return rid
+    if ref in ("prev", "previous"):
+        rid = store_queries.previous_run_id(conn)
+        if rid is None:
+            raise click.ClickException("No previous run in DB.")
+        return rid
+    return ref
+
+
+def _resolve_report_output(config: BiEvalsConfig, out_path: str | None, default_name: str) -> Path:
+    if out_path:
+        return Path(out_path).resolve()
+    return config.resolve_path(config.reporting.output_dir) / default_name
 
 
 @cli.command()
@@ -245,6 +344,10 @@ scoring:
 reporting:
   output_dir: "reports/"
   results_dir: "results/"
+
+storage:
+  db_path: "results/bi-evals.duckdb"
+  auto_ingest: true
 """
 
 _TEMPLATE_ENV = """\
