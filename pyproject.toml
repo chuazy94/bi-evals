@@ -13,6 +13,7 @@ dependencies = [
     "cryptography>=42.0",
     "snowflake-connector-python>=3.0",
     "sqlglot>=20.0",
+    "duckdb>=1.0",
 ]
 
 [dependency-groups]

@@ -1,0 +1,101 @@
+{
+  "test_id": "golden/joins/cases-vs-mobility.yaml",
+  "agent_type": "anthropic_tool_loop",
+  "model": "claude-sonnet-4-5-20250929",
+  "rounds": 4,
+  "trace": [
+    {
+      "round": 1,
+      "type": "text",
+      "tool_name": null,
+      "tool_input": null,
+      "tool_result_preview": null,
+      "text": "I'll help you generate a SQL query to compare daily new confirmed COVID-19 cases with workplace mobility changes in Singapore during 2021. Let me start by reading the relevant documentation.",
+      "timestamp_ms": 1791
+    },
+    {
+      "round": 1,
+      "type": "tool_use",
+      "tool_name": "read_skill_file",
+      "tool_input": {
+        "path": "SKILL.md"
+      },
+      "tool_result_preview": "# COVID-19 Epidemiology Reporting Skill\n\nYou are a reporting agent for COVID-19 epidemiological data stored in Snowflake. Use this routing table to decide which knowledge file(s) to read, then **always** run `describe_table` on each table before writing SQL.\n\n## Workflow\n\n1. Read this SKILL.md to identify which knowledge file(s) to consult.\n2. Read the relevant knowledge file(s) \u2014 they explain data semantics and gotchas.\n3. **Run `describe_table` on every table you plan to query.** This gives yo...",
+      "text": null,
+      "timestamp_ms": 1792
+    },
+    {
+      "round": 2,
+      "type": "tool_use",
+      "tool_name": "read_skill_file",
+      "tool_input": {
+        "path": "knowledge/CASE_TRACKING.md"
+      },
+      "tool_result_preview": "# Case Tracking \u2014 JHU COVID-19 Data\n\n## Table\n\n`COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.JHU_COVID_19`\n\nSource: Johns Hopkins University CSSE. Updated daily through March 2023.\n\n**Run `describe_table` on this table to get exact column names before writing SQL.**\n\n## Critical gotchas\n\n1. **Always filter on the case-type column**. Without a filter, you will mix confirmed cases and deaths in the same aggregation. Values are `'Confirmed'` and `'Deaths'`.\n2. **There are two count columns**: CASES is cumul...",
+      "text": null,
+      "timestamp_ms": 3384
+    },
+    {
+      "round": 2,
+      "type": "tool_use",
+      "tool_name": "read_skill_file",
+      "tool_input": {
+        "path": "knowledge/MOBILITY_DATA.md"
+      },
+      "tool_result_preview": "# Mobility Data \u2014 Google Community Mobility Reports\n\n## Table\n\n`COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.GOOG_GLOBAL_MOBILITY_REPORT`\n\nSource: Google Community Mobility Reports. Measures movement trends by place category relative to a pre-COVID baseline (Jan 3 \u2013 Feb 6, 2020).\n\n**Run `describe_table` on this table to get exact column names before writing SQL.**\n\n## Critical gotchas\n\n1. **Values are percentage changes from baseline**, not absolute counts. A value of `-20` means 20% below the Jan\u2013Feb 20...",
+      "text": null,
+      "timestamp_ms": 3384
+    },
+    {
+      "round": 3,
+      "type": "text",
+      "tool_name": null,
+      "tool_input": null,
+      "tool_result_preview": null,
+      "text": "Now let me describe both tables to get the exact column names:",
+      "timestamp_ms": 5886
+    },
+    {
+      "round": 3,
+      "type": "tool_use",
+      "tool_name": "describe_table",
+      "tool_input": {
+        "table_name": "COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.JHU_COVID_19"
+      },
+      "tool_result_preview": "Columns for COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.JHU_COVID_19:\n- COUNTRY_REGION (VARCHAR(16777216))  -- ISO-3166-1 entity name\n- PROVINCE_STATE (VARCHAR(16777216))  -- ISO-3166-2 entity name\n- COUNTY (VARCHAR(16777216))  -- County name for US counties\n- FIPS (VARCHAR(16777216))  -- County FIPS code\n- DATE (DATE)  -- Date of data point\n- CASE_TYPE (VARCHAR(16777216))  -- Case type: one of confirmed, active, recovered or deaths\n- CASES (NUMBER(38,0))  -- Case count in geography and case type\n- LONG...",
+      "text": null,
+      "timestamp_ms": 9434
+    },
+    {
+      "round": 3,
+      "type": "tool_use",
+      "tool_name": "describe_table",
+      "tool_input": {
+        "table_name": "COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.GOOG_GLOBAL_MOBILITY_REPORT"
+      },
+      "tool_result_preview": "Columns for COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.GOOG_GLOBAL_MOBILITY_REPORT:\n- COUNTRY_REGION (VARCHAR(250))  -- Source Country\n- PROVINCE_STATE (VARCHAR(250))  -- State or Province\n- ISO_3166_1 (VARCHAR(2))  -- 2 Letters Country code\n- ISO_3166_2 (VARCHAR(5))  -- 2 Letters State/Province code\n- DATE (DATE)  -- Date of report\n- GROCERY_AND_PHARMACY_CHANGE_PERC (FLOAT)  -- Mobility trends for places like grocery markets, food warehouses, farmers markets, specialty food shops, drug stores, and pha...",
+      "text": null,
+      "timestamp_ms": 10911
+    },
+    {
+      "round": 4,
+      "type": "text",
+      "tool_name": null,
+      "tool_input": null,
+      "tool_result_preview": null,
+      "text": "Perfect! Now I have all the information I need. Let me create a SQL query that:\n1. Joins the JHU COVID-19 case data with Google mobility data for Singapore\n2. Filters for 2021\n3. Shows daily new confirmed cases and workplace mobility percentage change\n\n**Assumptions:**\n- \"Singapore\" is the country name in both tables\n- For country-level data, we need to filter where PROVINCE_STATE is NULL in the mobility table\n- We want confirmed cases (CASE_TYPE = 'Confirmed')\n- Daily new cases come from the DIFFERENCE column in the JHU table\n\n```sql\nSELECT \n    jhu.DATE,\n    jhu.DIFFERENCE AS DAILY_NEW_CASES,\n    mob.WORKPLACES_CHANGE_PERC AS WORKPLACE_MOBILITY_CHANGE\nFROM \n    COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.JHU_COVID_19 jhu\nINNER JOIN \n    COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.GOOG_GLOBAL_MOBILITY_REPORT mob\n    ON jhu.COUNTRY_REGION = mob.COUNTRY_REGION \n    AND jhu.DATE = mob.DATE\nWHERE \n    jhu.COUNTRY_REGION = 'Singapore'\n    AND jhu.CASE_TYPE = 'Confirmed'\n    AND YEAR(jhu.DATE) = 2021\n    AND mob.PROVINCE_STATE IS NULL\nORDER BY \n    jhu.DATE;\n```\n\nThis query will:\n- Join the COVID-19 case data with mobility data on country and date\n- Filter for Singapore in 2021\n- Show only confirmed cases (not deaths)\n- Filter for country-level mobility data (PROVINCE_STATE IS NULL)\n- Display the date, daily new confirmed cases, and workplace mobility percentage change\n- Order results chronologically by date",
+      "timestamp_ms": 19844
+    }
+  ],
+  "files_read": [
+    "SKILL.md",
+    "knowledge/CASE_TRACKING.md",
+    "knowledge/MOBILITY_DATA.md"
+  ],
+  "generated_sql": "SELECT \n    jhu.DATE,\n    jhu.DIFFERENCE AS DAILY_NEW_CASES,\n    mob.WORKPLACES_CHANGE_PERC AS WORKPLACE_MOBILITY_CHANGE\nFROM \n    COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.JHU_COVID_19 jhu\nINNER JOIN \n    COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.GOOG_GLOBAL_MOBILITY_REPORT mob\n    ON jhu.COUNTRY_REGION = mob.COUNTRY_REGION \n    AND jhu.DATE = mob.DATE\nWHERE \n    jhu.COUNTRY_REGION = 'Singapore'\n    AND jhu.CASE_TYPE = 'Confirmed'\n    AND YEAR(jhu.DATE) = 2021\n    AND mob.PROVINCE_STATE IS NULL\nORDER BY \n    jhu.DATE;",
+  "prompt_tokens": 8747,
+  "completion_tokens": 790,
+  "total_tokens": 9537,
+  "cost": 0.038091,
+  "latency_ms": 19844
+}

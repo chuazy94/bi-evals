@@ -1,0 +1,50 @@
+id: cases-001
+category: cases
+difficulty: medium
+question: "What are the top 10 countries by total confirmed COVID-19 cases?"
+
+expected_skill_path:
+  required_skills:
+    - tool: read_skill_file
+      input_contains: "SKILL.md"
+    - tool: read_skill_file
+      input_contains: "CASE_TRACKING.md"
+    - tool: describe_table
+      input_contains: "JHU_COVID_19"
+  sequence_matters: false
+  allow_extra_skills: true
+
+reference_sql: |
+  WITH MAX_ACROSS_REGIONS AS (
+  SELECT 
+  country_region,
+  province_state,
+  county,
+  MAX(CASES) as total_cases
+  FROM COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.JHU_COVID_19
+  WHERE CASE_TYPE = 'Confirmed'
+  group by 1,2,3
+  )
+  select 
+  country_region, 
+  SUM(total_cases) as total_cases
+  from MAX_ACROSS_REGIONS
+  group by 1
+  order by 2 desc
+  limit 10
+
+expected:
+  min_rows: 10
+  required_columns:
+    - COUNTRY_REGION
+    - CASES
+  row_comparison:
+    enabled: true
+    key_columns: [COUNTRY_REGION]
+    completeness_threshold: 0.8
+    precision_threshold: 0.8
+    value_tolerance: 0.05
+    ignore_order: true
+
+tags: [cases, aggregation, global]
+notes: "Must filter CASE_TYPE = 'Confirmed' and aggregate across all provinces, counties in the country_region to get the total cases in the country."

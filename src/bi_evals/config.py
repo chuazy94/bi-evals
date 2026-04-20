@@ -132,6 +132,11 @@ class ReportingConfig(BaseModel):
     results_dir: str = "results/"
 
 
+class StorageConfig(BaseModel):
+    db_path: str = "results/bi-evals.duckdb"
+    auto_ingest: bool = True
+
+
 class ProjectConfig(BaseModel):
     name: str
 
@@ -143,6 +148,7 @@ class BiEvalsConfig(BaseModel):
     golden_tests: GoldenTestsConfig = GoldenTestsConfig()
     scoring: ScoringConfig = ScoringConfig()
     reporting: ReportingConfig = ReportingConfig()
+    storage: StorageConfig = StorageConfig()
 
     # Set after loading — not part of the YAML schema
     _base_dir: Path = Path(".")

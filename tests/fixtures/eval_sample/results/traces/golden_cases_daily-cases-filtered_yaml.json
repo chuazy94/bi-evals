@@ -1,0 +1,69 @@
+{
+  "test_id": "golden/cases/daily-cases-filtered.yaml",
+  "agent_type": "anthropic_tool_loop",
+  "model": "claude-sonnet-4-5-20250929",
+  "rounds": 4,
+  "trace": [
+    {
+      "round": 1,
+      "type": "text",
+      "tool_name": null,
+      "tool_input": null,
+      "tool_result_preview": null,
+      "text": "I'll help you find the number of new confirmed COVID-19 cases in the United States on 2023-01-15. Let me start by reading the necessary documentation.",
+      "timestamp_ms": 1843
+    },
+    {
+      "round": 1,
+      "type": "tool_use",
+      "tool_name": "read_skill_file",
+      "tool_input": {
+        "path": "SKILL.md"
+      },
+      "tool_result_preview": "# COVID-19 Epidemiology Reporting Skill\n\nYou are a reporting agent for COVID-19 epidemiological data stored in Snowflake. Use this routing table to decide which knowledge file(s) to read, then **always** run `describe_table` on each table before writing SQL.\n\n## Workflow\n\n1. Read this SKILL.md to identify which knowledge file(s) to consult.\n2. Read the relevant knowledge file(s) \u2014 they explain data semantics and gotchas.\n3. **Run `describe_table` on every table you plan to query.** This gives yo...",
+      "text": null,
+      "timestamp_ms": 1844
+    },
+    {
+      "round": 2,
+      "type": "tool_use",
+      "tool_name": "read_skill_file",
+      "tool_input": {
+        "path": "knowledge/CASE_TRACKING.md"
+      },
+      "tool_result_preview": "# Case Tracking \u2014 JHU COVID-19 Data\n\n## Table\n\n`COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.JHU_COVID_19`\n\nSource: Johns Hopkins University CSSE. Updated daily through March 2023.\n\n**Run `describe_table` on this table to get exact column names before writing SQL.**\n\n## Critical gotchas\n\n1. **Always filter on the case-type column**. Without a filter, you will mix confirmed cases and deaths in the same aggregation. Values are `'Confirmed'` and `'Deaths'`.\n2. **There are two count columns**: CASES is cumul...",
+      "text": null,
+      "timestamp_ms": 3163
+    },
+    {
+      "round": 3,
+      "type": "tool_use",
+      "tool_name": "describe_table",
+      "tool_input": {
+        "table_name": "COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.JHU_COVID_19"
+      },
+      "tool_result_preview": "Columns for COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.JHU_COVID_19:\n- COUNTRY_REGION (VARCHAR(16777216))  -- ISO-3166-1 entity name\n- PROVINCE_STATE (VARCHAR(16777216))  -- ISO-3166-2 entity name\n- COUNTY (VARCHAR(16777216))  -- County name for US counties\n- FIPS (VARCHAR(16777216))  -- County FIPS code\n- DATE (DATE)  -- Date of data point\n- CASE_TYPE (VARCHAR(16777216))  -- Case type: one of confirmed, active, recovered or deaths\n- CASES (NUMBER(38,0))  -- Case count in geography and case type\n- LONG...",
+      "text": null,
+      "timestamp_ms": 6236
+    },
+    {
+      "round": 4,
+      "type": "text",
+      "tool_name": null,
+      "tool_input": null,
+      "tool_result_preview": null,
+      "text": "Perfect! Now I have all the information I need. Based on the documentation:\n- I need to filter on `CASE_TYPE = 'Confirmed'` to get confirmed cases\n- I need to use the `DIFFERENCE` column which represents daily new cases\n- I need to filter on `COUNTRY_REGION = 'United States'` (using the full country name)\n- I need to filter on the specific date `2023-01-15`\n- I need to sum across all provinces/counties to get the total for the country\n\n```sql\nSELECT \n    DATE,\n    COUNTRY_REGION,\n    SUM(DIFFERENCE) AS NEW_CONFIRMED_CASES\nFROM COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.JHU_COVID_19\nWHERE \n    COUNTRY_REGION = 'United States'\n    AND DATE = '2023-01-15'\n    AND CASE_TYPE = 'Confirmed'\nGROUP BY DATE, COUNTRY_REGION\n```",
+      "timestamp_ms": 10559
+    }
+  ],
+  "files_read": [
+    "SKILL.md",
+    "knowledge/CASE_TRACKING.md"
+  ],
+  "generated_sql": "SELECT \n    DATE,\n    COUNTRY_REGION,\n    SUM(DIFFERENCE) AS NEW_CONFIRMED_CASES\nFROM COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.JHU_COVID_19\nWHERE \n    COUNTRY_REGION = 'United States'\n    AND DATE = '2023-01-15'\n    AND CASE_TYPE = 'Confirmed'\nGROUP BY DATE, COUNTRY_REGION",
+  "prompt_tokens": 7328,
+  "completion_tokens": 463,
+  "total_tokens": 7791,
+  "cost": 0.028929,
+  "latency_ms": 10559
+}

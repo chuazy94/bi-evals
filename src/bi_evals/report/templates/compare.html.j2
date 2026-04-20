@@ -1,0 +1,130 @@
+{% extends "_base.html.j2" %}
+{% block title %}Compare: {{ run_a.run_id }} → {{ run_b.run_id }}{% endblock %}
+{% block content %}
+
+<h1>Comparison</h1>
+<div class="subtitle">
+  <span class="mono">{{ run_a.run_id }}</span> → <span class="mono">{{ run_b.run_id }}</span>
+</div>
+
+<div class="verdict {{ verdict_class }}">
+  <div class="emoji">{{ verdict_emoji }}</div>
+  <div>
+    <div class="text">{{ verdict_headline }}</div>
+    <div class="sub">{{ verdict_sub }}</div>
+  </div>
+</div>
+
+<h2>Summary</h2>
+<div class="summary-grid">
+  <div class="stat"><div class="label">Regressed</div><div class="value">{{ counts.regressed }}</div></div>
+  <div class="stat"><div class="label">Fixed</div><div class="value">{{ counts.fixed }}</div></div>
+  <div class="stat"><div class="label">Unchanged pass</div><div class="value">{{ counts.unchanged_pass }}</div></div>
+  <div class="stat"><div class="label">Unchanged fail</div><div class="value">{{ counts.unchanged_fail }}</div></div>
+  <div class="stat"><div class="label">Added</div><div class="value">{{ counts.added }}</div></div>
+  <div class="stat"><div class="label">Removed</div><div class="value">{{ counts.removed }}</div></div>
+</div>
+
+{% if transitions %}
+<h2>Test transitions</h2>
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>Test</th>
+        <th>Category</th>
+        <th>Before</th>
+        <th>After</th>
+        <th class="num">Score Δ</th>
+        <th>Details</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in transitions %}
+      <tr>
+        <td class="mono">{{ t.pair.test_id }}</td>
+        <td>{{ t.pair.category or "—" }}</td>
+        <td>{{ pass_pill(t.pair.a_passed) }}</td>
+        <td>{{ pass_pill(t.pair.b_passed) }}</td>
+        <td class="num">
+          {% if t.score_delta is not none %}
+            <span class="delta {% if t.score_delta > 0 %}up{% elif t.score_delta < 0 %}down{% else %}flat{% endif %}">
+              {{ "%+.2f"|format(t.score_delta) }}
+            </span>
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+        <td>
+          {% if t.bucket == 'regressed' %}
+            <span class="pill fail">regressed</span>
+            {% if t.regressed_dims %}
+              <span class="muted" style="font-size:12px;">{{ t.regressed_dims|join(', ') }}</span>
+            {% endif %}
+          {% elif t.bucket == 'fixed' %}<span class="pill pass">fixed</span>
+          {% elif t.bucket == 'added' %}<span class="pill warn">added</span>
+          {% elif t.bucket == 'removed' %}<span class="pill warn">removed</span>
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<h2>Category deltas</h2>
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>Category</th>
+        <th class="num">Before</th>
+        <th class="num">After</th>
+        <th class="num">Δ pass rate</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for cd in category_deltas %}
+      <tr>
+        <td>{{ cd.category }}</td>
+        <td class="num">{{ cd.a_pass_count }}/{{ cd.a_total }} ({{ (cd.a_pass_rate*100)|round(0,'floor') }}%)</td>
+        <td class="num">{{ cd.b_pass_count }}/{{ cd.b_total }} ({{ (cd.b_pass_rate*100)|round(0,'floor') }}%)</td>
+        <td class="num">
+          <span class="delta {% if cd.pass_rate_delta > 0 %}up{% elif cd.pass_rate_delta < 0 %}down{% else %}flat{% endif %}">
+            {{ "%+.0f"|format(cd.pass_rate_delta*100) }}%
+          </span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Dimension deltas</h2>
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>Dimension</th>
+        <th class="num">Before</th>
+        <th class="num">After</th>
+        <th class="num">Δ pass rate</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for dd in dimension_deltas %}
+      <tr>
+        <td>{{ dd.dimension }}</td>
+        <td class="num">{{ dd.a_pass_count }}/{{ dd.a_total }} ({{ (dd.a_pass_rate*100)|round(0,'floor') }}%)</td>
+        <td class="num">{{ dd.b_pass_count }}/{{ dd.b_total }} ({{ (dd.b_pass_rate*100)|round(0,'floor') }}%)</td>
+        <td class="num">
+          <span class="delta {% if dd.pass_rate_delta > 0 %}up{% elif dd.pass_rate_delta < 0 %}down{% else %}flat{% endif %}">
+            {{ "%+.0f"|format(dd.pass_rate_delta*100) }}%
+          </span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

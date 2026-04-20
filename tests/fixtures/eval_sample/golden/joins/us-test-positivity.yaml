@@ -1,0 +1,75 @@
+id: joins-001
+category: joins
+difficulty: hard
+question: "What was the COVID test positivity rate by state in January 2021? Show the state name, total new cases, total tests, and positivity rate ordered by the state name."
+
+expected_skill_path:
+  required_skills:
+    - tool: read_skill_file
+      input_contains: "SKILL.md"
+    - tool: read_skill_file
+      input_contains: "US_STATE_DATA.md"
+    - tool: read_skill_file
+      input_contains: "TESTING_DATA.md"
+    - tool: describe_table
+      input_contains: "NYT_US_COVID19"
+    - tool: describe_table
+      input_contains: "CT_US_COVID_TESTS"
+  sequence_matters: false
+  allow_extra_skills: true
+
+reference_sql: |
+  WITH testing_jan_2021 AS (
+  SELECT 
+    PROVINCE_STATE AS state,
+    ISO3166_2,
+    SUM(POSITIVE_SINCE_PREVIOUS_DAY) AS total_positive_tests,
+    SUM(TOTAL_SINCE_PREVIOUS_DAY) AS total_tests
+  FROM COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.CT_US_COVID_TESTS
+  WHERE DATE >= '2021-01-01' 
+    AND DATE < '2021-02-01'
+  GROUP BY PROVINCE_STATE, ISO3166_2
+  ),
+  cases_jan_2021 AS (
+    SELECT 
+    STATE,
+    ISO3166_2,
+    SUM(CASES_SINCE_PREV_DAY) AS total_new_cases
+  FROM COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.NYT_US_COVID19
+  WHERE DATE >= '2021-01-01' 
+    AND DATE < '2021-02-01'
+  GROUP BY STATE, ISO3166_2
+  )
+  SELECT 
+    c.STATE AS state_name,
+    c.total_new_cases,
+    t.total_tests,
+    ROUND(100.0 * t.total_positive_tests / NULLIF(t.total_tests, 0), 2) AS positivity_rate
+  FROM cases_jan_2021 c
+  INNER JOIN testing_jan_2021 t 
+    ON c.ISO3166_2 = t.ISO3166_2
+  WHERE t.total_tests IS NOT NULL 
+  ORDER BY state_name
+
+expected:
+  min_rows: 1
+  required_columns:
+    - STATE
+    - CASES
+    - POSITIVE_SINCE_PREVIOUS_DAY
+  row_comparison:
+    enabled: true
+    key_columns: [STATE]
+    completeness_threshold: 0.8
+    precision_threshold: 0.8
+    value_tolerance: 0.1
+    ignore_order: true
+
+tags: [joins, testing, positivity, us-states]
+notes: >
+  Joins NYT_US_COVID19 with CT_US_COVID_TESTS via ISO3166_2.
+  CT uses PROVINCE_STATE (full names) while NYT uses STATE — join on ISO3166_2.
+  CT has POSITIVE_SINCE_PREVIOUS_DAY as a pre-computed daily column.
+  NYT has county-level rows so must aggregate to state level first.
+  Positivity rate may exceed 1.0 due to different data sources/methodologies.
+  CT data ends March 2021 so January 2021 is valid.

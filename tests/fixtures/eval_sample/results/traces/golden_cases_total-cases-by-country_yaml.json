@@ -1,0 +1,87 @@
+{
+  "test_id": "golden/cases/total-cases-by-country.yaml",
+  "agent_type": "anthropic_tool_loop",
+  "model": "claude-sonnet-4-5-20250929",
+  "rounds": 4,
+  "trace": [
+    {
+      "round": 1,
+      "type": "text",
+      "tool_name": null,
+      "tool_input": null,
+      "tool_result_preview": null,
+      "text": "I'll help you find the top 10 countries by total confirmed COVID-19 cases. Let me start by reading the routing table to identify the correct knowledge file.",
+      "timestamp_ms": 1894
+    },
+    {
+      "round": 1,
+      "type": "tool_use",
+      "tool_name": "read_skill_file",
+      "tool_input": {
+        "path": "SKILL.md"
+      },
+      "tool_result_preview": "# COVID-19 Epidemiology Reporting Skill\n\nYou are a reporting agent for COVID-19 epidemiological data stored in Snowflake. Use this routing table to decide which knowledge file(s) to read, then **always** run `describe_table` on each table before writing SQL.\n\n## Workflow\n\n1. Read this SKILL.md to identify which knowledge file(s) to consult.\n2. Read the relevant knowledge file(s) \u2014 they explain data semantics and gotchas.\n3. **Run `describe_table` on every table you plan to query.** This gives yo...",
+      "text": null,
+      "timestamp_ms": 1895
+    },
+    {
+      "round": 2,
+      "type": "text",
+      "tool_name": null,
+      "tool_input": null,
+      "tool_result_preview": null,
+      "text": "Now let me read the knowledge file for global case tracking:",
+      "timestamp_ms": 3822
+    },
+    {
+      "round": 2,
+      "type": "tool_use",
+      "tool_name": "read_skill_file",
+      "tool_input": {
+        "path": "knowledge/CASE_TRACKING.md"
+      },
+      "tool_result_preview": "# Case Tracking \u2014 JHU COVID-19 Data\n\n## Table\n\n`COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.JHU_COVID_19`\n\nSource: Johns Hopkins University CSSE. Updated daily through March 2023.\n\n**Run `describe_table` on this table to get exact column names before writing SQL.**\n\n## Critical gotchas\n\n1. **Always filter on the case-type column**. Without a filter, you will mix confirmed cases and deaths in the same aggregation. Values are `'Confirmed'` and `'Deaths'`.\n2. **There are two count columns**: CASES is cumul...",
+      "text": null,
+      "timestamp_ms": 3824
+    },
+    {
+      "round": 3,
+      "type": "text",
+      "tool_name": null,
+      "tool_input": null,
+      "tool_result_preview": null,
+      "text": "Now let me describe the table to get the exact column names:",
+      "timestamp_ms": 6698
+    },
+    {
+      "round": 3,
+      "type": "tool_use",
+      "tool_name": "describe_table",
+      "tool_input": {
+        "table_name": "COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.JHU_COVID_19"
+      },
+      "tool_result_preview": "Columns for COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.JHU_COVID_19:\n- COUNTRY_REGION (VARCHAR(16777216))  -- ISO-3166-1 entity name\n- PROVINCE_STATE (VARCHAR(16777216))  -- ISO-3166-2 entity name\n- COUNTY (VARCHAR(16777216))  -- County name for US counties\n- FIPS (VARCHAR(16777216))  -- County FIPS code\n- DATE (DATE)  -- Date of data point\n- CASE_TYPE (VARCHAR(16777216))  -- Case type: one of confirmed, active, recovered or deaths\n- CASES (NUMBER(38,0))  -- Case count in geography and case type\n- LONG...",
+      "text": null,
+      "timestamp_ms": 8192
+    },
+    {
+      "round": 4,
+      "type": "text",
+      "tool_name": null,
+      "tool_input": null,
+      "tool_result_preview": null,
+      "text": "Perfect! Now I have all the information I need. Based on the knowledge file guidance, I need to:\n1. Filter for `CASE_TYPE = 'Confirmed'`\n2. Find the maximum cumulative cases (CASES column) for each country\n3. Sum across all provinces/counties within each country\n4. Rank by total and get the top 10\n\n```sql\nSELECT \n    COUNTRY_REGION,\n    SUM(MAX_CASES) AS TOTAL_CONFIRMED_CASES\nFROM (\n    SELECT \n        COUNTRY_REGION,\n        PROVINCE_STATE,\n        COUNTY,\n        MAX(CASES) AS MAX_CASES\n    FROM COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.JHU_COVID_19\n    WHERE CASE_TYPE = 'Confirmed'\n    GROUP BY COUNTRY_REGION, PROVINCE_STATE, COUNTY\n)\nGROUP BY COUNTRY_REGION\nORDER BY TOTAL_CONFIRMED_CASES DESC\nLIMIT 10;\n```\n\nThis query:\n1. Filters for confirmed cases only\n2. Gets the maximum cumulative case count for each county/province/state (since CASES is a running total)\n3. Aggregates those maximums to the country level\n4. Orders by total confirmed cases descending and returns the top 10 countries",
+      "timestamp_ms": 13836
+    }
+  ],
+  "files_read": [
+    "SKILL.md",
+    "knowledge/CASE_TRACKING.md"
+  ],
+  "generated_sql": "SELECT \n    COUNTRY_REGION,\n    SUM(MAX_CASES) AS TOTAL_CONFIRMED_CASES\nFROM (\n    SELECT \n        COUNTRY_REGION,\n        PROVINCE_STATE,\n        COUNTY,\n        MAX(CASES) AS MAX_CASES\n    FROM COVID19_EPIDEMIOLOGICAL_DATA.PUBLIC.JHU_COVID_19\n    WHERE CASE_TYPE = 'Confirmed'\n    GROUP BY COUNTRY_REGION, PROVINCE_STATE, COUNTY\n)\nGROUP BY COUNTRY_REGION\nORDER BY TOTAL_CONFIRMED_CASES DESC\nLIMIT 10;",
+  "prompt_tokens": 7334,
+  "completion_tokens": 565,
+  "total_tokens": 7899,
+  "cost": 0.030477,
+  "latency_ms": 13836
+}
