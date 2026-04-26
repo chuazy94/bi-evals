@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import click
 import yaml
 
 from bi_evals.config import BiEvalsConfig
+from bi_evals.golden.loader import load_golden_tests_with_paths
 from bi_evals.promptfoo.bridge import (
+    filter_tests as bridge_filter_tests,
     generate_promptfoo_config,
     run_promptfoo,
     write_promptfoo_config,
@@ -65,11 +67,26 @@ def init(target_dir: str) -> None:
 @click.option("--dry-run", is_flag=True, help="Generate promptfoo config without running.")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose Promptfoo output.")
 @click.option("--no-cache", is_flag=True, help="Disable Promptfoo provider cache (force fresh API calls).")
+@click.option("--repeats", type=int, default=None, help="Override scoring.repeats: run each golden N times.")
+@click.option("--yes", "-y", is_flag=True, help="Skip cost-estimate confirmation prompt.")
 @click.pass_context
-def run(ctx: click.Context, filter_pattern: str | None, dry_run: bool, verbose: bool, no_cache: bool) -> None:
+def run(
+    ctx: click.Context,
+    filter_pattern: str | None,
+    dry_run: bool,
+    verbose: bool,
+    no_cache: bool,
+    repeats: int | None,
+    yes: bool,
+) -> None:
     """Run the eval suite via Promptfoo."""
     config_path = ctx.obj["config_path"]
     config = BiEvalsConfig.load(config_path)
+
+    if repeats is not None:
+        if repeats < 1:
+            raise click.ClickException("--repeats must be >= 1")
+        config.scoring.repeats = repeats
 
     pf_config = generate_promptfoo_config(config, config_path, filter_pattern)
     test_count = len(pf_config.get("tests", []))
@@ -81,8 +98,22 @@ def run(ctx: click.Context, filter_pattern: str | None, dry_run: bool, verbose: 
             "No golden tests found. Add tests to the golden/ directory."
         )
 
+    _warn_stale_goldens(config, filter_pattern)
+
+    models = list(config.agent.models) if config.agent.models else ([config.agent.model] if config.agent.model else [])
+    total_trials = test_count * max(1, len(models)) * max(1, config.scoring.repeats)
+
     click.echo(f"Project: {config.project.name}")
     click.echo(f"Tests:   {test_count}")
+    if len(models) > 1:
+        click.echo(f"Models:  {', '.join(models)}")
+    if config.scoring.repeats > 1:
+        click.echo(f"Repeats: {config.scoring.repeats}")
+    if total_trials > test_count:
+        click.echo(f"Trials:  {total_trials} (cost multiplier: {total_trials / test_count:.1f}x)")
+        if not yes and not dry_run:
+            if not click.confirm("Proceed?", default=True):
+                raise click.Abort()
 
     if dry_run:
         click.echo("\n--- Generated promptfooconfig.yaml ---")
@@ -101,7 +132,13 @@ def run(ctx: click.Context, filter_pattern: str | None, dry_run: bool, verbose: 
     click.echo(f"Results: {results_output}")
     click.echo()
 
-    exit_code = run_promptfoo(pf_config_path, results_output, verbose=verbose, no_cache=no_cache)
+    exit_code = run_promptfoo(
+        pf_config_path,
+        results_output,
+        verbose=verbose,
+        no_cache=no_cache,
+        repeat=max(1, config.scoring.repeats),
+    )
 
     if exit_code != 0:
         raise click.ClickException(f"Promptfoo exited with code {exit_code}")
@@ -111,8 +148,15 @@ def run(ctx: click.Context, filter_pattern: str | None, dry_run: bool, verbose: 
             db_path = config.resolve_path(config.storage.db_path)
             with store_connect(db_path) as conn:
                 run_id = ingest_run(conn, results_output, config)
+                alert = store_queries.cost_alerts(
+                    conn, run_id,
+                    multiplier=config.storage.cost_alert_multiplier,
+                    window=config.storage.cost_alert_window,
+                )
             click.echo(f"Ingested: {run_id}")
             click.echo(f"Report:   bi-evals report --run-id {run_id}")
+            if alert is not None:
+                _echo_cost_alert(alert)
         except Exception as e:
             click.echo(
                 f"Warning: ingest failed ({e}). Raw JSON still at {results_output}",
@@ -178,7 +222,12 @@ def report(ctx: click.Context, run_id: str | None, out_path: str | None) -> None
                 "No runs in the DuckDB store. Run `bi-evals run` or `bi-evals ingest <path>` first."
             )
         try:
-            html = build_report_html(conn, rid)
+            html = build_report_html(
+                conn, rid,
+                stale_after_days=config.scoring.stale_after_days,
+                cost_alert_multiplier=config.storage.cost_alert_multiplier,
+                cost_alert_window=config.storage.cost_alert_window,
+            )
         except KeyError:
             raise click.ClickException(
                 f"Run '{rid}' not found in DB. Ingest it with `bi-evals ingest <eval_json>`."
@@ -209,7 +258,10 @@ def compare(ctx: click.Context, run_a: str, run_b: str, out_path: str | None) ->
         a_id = _resolve_run_ref(conn, run_a)
         b_id = _resolve_run_ref(conn, run_b)
         try:
-            html = build_compare_html(conn, a_id, b_id)
+            html = build_compare_html(
+                conn, a_id, b_id,
+                regression_threshold=config.compare.regression_threshold,
+            )
         except KeyError as e:
             raise click.ClickException(str(e))
 
@@ -242,10 +294,132 @@ def _resolve_report_output(config: BiEvalsConfig, out_path: str | None, default_
 
 
 @cli.command()
+@click.option("--last-n", "last_n", default=10, help="Number of recent runs to consider.")
+@click.option("--limit", default=20, help="Maximum tests to list.")
+@click.pass_context
+def flakiness(ctx: click.Context, last_n: int, limit: int) -> None:
+    """List tests ranked by cross-run flip count (unstable outcomes)."""
+    config = BiEvalsConfig.load(ctx.obj["config_path"])
+    db_path = config.resolve_path(config.storage.db_path)
+
+    if not db_path.exists():
+        raise click.ClickException(
+            "No runs in the DuckDB store. Run `bi-evals run` first."
+        )
+
+    with store_connect(db_path, read_only=True) as conn:
+        results = store_queries.flakiest_tests(conn, last_n_runs=last_n, limit=limit)
+
+    if not results:
+        click.echo("No tests with >1 run in history. Accumulate more runs first.")
+        return
+
+    click.echo(f"{'TEST':<60}  {'RUNS':>4}  {'FLIPS':>5}  {'PASS%':>5}  STREAK")
+    click.echo("-" * 90)
+    for s in results:
+        streak = (
+            f"{s.current_streak} pass" if s.current_streak > 0
+            else f"{-s.current_streak} fail" if s.current_streak < 0
+            else "—"
+        )
+        click.echo(
+            f"{s.test_id[:60]:<60}  {s.runs_observed:>4}  "
+            f"{s.flip_count:>5}  {int(s.pass_rate_overall * 100):>4}%  {streak}"
+        )
+
+
+@cli.command()
+@click.option("--last-n", "last_n", default=20, help="Number of recent runs to inspect.")
+@click.pass_context
+def cost(ctx: click.Context, last_n: int) -> None:
+    """List recent runs with their cost multiplier vs. prior median."""
+    config = BiEvalsConfig.load(ctx.obj["config_path"])
+    db_path = config.resolve_path(config.storage.db_path)
+    if not db_path.exists():
+        raise click.ClickException(
+            "No runs in the DuckDB store. Run `bi-evals run` first."
+        )
+
+    with store_connect(db_path, read_only=True) as conn:
+        rows = store_queries.cost_history(conn, last_n=last_n)
+
+    if not rows:
+        click.echo("No runs in DB.")
+        return
+
+    threshold = config.storage.cost_alert_multiplier
+    click.echo(f"{'RUN':<40}  {'COST':>8}  {'MULT':>5}  STATUS")
+    click.echo("-" * 72)
+    for run, mult in rows:
+        cost_str = f"${run.total_cost_usd:.4f}" if run.total_cost_usd is not None else "—"
+        if mult <= 0:
+            status = "(insufficient history)"
+        elif mult >= threshold:
+            status = f"⚠ flagged (>= {threshold:.1f}×)"
+        else:
+            status = "ok"
+        click.echo(f"{run.run_id[:40]:<40}  {cost_str:>8}  {mult:>4.1f}×  {status}")
+
+
+@cli.command()
 @click.pass_context
 def curate(ctx: click.Context) -> None:
     """Interactive helper to create golden tests from SQL."""
     click.echo("Not yet implemented. Coming in Phase 7.")
+
+
+def _warn_stale_goldens(config: BiEvalsConfig, filter_pattern: str | None) -> None:
+    """Print a warning header listing stale and unverified goldens.
+
+    Loads golden YAMLs directly (not through the DB) since this fires before
+    the run, when the run hasn't been ingested yet. ``stale_after_days = 0``
+    disables the warning entirely.
+    """
+    threshold = config.scoring.stale_after_days
+    if threshold <= 0:
+        return
+    pairs = load_golden_tests_with_paths(config)
+    if filter_pattern:
+        pairs = bridge_filter_tests(pairs, filter_pattern)
+    if not pairs:
+        return
+
+    today = date.today()
+    stale: list[tuple[str, date, int]] = []
+    unverified: list[str] = []
+    for golden, rel_path in pairs:
+        last = golden.last_verified_at
+        if last is None:
+            unverified.append(rel_path)
+            continue
+        days = (today - last).days
+        if days > threshold:
+            stale.append((rel_path, last, days))
+    stale.sort(key=lambda x: -x[2])
+
+    if stale:
+        click.echo(f"\n⚠  {len(stale)} golden(s) stale (last verified > {threshold} days ago):")
+        for path, last, days in stale[:10]:
+            click.echo(f"   - {path}  verified {last} ({days} days ago)")
+    if unverified:
+        click.echo(f"\n⚠  {len(unverified)} golden(s) have no last_verified_at set:")
+        for path in unverified[:10]:
+            click.echo(f"   - {path}")
+    if stale or unverified:
+        click.echo("\nProceeding with eval (goldens still run; warning only).\n")
+
+
+def _echo_cost_alert(alert: store_queries.CostAlert) -> None:
+    click.echo(
+        f"\n⚠  This run cost ${alert.actual_cost:.4f}, "
+        f"{alert.multiplier:.1f}× the median (${alert.median_cost:.4f}) "
+        f"of the last {alert.sample_size} runs."
+    )
+    if alert.anomalous_tests:
+        click.echo("   Anomalous tests:")
+        for tid, actual, median in alert.anomalous_tests[:5]:
+            mult = (actual / median) if median else 0.0
+            click.echo(f"     - {tid}: ${actual:.4f} vs median ${median:.4f} ({mult:.1f}×)")
 
 
 def _scaffold_project(target: Path) -> None:

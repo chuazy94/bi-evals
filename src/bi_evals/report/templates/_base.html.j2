@@ -77,6 +77,13 @@
   .kbd { font-family: var(--mono); background: var(--bar-bg); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
   details { margin-top: 8px; }
   details summary { cursor: pointer; color: var(--fg-muted); }
+  svg.scatter { background: var(--bar-bg); border-radius: 6px; }
+  svg.scatter .axis { stroke: var(--fg-muted); stroke-width: 1; }
+  svg.scatter .axis-label { fill: var(--fg-muted); font-size: 11px; font-family: -apple-system, sans-serif; }
+  svg.scatter .scatter-dot { fill: var(--bar-fg); }
+  svg.scatter .scatter-label { fill: var(--fg); font-size: 10px; font-family: var(--mono); }
+  ul.prompt-diff { list-style: none; margin: 0; padding: 0; }
+  ul.prompt-diff li { padding: 4px 0; display: flex; align-items: center; gap: 8px; }
 </style>
 </head>
 <body>

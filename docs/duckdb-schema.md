@@ -10,7 +10,14 @@ bi-evals persists every eval run to a local DuckDB file so that reports, regress
 
 ## Tables
 
-Three tables, all primary-keyed on `run_id` (+ `test_id`, + `dimension` where applicable). All rows for a single run are written in one transaction; re-ingesting the same run deletes-then-inserts so the DB always reflects the latest JSON on disk.
+Four tables. Phase 6a introduced per-trial data, so PKs widened to include `model` and `trial_ix`:
+
+- `runs` — one row per eval run
+- `test_results` — one row per `(run_id, test_id, model)` — aggregate over trials
+- `trial_results` — one row per `(run_id, test_id, model, trial_ix)` — atomic observation
+- `dimension_results` — one row per `(run_id, test_id, model, trial_ix, dimension)`
+
+All rows for a single run are written in one transaction; re-ingesting the same run deletes-then-inserts so the DB always reflects the latest JSON on disk.
 
 ### `runs` — one row per eval run
 
@@ -30,9 +37,12 @@ Three tables, all primary-keyed on `run_id` (+ `test_id`, + `dimension` where ap
 | `total_latency_ms` | BIGINT | Same preference order as cost |
 | `total_prompt_tokens` | BIGINT | From `prompts[0].metrics.tokenUsage.prompt` |
 | `total_completion_tokens` | BIGINT | From `prompts[0].metrics.tokenUsage.completion` |
+| `prompt_snapshot` | JSON | Phase 6b — sha256 + size + mtime per skill/knowledge file the agent read this run, keyed by path relative to the project base. Powers prompt-drift detection in `bi-evals compare`. |
 | `ingested_at` | TIMESTAMP | Auto-set by DuckDB on INSERT |
 
-### `test_results` — one row per (run, test)
+### `test_results` — one row per (run, test, model)
+
+Per-trial detail lives in `trial_results`; this table holds the per-(run,test,model) aggregate. When `scoring.repeats == 1` the aggregate columns trivially mirror the single trial.
 
 Golden metadata is snapshotted here at ingest time. Editing a golden YAML later never rewrites history — this is deliberate, so regression compares stay valid across golden edits.
 
@@ -40,6 +50,7 @@ Golden metadata is snapshotted here at ingest time. Editing a golden YAML later 
 |---|---|---|
 | `run_id` | VARCHAR (PK) | FK to `runs.run_id` |
 | `test_id` | VARCHAR (PK) | The golden file's relative path (stable across runs); primary join key |
+| `model` | VARCHAR (PK) | e.g. `claude-sonnet-4-6`. Empty string `''` for legacy pre-6a rows. |
 | `golden_id` | VARCHAR | `id` field from the golden YAML (may differ from filename) |
 | `category` | VARCHAR | Snapshotted from golden YAML |
 | `difficulty` | VARCHAR | Snapshotted from golden YAML |
@@ -47,29 +58,58 @@ Golden metadata is snapshotted here at ingest time. Editing a golden YAML later 
 | `question` | TEXT | From test case `vars.question` |
 | `description` | TEXT | From test case `description` |
 | `reference_sql` | TEXT | Snapshotted from golden YAML (the "correct" SQL) |
-| `generated_sql` | TEXT | What the agent produced (from provider metadata) |
-| `files_read` | JSON | List of skill/knowledge files the agent read (from provider metadata) |
-| `trace_file_path` | VARCHAR | Absolute path to the per-test trace file |
+| `generated_sql` | TEXT | What the agent produced (from a representative trial — typically the last one) |
+| `files_read` | JSON | List of skill/knowledge files the agent read |
+| `trace_file_path` | VARCHAR | Absolute path to the per-test trace file (representative trial) |
 | `trace_json` | JSON | Inlined trace content (null if missing; 1MB guardrail truncates oversized traces) |
-| `passed` | BOOLEAN | Overall test pass/fail |
-| `score` | DOUBLE | Weighted composite score from the 9 dimensions |
+| `passed` | BOOLEAN | Overall pass/fail (the aggregate verdict — typically `pass_count >= ceil(trial_count * threshold)`) |
+| `score` | DOUBLE | Weighted composite score from the 9 dimensions (representative trial) |
 | `fail_reason` | TEXT | Error message or grading reason if failed |
-| `cost_usd` | DOUBLE | Per-test cost |
-| `latency_ms` | BIGINT | Per-test latency |
-| `prompt_tokens` | BIGINT | From response token usage |
-| `completion_tokens` | BIGINT | From response token usage |
-| `total_tokens` | BIGINT | Sum |
+| `cost_usd` | DOUBLE | Sum across trials |
+| `latency_ms` | BIGINT | Sum across trials |
+| `prompt_tokens` | BIGINT | Sum across trials |
+| `completion_tokens` | BIGINT | Sum across trials |
+| `total_tokens` | BIGINT | Sum across trials |
 | `provider` | VARCHAR | e.g. `anthropic_tool_loop` |
-| `model` | VARCHAR | e.g. `claude-sonnet-4-6` |
+| `trial_count` | INTEGER | Phase 6a — number of trials executed (default 1) |
+| `pass_count` | INTEGER | Phase 6a — number of trials that passed |
+| `pass_rate` | DOUBLE | `pass_count / trial_count` |
+| `score_mean` | DOUBLE | Mean of per-trial scores |
+| `score_stddev` | DOUBLE | Population stddev of per-trial scores |
+| `last_verified_at` | DATE | Phase 6b — snapshotted from golden YAML; powers staleness warnings |
 
-### `dimension_results` — one row per (run, test, dimension)
+### `trial_results` — one row per (run, test, model, trial_ix)
 
-9 rows per test (one per scoring dimension). Ingest unwraps Promptfoo's double-nested `gradingResult.componentResults[0].componentResults[]` — each inner entry is one dimension.
+Phase 6a. The atomic observation. Without this, repeat-run variance metrics (stddev, flake rate) couldn't be reconstructed from `test_results` alone.
 
 | Column | Type | Notes |
 |---|---|---|
 | `run_id` | VARCHAR (PK) | |
 | `test_id` | VARCHAR (PK) | |
+| `model` | VARCHAR (PK) | |
+| `trial_ix` | INTEGER (PK) | 0-based trial index within the (run, test, model) group |
+| `passed` | BOOLEAN | This trial's verdict |
+| `score` | DOUBLE | Weighted composite for this trial |
+| `generated_sql` | TEXT | The SQL this specific trial produced |
+| `fail_reason` | TEXT | If this trial failed, why |
+| `cost_usd` | DOUBLE | Per-trial cost |
+| `latency_ms` | BIGINT | Per-trial latency |
+| `prompt_tokens` | BIGINT | |
+| `completion_tokens` | BIGINT | |
+| `total_tokens` | BIGINT | |
+| `trace_file_path` | VARCHAR | This trial's trace file |
+| `trace_json` | JSON | Inlined trace |
+
+### `dimension_results` — one row per (run, test, model, trial_ix, dimension)
+
+9 rows per trial (one per scoring dimension). Ingest unwraps Promptfoo's double-nested `gradingResult.componentResults[0].componentResults[]` — each inner entry is one dimension.
+
+| Column | Type | Notes |
+|---|---|---|
+| `run_id` | VARCHAR (PK) | |
+| `test_id` | VARCHAR (PK) | |
+| `model` | VARCHAR (PK) | Phase 6a addition. Empty string `''` for legacy rows. |
+| `trial_ix` | INTEGER (PK) | Phase 6a addition. `0` for legacy rows. |
 | `dimension` | VARCHAR (PK) | One of: `execution`, `table_alignment`, `column_alignment`, `filter_correctness`, `row_completeness`, `row_precision`, `value_accuracy`, `no_hallucinated_columns`, `skill_path_correctness` |
 | `passed` | BOOLEAN | Binary pass/fail for this dimension |
 | `score` | DOUBLE | Always 0.0 or 1.0 today (dimensions are binary) |
@@ -84,6 +124,9 @@ Golden metadata is snapshotted here at ingest time. Editing a golden YAML later 
 | `idx_tr_run` | `test_results(run_id)` | Fetch all tests for a run |
 | `idx_tr_cat` | `test_results(run_id, category)` | Category aggregates in report |
 | `idx_tr_passed` | `test_results(run_id, passed)` | Pass/fail filtering |
+| `idx_tr_model` | `test_results(run_id, model)` | Model comparison queries |
+| `idx_trial_run` | `trial_results(run_id)` | Fetch all trials for a run |
+| `idx_trial_tm` | `trial_results(run_id, test_id, model)` | Per-(test, model) trial fan-out |
 | `idx_dr_run` | `dimension_results(run_id)` | Fetch all dims for a run |
 | `idx_dr_dim` | `dimension_results(run_id, dimension)` | Dimension pass-rate report query |
 | `idx_dr_fail` | `dimension_results(run_id, dimension, passed)` | Finding which dims flipped in compare |
@@ -158,8 +201,7 @@ DELETE FROM runs              WHERE run_id = ?;
 
 The following are intentionally **not** persisted to DuckDB:
 - **Individual tool calls** beyond what's inside `trace_json`. If you need to query tool invocations, parse `trace_json` in SQL (`SELECT trace_json->>'$.trace[0].tool_name'`).
-- **Skill/knowledge file contents.** Only `files_read` (the list of paths) is stored. Phase 6 will add file hashing for drift detection.
-- **Per-trial data.** Today each (run, test) is one row. Phase 6 adds a `trial_results` table for repeat-run variance.
+- **Skill/knowledge file contents.** Only `files_read` (the list of paths) and `runs.prompt_snapshot` (sha256 + size + mtime per file) are stored — enough to detect drift, not enough to reconstruct prompts.
 - **Evaluator decisions separate from dimensions.** The scorer's intermediate state (SQL parsing, row comparison details) isn't stored — only the final pass/fail/reason per dimension.
 
 ---
@@ -201,10 +243,22 @@ All helpers return frozen dataclasses; see `src/bi_evals/store/queries.py` for t
 
 ## Schema evolution
 
-The schema ships via `CREATE TABLE IF NOT EXISTS` — new tables added in future phases appear on the first `connect()` call after upgrading. Column additions must be done via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` (DuckDB supports this). Breaking changes to existing columns require a migration step — none exist today.
+`ensure_schema()` runs on every `connect()`. It executes in this order:
 
-Planned additions (Phase 6):
-- `runs.prompt_snapshot` JSON — sha256 hashes of skill files read per run (drift detection)
-- `test_results.last_verified_at` DATE — snapshotted from golden YAML (staleness)
-- `test_results.trial_count`, `pass_count`, `pass_rate`, `score_stddev` — repeat-run aggregates
-- New table `trial_results` — per-trial rows when `scoring.repeats > 1`
+1. **`SCHEMA_SQL`** — `CREATE TABLE IF NOT EXISTS` for all four current tables. New tables added in future phases appear on the first `connect()` after upgrading.
+2. **`_migrate_legacy()`** — adds 6a/6b columns to pre-existing tables via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`. DuckDB's `ALTER` does not accept inline `NOT NULL DEFAULT`, so columns are added nullable and the next step backfills them.
+3. **`_backfill_aggregates()`** — fills nullable 6a columns for legacy rows (`trial_count = 1`, `pass_count = passed ? 1 : 0`, `model = ''`, `trial_ix = 0`, etc.).
+4. **`_rebuild_legacy_pks()`** — pre-6a primary keys were narrower (`(run_id, test_id)` and `(run_id, test_id, dimension)`). DuckDB cannot drop or alter a `PRIMARY KEY` in place, so this step detects the legacy PK constraint name, copies rows into a fresh table with the correct wider PK, drops the old table, and renames. Without this step, ingesting a multi-trial or multi-model run on a pre-6a DB would hit a duplicate-key error on `dimension_results`.
+5. **`_INDEXES_SQL`** — index creation runs *last*, after the legacy column adds, because indexes reference columns (e.g. `category`) that pre-6a tables already have but that the index DDL would otherwise see before the migration ran. (Order doesn't matter on fresh DBs; it matters on legacy ones.)
+
+### Past migrations (applied automatically on open)
+
+- **Phase 6a — repeat-run support.** Added `model`, `trial_ix` (where applicable), `trial_count`, `pass_count`, `pass_rate`, `score_mean`, `score_stddev`. Created `trial_results`. Widened `test_results` PK to `(run_id, test_id, model)` and `dimension_results` PK to `(run_id, test_id, model, trial_ix, dimension)`.
+- **Phase 6b — drift, staleness, cost alerts.** Added `runs.prompt_snapshot` and `test_results.last_verified_at`.
+
+### Adding a column going forward
+
+1. Add it to `SCHEMA_SQL` (so fresh DBs get it).
+2. Append it to `_LEGACY_MIGRATIONS` in `schema.py` (so existing DBs get it via `ALTER TABLE ADD COLUMN IF NOT EXISTS`).
+3. If the column has a non-NULL default, also add a backfill `UPDATE` to `_backfill_aggregates()` — DuckDB `ALTER` won't accept inline defaults.
+4. If the change widens a primary key, add a rebuild branch to `_rebuild_legacy_pks()` keyed on the old constraint name.

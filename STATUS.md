@@ -2,7 +2,7 @@
 
 ## Summary
 
-bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is used as the test runner engine; all custom logic (provider, tools, scoring, storage, reporting) is Python. Phases 1–5 are complete — the full pipeline from `bi-evals run` through DuckDB-backed reporting and regression compare is built and tested.
+bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is used as the test runner engine; all custom logic (provider, tools, scoring, storage, reporting) is Python. Phases 1–5 and Phase 6a are complete — the full pipeline from `bi-evals run` through DuckDB-backed reporting and regression compare is built, with repeat-run variance, multi-model evaluation, and cross-run stability tracking.
 
 What works today:
 - `bi-evals init` scaffolds a new eval project (config, directories, golden test stub)
@@ -17,8 +17,12 @@ What works today:
 - `SnowflakeClient` executes SQL and returns structured results with error handling
 - `GoldenTest` model loads expected results from YAML (reference SQL, required columns, skill path, row comparison config)
 - Tiered/weighted 9-dimension scorer: critical dims (execution, row_completeness, value_accuracy) gate overall pass; remaining dims contribute a weighted score
-- DuckDB store with idempotent ingest, 3-table schema (`runs`, `test_results`, `dimension_results`), golden metadata snapshotted at ingest time
-- 187 unit tests passing, 0 warnings
+- DuckDB store with idempotent ingest, 4-table schema (`runs`, `test_results`, `trial_results`, `dimension_results`), golden metadata snapshotted at ingest time
+- `bi-evals run --repeats N` runs each golden N times; report shows pass rates with stddev
+- Multi-model runs via `agent.models: [...]`; report includes per-model summary table and cost-vs-quality SVG scatter
+- `bi-evals flakiness` lists tests ranked by cross-run flip count
+- Rate-based regression compare with configurable `compare.regression_threshold` (default 0.2)
+- 216 unit tests passing, 0 warnings
 
 ---
 
@@ -97,27 +101,47 @@ What works today:
 - **`tests/test_report_builder.py`** — 6 tests (content presence, self-contained HTML, red verdict for seeded regression)
 - **`tests/test_cli_report.py`** — 3 end-to-end CLI smoke tests
 
-**Total: 187 unit tests passing, 0 warnings.**
+**Total (through Phase 5): 187 unit tests passing, 0 warnings.**
+
+### Phase 6a: Signal Reliability — Variance, Multi-Model, Outcome Stability
+
+- **`src/bi_evals/config.py`** — `AgentConfig.models` list form with `_normalize_models` validator (mutually exclusive with singular `model`, backward compat); `ScoringConfig.repeats`; new `CompareConfig.regression_threshold` (default 0.2)
+- **`src/bi_evals/store/schema.py`** — new `trial_results` table (PK `(run_id, test_id, model, trial_ix)`); `test_results` extended with `model` in PK + `trial_count`, `pass_count`, `pass_rate`, `score_mean`, `score_stddev`; `dimension_results` PK extended with `(model, trial_ix)`. Legacy Phase-5 DBs migrate idempotently via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` + backfill.
+- **`src/bi_evals/store/ingest.py`** — trials grouped by `(test_id, model)`; writes per-trial `trial_results` rows and per-(run,test,model) aggregate `test_results` rows with stddev; dimension rows now per-trial
+- **`src/bi_evals/store/queries.py`** — `list_models_for_run`, `test_results_by_model`, `model_summary`, `test_stability`, `flakiest_tests`, `_compute_stability` (pure); updated `list_tests` / `test_diff` / `_dims_by_test` to carry pass_rate and be keyed by `(test_id, model)`
+- **`src/bi_evals/promptfoo/bridge.py`** — emits one provider block per model in `agent.models` (labeled `bi-evals:<model>`); writes `repeat: N` on each test when `scoring.repeats > 1`
+- **`src/bi_evals/provider/entry.py`** — reads per-provider `model` override; trace filename includes model slug + 4-byte random suffix so trials don't overwrite each other
+- **`src/bi_evals/compare/diff.py`** — rate-based classifier with configurable `regression_threshold`; matches pairs by `(test_id, model)`
+- **`src/bi_evals/report/builder.py`** + **`templates/report.html.j2`** + **`_base.html.j2`** — Model Comparison section with summary table + inline SVG cost-vs-quality scatter; Stability section (top-5 flakiest)
+- **`src/bi_evals/cli.py`** — `--repeats N` and `--yes` flags on `run`; cost-multiplier confirmation prompt for high-trial runs; new `bi-evals flakiness [--last-n N] [--limit N]` command
+- **`tests/test_variance.py`** — 10 tests (stddev math, single-trial baseline, multi-trial ingest aggregation, fractional pass rates, rate-based threshold semantics)
+- **`tests/test_multi_model.py`** — 11 tests (config parsing edge cases, bridge provider-per-model emission, repeat key handling, multi-model ingest matrix, per-model queries, diff keyed by (test, model))
+- **`tests/test_stability.py`** — 8 tests (pure flip-counting: empty, all-pass, all-fail, alternating, streaks, pass-rate fractions)
+
+**Total (through Phase 6a): 216 unit tests passing, 0 warnings.**
 
 ---
 
 ## Remaining
 
-### Phase 6: Evaluation Quality — Variance, Drift, Freshness
+### Phase 6: Improve Eval Performance
 
-Inspired by Criteo's agentic-evaluation write-up and ongoing operational experience. Three features:
+Umbrella for three focused sub-phases. 6a shipped; 6b and 6c remain.
 
-- **Repeat-run variance** (`repeats: N` per golden or `--repeats N` CLI flag)
-  - Aggregate pass rate and confidence interval per test across N trials
-  - Compare semantics: "pass rate dropped from 0.95±0.02 to 0.70±0.15" replaces strict T→F flip
-  - Foundation for Pillar 3 (pass@k / pass^k)
-- **Prompt-drift detection**
-  - Hash every skill/knowledge file read during a run; store hashes in `runs.prompt_snapshot`
-  - `compare` surfaces which skill files changed between runs alongside the regression — makes "what caused this?" answerable
-- **Dataset staleness tracking**
-  - `last_verified_at` field on goldens (optional)
-  - `bi-evals run` warns for goldens older than configurable threshold
-  - `report` includes a staleness section
+#### Phase 6b — Context and causation (`docs/phase-6b-plan.md`)
+
+Explains *why* things changed. Depends on 6a schema; otherwise independent.
+
+- **Prompt drift detection** — sha256 hash skill files per run into `runs.prompt_snapshot`. Compare annotates regressed tests with which of their files changed.
+- **Dataset staleness** — optional `last_verified_at` on goldens; CLI warns on run, report includes freshness section.
+- **Cost alerts** — post-hoc flag for runs > 2× median historical cost. `bi-evals cost` command surfaces anomalies.
+
+#### Phase 6c — Anti-patterns (`docs/phase-6c-plan.md`)
+
+Extends what gets tested. No schema changes; independent of 6a/6b.
+
+- **`anti_patterns.forbidden_tables`** and **`anti_patterns.forbidden_columns`** on goldens.
+- New `anti_pattern_compliance` scoring dimension using sqlglot structural analysis. Non-critical by default (opt-in to make critical); vacuous pass when no constraints defined.
 
 ### Phase 7: Polish the COVID-19 example project
 
@@ -162,3 +186,7 @@ Open design questions: embedded Flask/FastAPI + HTMX vs. a proper SPA; ship bund
 | Golden metadata snapshotted at ingest | Editing a golden YAML never mutates historical runs — compare remains accurate over time |
 | Tiered regression semantics | Critical dims (execution, row_completeness, value_accuracy) can flip verdict red even if overall score masks the failure |
 | Auto-ingest at end of `run` | Single-command workflow; ingest failure warns but doesn't fail the run (JSON still on disk for retry) |
+| Atomic observation is `(run, test, model, trial_ix)` | Lets us report pass rate + stddev rather than single-bit pass/fail; supports multi-model runs without collision |
+| `test_results` is an aggregate, not a raw outcome | Per-trial detail lives in `trial_results`; aggregates are computed at ingest so queries stay cheap |
+| Rate-based regression threshold (default 0.2) | Single-trial runs collapse to `{0, 1}` so a flip always clears 0.2 — legacy behavior preserved; multi-trial runs resist noise |
+| `agent.model` and `agent.models` normalized internally | Users can write either; code always reads `.models` list |

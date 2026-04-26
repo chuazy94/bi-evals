@@ -123,6 +123,147 @@
   </table>
 </div>
 
+{% if model_summaries %}
+<h2>Model comparison</h2>
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>Model</th>
+        <th class="num">Tests</th>
+        <th class="num">Pass rate</th>
+        <th class="num">Avg score</th>
+        <th class="num">Cost</th>
+        <th class="num">Avg latency</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in model_summaries %}
+      <tr>
+        <td class="mono">{{ s.model }}</td>
+        <td class="num">{{ s.test_count }}</td>
+        <td class="num">{{ (s.pass_rate * 100)|round(0, 'floor') }}%</td>
+        <td class="num">{{ "%.2f"|format(s.avg_score) }}</td>
+        <td class="num">${{ "%.4f"|format(s.total_cost_usd) }}</td>
+        <td class="num">{{ (s.avg_latency_ms / 1000.0)|round(2) }}s</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if scatter_svg %}
+  <div style="margin-top: 16px;">{{ scatter_svg|safe }}</div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if stability %}
+<h2>Stability (top 5 flakiest)</h2>
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>Test</th>
+        <th class="num">Runs</th>
+        <th class="num">Flips</th>
+        <th class="num">Pass rate</th>
+        <th>Current streak</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in stability %}
+      <tr>
+        <td class="mono">{{ s.test_id }}</td>
+        <td class="num">{{ s.runs_observed }}</td>
+        <td class="num">{{ s.flip_count }}</td>
+        <td class="num">{{ (s.pass_rate_overall * 100)|round(0, 'floor') }}%</td>
+        <td>
+          {% if s.current_streak > 0 %}<span class="pill pass">{{ s.current_streak }} pass</span>
+          {% elif s.current_streak < 0 %}<span class="pill fail">{{ -s.current_streak }} fail</span>
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted" style="margin-top: 8px; font-size: 12px;">
+    Flip = pass→fail or fail→pass transition across runs. Only tests observed in 2+ runs are shown.
+  </p>
+</div>
+{% endif %}
+
+{% if cost_alert %}
+<h2>Cost alert</h2>
+<div class="card">
+  <p style="margin-top:0;">
+    <span class="pill warn">⚠ anomaly</span>
+    This run cost <strong>${{ "%.4f"|format(cost_alert.actual_cost) }}</strong>,
+    {{ "%.1f"|format(cost_alert.multiplier) }}× the median
+    (${{ "%.4f"|format(cost_alert.median_cost) }})
+    of the last {{ cost_alert.sample_size }} runs.
+  </p>
+  {% if cost_alert.anomalous_tests %}
+  <table>
+    <thead><tr><th>Test</th><th class="num">Actual</th><th class="num">Median</th><th class="num">Multiplier</th></tr></thead>
+    <tbody>
+      {% for tid, actual, median in cost_alert.anomalous_tests %}
+      <tr>
+        <td class="mono">{{ tid }}</td>
+        <td class="num">${{ "%.4f"|format(actual) }}</td>
+        <td class="num">${{ "%.4f"|format(median) }}</td>
+        <td class="num">{{ "%.1f"|format(actual / median if median else 0.0) }}×</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if stale_goldens or unverified_goldens %}
+<h2>Dataset freshness</h2>
+<div class="card">
+  <div class="summary-grid" style="margin-bottom: 12px;">
+    <div class="stat">
+      <div class="label">Stale goldens</div>
+      <div class="value">{{ stale_goldens|length }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Unverified</div>
+      <div class="value">{{ unverified_goldens|length }}</div>
+    </div>
+    {% if fresh_vs_stale %}
+    <div class="stat">
+      <div class="label">Fresh pass rate</div>
+      <div class="value">{{ (fresh_vs_stale.fresh.pass_rate * 100)|round(0,'floor') }}%</div>
+    </div>
+    <div class="stat">
+      <div class="label">Stale pass rate</div>
+      <div class="value">{{ (fresh_vs_stale.stale.pass_rate * 100)|round(0,'floor') }}%</div>
+    </div>
+    {% endif %}
+  </div>
+  {% if stale_goldens %}
+  <h3>Worst offenders</h3>
+  <table>
+    <thead><tr><th>Test</th><th class="num">Last verified</th><th class="num">Days ago</th></tr></thead>
+    <tbody>
+      {% for g in stale_goldens[:10] %}
+      <tr>
+        <td class="mono">{{ g.test_id }}</td>
+        <td class="num">{{ g.last_verified_at }}</td>
+        <td class="num">{{ g.days_since_verified }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <p class="muted" style="margin-top: 8px; font-size: 12px;">
+    Stale goldens still execute normally — this is a nudge to re-verify their reference SQL
+    against the current database, not a failing condition.
+  </p>
+</div>
+{% endif %}
+
 <p class="muted" style="margin-top: 24px;">
   For per-test deep-dive (SQL, trace, skill path), open Promptfoo's viewer with
   <span class="kbd">bi-evals view</span>.

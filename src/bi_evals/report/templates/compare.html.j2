@@ -25,6 +25,24 @@
   <div class="stat"><div class="label">Removed</div><div class="value">{{ counts.removed }}</div></div>
 </div>
 
+{% if prompt_changes.modified or prompt_changes.added or prompt_changes.removed %}
+<h2>Prompt changes</h2>
+<div class="card">
+  <p class="muted" style="margin-top:0;">Skill / knowledge files the agent read whose content (or presence) differs between runs. Informational only — does not affect the verdict.</p>
+  <ul class="prompt-diff">
+    {% for f in prompt_changes.modified %}
+      <li><span class="pill warn">modified</span> <span class="mono">{{ f }}</span></li>
+    {% endfor %}
+    {% for f in prompt_changes.added %}
+      <li><span class="pill pass">added</span> <span class="mono">{{ f }}</span></li>
+    {% endfor %}
+    {% for f in prompt_changes.removed %}
+      <li><span class="pill fail">removed</span> <span class="mono">{{ f }}</span></li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 {% if transitions %}
 <h2>Test transitions</h2>
 <div class="card">
@@ -42,27 +60,30 @@
     <tbody>
       {% for t in transitions %}
       <tr>
-        <td class="mono">{{ t.pair.test_id }}</td>
-        <td>{{ t.pair.category or "—" }}</td>
-        <td>{{ pass_pill(t.pair.a_passed) }}</td>
-        <td>{{ pass_pill(t.pair.b_passed) }}</td>
+        <td class="mono">{{ t.c.pair.test_id }}</td>
+        <td>{{ t.c.pair.category or "—" }}</td>
+        <td>{{ pass_pill(t.c.pair.a_passed) }}</td>
+        <td>{{ pass_pill(t.c.pair.b_passed) }}</td>
         <td class="num">
-          {% if t.score_delta is not none %}
-            <span class="delta {% if t.score_delta > 0 %}up{% elif t.score_delta < 0 %}down{% else %}flat{% endif %}">
-              {{ "%+.2f"|format(t.score_delta) }}
+          {% if t.c.score_delta is not none %}
+            <span class="delta {% if t.c.score_delta > 0 %}up{% elif t.c.score_delta < 0 %}down{% else %}flat{% endif %}">
+              {{ "%+.2f"|format(t.c.score_delta) }}
             </span>
           {% else %}<span class="muted">—</span>{% endif %}
         </td>
         <td>
-          {% if t.bucket == 'regressed' %}
+          {% if t.c.bucket == 'regressed' %}
             <span class="pill fail">regressed</span>
-            {% if t.regressed_dims %}
-              <span class="muted" style="font-size:12px;">{{ t.regressed_dims|join(', ') }}</span>
+            {% if t.c.regressed_dims %}
+              <span class="muted" style="font-size:12px;">{{ t.c.regressed_dims|join(', ') }}</span>
             {% endif %}
-          {% elif t.bucket == 'fixed' %}<span class="pill pass">fixed</span>
-          {% elif t.bucket == 'added' %}<span class="pill warn">added</span>
-          {% elif t.bucket == 'removed' %}<span class="pill warn">removed</span>
+          {% elif t.c.bucket == 'fixed' %}<span class="pill pass">fixed</span>
+          {% elif t.c.bucket == 'added' %}<span class="pill warn">added</span>
+          {% elif t.c.bucket == 'removed' %}<span class="pill warn">removed</span>
           {% else %}<span class="muted">—</span>{% endif %}
+          {% if t.culprits %}
+            <div class="muted" style="font-size:12px;">⚠ changed file(s): {{ t.culprits|join(', ') }}</div>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}

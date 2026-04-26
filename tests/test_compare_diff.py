@@ -26,16 +26,26 @@ def _pair(
     a_dims: dict[str, bool] | None = None,
     b_dims: dict[str, bool] | None = None,
     category: str = "cat",
+    model: str | None = None,
 ) -> RunTestPair:
+    def _rate(p: bool | None) -> float | None:
+        return None if p is None else (1.0 if p else 0.0)
+
+    def _dim_rates(d: dict[str, bool] | None) -> dict[str, float]:
+        return {k: (1.0 if v else 0.0) for k, v in (d or {}).items()}
+
     return RunTestPair(
         test_id=test_id,
         category=category,
+        model=model,
         a_passed=a_pass,
         b_passed=b_pass,
         a_score=a_score,
+        a_pass_rate=_rate(a_pass),
         b_score=b_score,
-        a_dims=a_dims or {},
-        b_dims=b_dims or {},
+        b_pass_rate=_rate(b_pass),
+        a_dims=_dim_rates(a_dims),
+        b_dims=_dim_rates(b_dims),
     )
 
 
