@@ -63,32 +63,43 @@ def generate_promptfoo_config(
     promptfoo_tests = []
     for golden_test, rel_path in tests_with_paths:
         desc = f"{golden_test.id}: {golden_test.question[:60]}"
-        promptfoo_tests.append(
-            {
-                "description": desc,
-                "vars": {
-                    "question": golden_test.question,
-                    "golden_file": rel_path,
-                },
-                "assert": [
-                    {
-                        "type": "python",
-                        "value": f"file://{scorer_path}:get_assert",
-                    }
-                ],
-            }
-        )
+        test_entry: dict[str, Any] = {
+            "description": desc,
+            "vars": {
+                "question": golden_test.question,
+                "golden_file": rel_path,
+                "config_path": abs_config_path,
+            },
+            "assert": [
+                {
+                    "type": "python",
+                    "value": f"file://{scorer_path}:get_assert",
+                    "config": {"config_path": abs_config_path},
+                }
+            ],
+        }
+        promptfoo_tests.append(test_entry)
+
+    # Multi-model: one provider block per model in agent.models. Each carries a
+    # label so Promptfoo's per-trial `provider.label` identifies the model at
+    # ingest time.
+    models = list(config.agent.models) if config.agent.models else (
+        [config.agent.model] if config.agent.model else [""]
+    )
+    providers = []
+    for model in models:
+        provider_block: dict[str, Any] = {
+            "id": f"file://{provider_path}:call_api",
+            "config": {"config_path": abs_config_path},
+        }
+        if model:
+            provider_block["label"] = f"bi-evals:{model}"
+            provider_block["config"]["model"] = model
+        providers.append(provider_block)
 
     return {
         "prompts": ["{{question}}"],
-        "providers": [
-            {
-                "id": f"file://{provider_path}:call_api",
-                "config": {
-                    "config_path": abs_config_path,
-                },
-            }
-        ],
+        "providers": providers,
         "tests": promptfoo_tests,
     }
 
@@ -108,6 +119,7 @@ def run_promptfoo(
     *,
     verbose: bool = False,
     no_cache: bool = False,
+    repeat: int = 1,
 ) -> int:
     """Run Promptfoo eval via npx, streaming output to the terminal.
 
@@ -135,6 +147,8 @@ def run_promptfoo(
         cmd.append("--verbose")
     if no_cache:
         cmd.append("--no-cache")
+    if repeat > 1:
+        cmd.extend(["--repeat", str(repeat)])
 
     process = subprocess.Popen(
         cmd,

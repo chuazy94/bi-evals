@@ -40,12 +40,38 @@ class ApiEndpointConfig(BaseModel):
 class AgentConfig(BaseModel):
     type: str = "anthropic_tool_loop"  # "anthropic_tool_loop" or "api_endpoint"
     model: str = ""
+    # Multi-model evaluation: list of models to run the same goldens against.
+    # Mutually exclusive with `model`; exactly one of the two must be set for
+    # anthropic_tool_loop. After validation, `models` is always the canonical
+    # list (single `model` is normalized to a one-element list).
+    models: list[str] = []
     system_prompt: str = ""  # relative path to system prompt file
     tools: list[ToolConfig] = []
     max_rounds: int = 10
     api_key_env: str = "ANTHROPIC_API_KEY"
     # For api_endpoint type
     endpoint: ApiEndpointConfig = ApiEndpointConfig()
+
+    @model_validator(mode="after")
+    def _normalize_models(self) -> AgentConfig:
+        if self.type != "anthropic_tool_loop":
+            return self
+        has_singular = bool(self.model)
+        has_plural = bool(self.models)
+        # If both are set but `models` is just the normalized mirror of `model`
+        # (exactly one element matching), that's idempotent re-validation —
+        # leave it alone.
+        if has_singular and has_plural:
+            if len(self.models) == 1 and self.models[0] == self.model:
+                return self
+            raise ValueError(
+                "agent.model and agent.models are mutually exclusive; set exactly one."
+            )
+        if has_singular and not has_plural:
+            self.models = [self.model]
+        elif has_plural and not has_singular:
+            self.model = self.models[0]
+        return self
 
 
 class DatabaseConnection(BaseModel):
@@ -121,6 +147,18 @@ class ScoringConfig(BaseModel):
     dimension_weights: dict[str, float] = DEFAULT_DIMENSION_WEIGHTS.copy()
     # Minimum weighted score (0.0–1.0) required to pass once critical dimensions pass.
     pass_threshold: float = 0.75
+    # Number of trials per golden (repeat-run variance). 1 keeps legacy behavior.
+    repeats: int = 1
+    # Goldens whose ``last_verified_at`` is older than this trigger a warning at
+    # `bi-evals run` time. 0 disables the check entirely.
+    stale_after_days: int = 180
+
+
+class CompareConfig(BaseModel):
+    # Minimum absolute drop in pass_rate before a test is flagged as regressed.
+    # 0.2 means "needs to drop by at least 20 percentage points". For single-trial
+    # runs (rate ∈ {0, 1}) any flip clears 0.2, so legacy semantics are preserved.
+    regression_threshold: float = 0.2
 
 
 class GoldenTestsConfig(BaseModel):
@@ -135,6 +173,11 @@ class ReportingConfig(BaseModel):
 class StorageConfig(BaseModel):
     db_path: str = "results/bi-evals.duckdb"
     auto_ingest: bool = True
+    # Cost-anomaly detection. A run is flagged when total cost exceeds
+    # ``cost_alert_multiplier`` × the median of the prior ``cost_alert_window``
+    # runs. 0 disables the check.
+    cost_alert_multiplier: float = 2.0
+    cost_alert_window: int = 10
 
 
 class ProjectConfig(BaseModel):
@@ -149,6 +192,7 @@ class BiEvalsConfig(BaseModel):
     scoring: ScoringConfig = ScoringConfig()
     reporting: ReportingConfig = ReportingConfig()
     storage: StorageConfig = StorageConfig()
+    compare: CompareConfig = CompareConfig()
 
     # Set after loading — not part of the YAML schema
     _base_dir: Path = Path(".")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from pydantic import BaseModel
@@ -51,3 +52,6 @@ class GoldenTest(BaseModel):
     expected: ExpectedResults = ExpectedResults()
     tags: list[str] = []
     notes: str = ""
+    # Phase 6b: ISO date the golden was last manually verified. Optional;
+    # used by staleness warnings and the report's freshness section.
+    last_verified_at: date | None = None

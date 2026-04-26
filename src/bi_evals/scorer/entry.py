@@ -49,11 +49,15 @@ def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
 
     Returns a GradingResult dict with componentResults (one per dimension).
     """
-    provider_config = context.get("config", {})
-    config_path = provider_config.get("config_path", "bi-evals.yaml")
+    vars_ = context.get("vars", {})
+    provider_config = context.get("config", {}) or {}
+    config_path = (
+        provider_config.get("config_path")
+        or vars_.get("config_path")
+        or "bi-evals.yaml"
+    )
     config = BiEvalsConfig.load(Path(config_path))
 
-    vars_ = context.get("vars", {})
     prompt = context.get("prompt", output)
 
     # Load golden test
