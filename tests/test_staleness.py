@@ -221,7 +221,6 @@ def test_stale_knowledge_flags_old_file(tmp_path: Path) -> None:
     )
     assert len(out) == 1
     assert out[0].path == "OLD.md"
-    assert out[0].days_since_modified is not None
     assert out[0].days_since_modified >= 200
 
 

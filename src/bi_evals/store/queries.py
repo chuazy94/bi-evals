@@ -167,10 +167,14 @@ class StaleGolden:
 @dataclass(frozen=True)
 class StaleKnowledgeFile:
     """Phase 6d: a knowledge file whose mtime is older than the threshold AND
-    that was actually read in the relevant run."""
+    that was actually read in the relevant run.
+
+    Missing files are filtered out before construction (the prompt_diff already
+    surfaces deletions), so these fields are always populated.
+    """
     path: str  # relative-to-project path as stored in prompt_snapshot
-    mtime: date | None
-    days_since_modified: int | None  # None if file is missing on disk
+    mtime: date
+    days_since_modified: int
 
 
 def latest_run_id(conn: duckdb.DuckDBPyConnection) -> str | None:
@@ -770,7 +774,7 @@ def stale_knowledge_files(
                 mtime=mtime_date,
                 days_since_modified=days,
             ))
-    out.sort(key=lambda f: -(f.days_since_modified or 0))
+    out.sort(key=lambda f: -f.days_since_modified)
     return out
 
 
