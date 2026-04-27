@@ -10,6 +10,7 @@ import json
 import statistics
 from dataclasses import dataclass
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 
 import duckdb
@@ -161,6 +162,15 @@ class StaleGolden:
     test_id: str
     last_verified_at: date | None
     days_since_verified: int | None  # None if never verified
+
+
+@dataclass(frozen=True)
+class StaleKnowledgeFile:
+    """Phase 6d: a knowledge file whose mtime is older than the threshold AND
+    that was actually read in the relevant run."""
+    path: str  # relative-to-project path as stored in prompt_snapshot
+    mtime: date | None
+    days_since_modified: int | None  # None if file is missing on disk
 
 
 def latest_run_id(conn: duckdb.DuckDBPyConnection) -> str | None:
@@ -715,6 +725,53 @@ def stale_goldens(
     stale.sort(key=lambda g: -(g.days_since_verified or 0))
     unverified.sort(key=lambda g: g.test_id)
     return stale, unverified
+
+
+def stale_knowledge_files(
+    conn: duckdb.DuckDBPyConnection,
+    run_id: str,
+    *,
+    base_dir: Path,
+    stale_after_days: int,
+    today: date | None = None,
+) -> list[StaleKnowledgeFile]:
+    """Phase 6d: knowledge files read in ``run_id`` whose mtime is older than the threshold.
+
+    Re-stats each file at call time (current disk state, not the snapshot's
+    captured mtime). A missing file is skipped silently — the file may have
+    been moved or renamed since the run, which the prompt_diff already
+    surfaces. Sorted oldest-first.
+
+    ``stale_after_days = 0`` disables the check.
+    """
+    if stale_after_days <= 0:
+        return []
+    snapshot = _load_prompt_snapshot(conn, run_id)
+    if not snapshot:
+        return []
+
+    today = today or date.today()
+    out: list[StaleKnowledgeFile] = []
+    for rel_path in snapshot.keys():
+        path = Path(rel_path)
+        if not path.is_absolute():
+            path = (base_dir / path).resolve()
+        if not path.exists():
+            continue
+        try:
+            mtime_ts = path.stat().st_mtime
+        except OSError:
+            continue
+        mtime_date = date.fromtimestamp(mtime_ts)
+        days = (today - mtime_date).days
+        if days > stale_after_days:
+            out.append(StaleKnowledgeFile(
+                path=rel_path,
+                mtime=mtime_date,
+                days_since_modified=days,
+            ))
+    out.sort(key=lambda f: -(f.days_since_modified or 0))
+    return out
 
 
 def _median(values: list[float]) -> float:

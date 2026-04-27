@@ -264,6 +264,39 @@
 </div>
 {% endif %}
 
+{% if stale_knowledge %}
+<h2>Knowledge freshness</h2>
+<div class="card">
+  <div class="summary-grid" style="margin-bottom: 12px;">
+    <div class="stat">
+      <div class="label">Stale files read</div>
+      <div class="value">{{ stale_knowledge|length }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Threshold</div>
+      <div class="value">{{ knowledge_stale_after_days }}d</div>
+    </div>
+  </div>
+  <h3>Worst offenders</h3>
+  <table>
+    <thead><tr><th>File</th><th class="num">Last modified</th><th class="num">Days ago</th></tr></thead>
+    <tbody>
+      {% for f in stale_knowledge[:10] %}
+      <tr>
+        <td class="mono">{{ f.path }}</td>
+        <td class="num">{{ f.mtime }}</td>
+        <td class="num">{{ f.days_since_modified }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted" style="margin-top: 8px; font-size: 12px;">
+    Only files actually read in this run are checked. Mtime is re-stat'd at report time
+    (current disk state). Warning only — no scoring impact.
+  </p>
+</div>
+{% endif %}
+
 <p class="muted" style="margin-top: 24px;">
   For per-test deep-dive (SQL, trace, skill path), open Promptfoo's viewer with
   <span class="kbd">bi-evals view</span>.

@@ -76,6 +76,7 @@ scoring:
     value_tolerance: 0.0001
   repeats: 1                         # Phase 6a — N>1 runs each golden N times
   stale_after_days: 180              # Phase 6b — warn when last_verified_at older than this
+  knowledge_stale_after_days: 90     # Phase 6d — warn when a read knowledge file's mtime is older
 ```
 
 ### Multi-model evaluation (Phase 6a)
