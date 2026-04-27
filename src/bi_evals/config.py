@@ -115,6 +115,7 @@ ALL_DIMENSIONS = [
     "value_accuracy",
     "no_hallucinated_columns",
     "skill_path_correctness",
+    "anti_pattern_compliance",
 ]
 
 # Default tiers: result-based correctness checks are critical, structural
@@ -135,6 +136,10 @@ DEFAULT_DIMENSION_WEIGHTS = {
     "filter_correctness": 1.0,
     "no_hallucinated_columns": 1.0,
     "skill_path_correctness": 1.0,
+    # Phase 6c — non-critical by default; teams who want it gating can add it
+    # to ``critical_dimensions``. Weight 2.0 makes a violation meaningful in
+    # the weighted score without forcing a hard fail.
+    "anti_pattern_compliance": 2.0,
 }
 
 

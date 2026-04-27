@@ -186,7 +186,7 @@ class TestBiEvalsConfig:
         assert config.agent.api_key_env == "ANTHROPIC_API_KEY"
         assert config.scoring.thresholds.completeness == 0.95
         assert config.golden_tests.dir == "golden/"
-        assert len(config.scoring.dimensions) == 9
+        assert len(config.scoring.dimensions) == 10
 
     def test_file_not_found(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):

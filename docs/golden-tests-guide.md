@@ -69,11 +69,29 @@ scoring:
     - value_accuracy
     - no_hallucinated_columns
     - skill_path_correctness
+    - anti_pattern_compliance       # Phase 6c — opt-in via per-golden anti_patterns
   thresholds:
     completeness: 0.95
     precision: 0.95
     value_tolerance: 0.0001
+  repeats: 1                         # Phase 6a — N>1 runs each golden N times
+  stale_after_days: 180              # Phase 6b — warn when last_verified_at older than this
 ```
+
+### Multi-model evaluation (Phase 6a)
+
+Replace `agent.model` with `agent.models` (a list) to run every golden against multiple models in one pass:
+
+```yaml
+agent:
+  type: "anthropic_tool_loop"
+  models:
+    - claude-sonnet-4-5-20250929
+    - claude-opus-4-5-20251001
+  # ... rest unchanged
+```
+
+`model` and `models` are mutually exclusive — set exactly one.
 
 Set your environment variables (or create a `.env` file):
 
@@ -226,6 +244,52 @@ expected:
 tags: [revenue, trend]
 ```
 
+### Golden test with anti-patterns (Phase 6c)
+
+Use `anti_patterns` to ban specific tables or columns the agent must NOT use. Useful when the right shape can be reached the wrong way (e.g. summing a cumulative column instead of a daily delta):
+
+```yaml
+# golden/cases/daily-cases.yaml
+id: cases-002
+category: cases
+question: "How many new confirmed COVID-19 cases were there in the US on 2023-01-15?"
+
+reference_sql: |
+  SELECT SUM(DIFFERENCE) AS DAILY_NEW_CASES
+  FROM COVID19_DATA.PUBLIC.JHU_COVID_19
+  WHERE CASE_TYPE = 'Confirmed'
+    AND COUNTRY_REGION = 'United States'
+    AND DATE = '2023-01-15'
+
+anti_patterns:
+  forbidden_tables:
+    - LEGACY_REVENUE                 # bare name → matches any schema-qualified form
+  forbidden_columns:
+    - JHU_COVID_19.CASES             # qualified → only flags this table.column
+    - gross_revenue                  # bare → flags any column named gross_revenue
+```
+
+Matching rules:
+- `forbidden_tables: [RAW_ORDERS]` flags `RAW_ORDERS`, `FINANCE.RAW_ORDERS`, and `RAW_ORDERS o` (alias).
+- `forbidden_columns: [TBL.COL]` flags only references resolvable to that table (alias-aware). CTE-laundered references still flag.
+- `forbidden_columns: [COL]` flags any reference to a column with that name.
+
+The `anti_pattern_compliance` dimension is non-critical by default — a violation lowers the weighted score but doesn't hard-fail. Add it to `scoring.critical_dimensions` if you want it to gate.
+
+### Golden test with last_verified_at (Phase 6b)
+
+Add `last_verified_at` to mark when you last hand-verified the reference SQL still matches reality. Goldens older than `scoring.stale_after_days` (default 180) trigger a warning at run time and appear in the report's freshness section:
+
+```yaml
+id: rev-001
+question: "..."
+reference_sql: |
+  SELECT ...
+last_verified_at: 2026-04-15
+```
+
+Goldens with no `last_verified_at` show in the "unverified" list — useful for retroactively triaging older tests.
+
 ### Golden test with value checks
 
 Use `checks` to validate specific constraints on the result:
@@ -272,6 +336,16 @@ notes: string                  # human notes about this test
 reference_sql: |
   SELECT ...
 
+# Phase 6b: ISO date the reference_sql was last hand-verified.
+# Optional. Older than scoring.stale_after_days → warning at run time.
+last_verified_at: 2026-04-15
+
+# Phase 6c: structural ban-list checked by anti_pattern_compliance dimension.
+# Optional. Omit entirely → dimension passes vacuously.
+anti_patterns:
+  forbidden_tables: [string, ...]    # bare name matches schema-qualified forms
+  forbidden_columns: [string, ...]   # "TABLE.COL" or bare "COL"
+
 # Expected skill path — verify agent reasoning
 expected_skill_path:
   required_skills:
@@ -315,9 +389,20 @@ uv run bi-evals run --filter revenue
 uv run bi-evals run --filter rev-001
 uv run bi-evals run --filter enterprise
 
+# Run each golden N times (overrides scoring.repeats; useful for variance checks)
+uv run bi-evals run --repeats 3
+
+# Disable Promptfoo's provider cache (force fresh API calls)
+uv run bi-evals run --no-cache
+
+# Skip the cost-estimate confirmation prompt
+uv run bi-evals run --yes
+
 # Use a different config file
 uv run bi-evals run -c path/to/bi-evals.yaml
 ```
+
+For the full set of CLI commands (report, compare, cost, flakiness, ingest), see [feature_summary.md](./feature_summary.md).
 
 ---
 
