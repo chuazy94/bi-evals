@@ -157,6 +157,11 @@ class ScoringConfig(BaseModel):
     # Goldens whose ``last_verified_at`` is older than this trigger a warning at
     # `bi-evals run` time. 0 disables the check entirely.
     stale_after_days: int = 180
+    # Phase 6d: knowledge files (skill / knowledge / system_prompt) whose mtime
+    # is older than this trigger a warning at `bi-evals run` time. Only files
+    # that were actually read in the previous run are considered, to avoid
+    # warnings about unread files. 0 disables the check entirely.
+    knowledge_stale_after_days: int = 90
 
 
 class CompareConfig(BaseModel):

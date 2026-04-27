@@ -248,6 +248,20 @@ scoring:
 
 Stale and unverified goldens also appear in the HTML report's freshness panel, with side-by-side pass-rates for fresh vs stale buckets.
 
+### Knowledge-file staleness warnings (Phase 6d)
+
+A complementary check on the *knowledge* files (skill / system prompt / lookup tables) the agent reads. A file is flagged when its mtime is older than `scoring.knowledge_stale_after_days` AND it appears in the most recent run's `prompt_snapshot` — so only files actually read get warned about.
+
+```yaml
+scoring:
+  knowledge_stale_after_days: 90    # 0 disables the check
+```
+
+- **Pre-run warning** prints the same `⚠` header listing stale files (silent on first run; needs at least one ingested run as the read-set source).
+- **HTML report** includes a "Knowledge freshness" card listing the worst offenders (path + mtime + days ago).
+
+No scoring impact — purely a nudge to re-verify aging knowledge.
+
 ### Prompt drift detection (Phase 6b)
 
 Whenever a run is ingested, the SHA256 of every file the agent read (resolved against each `file_reader` tool's `base_dir`) is snapshotted into `runs.prompt_snapshot`. The compare command diffs two snapshots and shows:

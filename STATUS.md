@@ -2,7 +2,7 @@
 
 ## Summary
 
-bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is the test runner; all custom logic (provider, tools, scoring, storage, reporting) is Python. Phases 1–5 and 6a–6c are complete. The full pipeline runs end-to-end from `bi-evals run` through DuckDB-backed reporting, regression compare, prompt-drift detection, dataset-staleness warnings, cost-anomaly alerts, and anti-pattern checking.
+bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is the test runner; all custom logic (provider, tools, scoring, storage, reporting) is Python. Phases 1–5 and 6a–6d are complete. The full pipeline runs end-to-end from `bi-evals run` through DuckDB-backed reporting, regression compare, prompt-drift detection, dataset-staleness warnings, knowledge-file staleness warnings, cost-anomaly alerts, and anti-pattern checking.
 
 What works today:
 - `bi-evals init` scaffolds a new eval project
@@ -20,7 +20,7 @@ What works today:
 - `FileReaderTool` + `DescribeTableTool` serve skill files and DB schema to the agent
 - `SnowflakeClient` executes SQL with structured results
 - `GoldenTest` model loads expected results from YAML with optional `last_verified_at` (Phase 6b) and `anti_patterns` (Phase 6c)
-- 264 unit tests passing (216 through 6a, +24 in 6b, +24 in 6c), 0 warnings
+- 271 unit tests passing (216 through 6a, +24 in 6b, +24 in 6c, +7 in 6d), 0 warnings
 
 ---
 
@@ -105,7 +105,16 @@ What works today:
 - **`docs/feature_summary.md`** — new consolidated reference covering every CLI command and feature with invocation examples
 - **`docs/duckdb-schema.md`** — refreshed to reflect 4-table schema + 6a/6b columns + past migrations and forward-looking add-column recipe
 
-**Total: 264 unit tests passing, 0 warnings.**
+### Phase 6d: Knowledge-File Staleness
+
+- **`config.py`** — new `ScoringConfig.knowledge_stale_after_days` (default 90, 0 disables)
+- **`store/queries.py`** — new `StaleKnowledgeFile` dataclass and `stale_knowledge_files()` helper. Reads the run's `prompt_snapshot`, re-stats each file (current disk state), returns ones older than the threshold sorted oldest-first
+- **`cli.py`** — new `_warn_stale_knowledge()` called pre-run after `_warn_stale_goldens`. Uses the latest ingested run's snapshot as the read-set source; silent when no history exists
+- **`report/builder.py`** + **`templates/report.html.j2`** — "Knowledge freshness" card next to "Dataset freshness", listing worst offenders by mtime
+- Warning only — no scoring penalty, by design (a stale knowledge file is a nudge, not a fail)
+- **`tests/test_staleness.py`** — 7 new cases (threshold disabled, no snapshot, stale file flagged, fresh file skipped, only-read-files included, missing files skipped, sorted oldest-first)
+
+**Total: 271 unit tests passing, 0 warnings.**
 
 ---
 

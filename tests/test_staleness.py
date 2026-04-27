@@ -1,7 +1,9 @@
-"""Tests for Phase 6b dataset staleness: golden field, ingest snapshot, query helper."""
+"""Tests for Phase 6b dataset staleness + Phase 6d knowledge-file staleness."""
 
 from __future__ import annotations
 
+import json
+import os
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -147,3 +149,148 @@ def test_ingest_snapshots_last_verified_at(
         assert row[1] == date(2025, 1, 15)
     finally:
         target.write_text(original)
+
+
+# --- Phase 6d: knowledge-file staleness -------------------------------------
+
+
+def _seed_run_with_snapshot(
+    conn: duckdb.DuckDBPyConnection,
+    run_id: str,
+    snapshot: dict[str, dict],
+) -> None:
+    """Insert a run row whose prompt_snapshot lists the given files."""
+    conn.execute(
+        """
+        INSERT INTO runs (run_id, project_name, timestamp, config_snapshot,
+            eval_json_path, test_count, pass_count, fail_count, error_count,
+            prompt_snapshot)
+        VALUES (?, 'p', '2026-04-25', '{}', '/p', 0, 0, 0, 0, ?)
+        """,
+        [run_id, json.dumps(snapshot)],
+    )
+
+
+def _set_mtime(path: Path, days_ago: int) -> None:
+    """Backdate a file's mtime by ``days_ago`` days."""
+    target_ts = (date.today() - timedelta(days=days_ago))
+    epoch = (target_ts - date(1970, 1, 1)).total_seconds()
+    os.utime(path, (epoch, epoch))
+
+
+def test_stale_knowledge_disabled_when_threshold_zero(tmp_path: Path) -> None:
+    conn = duckdb.connect(":memory:")
+    ensure_schema(conn)
+    f = tmp_path / "SKILL.md"
+    f.write_text("hi")
+    _set_mtime(f, days_ago=365)
+    _seed_run_with_snapshot(conn, "r", {"SKILL.md": {"sha256": "abc"}})
+    out = q.stale_knowledge_files(
+        conn, "r", base_dir=tmp_path, stale_after_days=0
+    )
+    assert out == []
+
+
+def test_stale_knowledge_returns_empty_when_no_snapshot(tmp_path: Path) -> None:
+    """A pre-6b run (NULL prompt_snapshot) yields no warnings — nothing to check."""
+    conn = duckdb.connect(":memory:")
+    ensure_schema(conn)
+    conn.execute(
+        """
+        INSERT INTO runs (run_id, project_name, timestamp, config_snapshot,
+            eval_json_path, test_count, pass_count, fail_count, error_count)
+        VALUES ('r', 'p', '2026-04-25', '{}', '/p', 0, 0, 0, 0)
+        """
+    )
+    out = q.stale_knowledge_files(
+        conn, "r", base_dir=tmp_path, stale_after_days=90
+    )
+    assert out == []
+
+
+def test_stale_knowledge_flags_old_file(tmp_path: Path) -> None:
+    conn = duckdb.connect(":memory:")
+    ensure_schema(conn)
+    f = tmp_path / "OLD.md"
+    f.write_text("contents")
+    _set_mtime(f, days_ago=200)
+    _seed_run_with_snapshot(conn, "r", {"OLD.md": {"sha256": "abc"}})
+
+    out = q.stale_knowledge_files(
+        conn, "r", base_dir=tmp_path, stale_after_days=90,
+    )
+    assert len(out) == 1
+    assert out[0].path == "OLD.md"
+    assert out[0].days_since_modified >= 200
+
+
+def test_stale_knowledge_skips_fresh_file(tmp_path: Path) -> None:
+    conn = duckdb.connect(":memory:")
+    ensure_schema(conn)
+    f = tmp_path / "FRESH.md"
+    f.write_text("contents")
+    _set_mtime(f, days_ago=10)
+    _seed_run_with_snapshot(conn, "r", {"FRESH.md": {"sha256": "abc"}})
+
+    out = q.stale_knowledge_files(
+        conn, "r", base_dir=tmp_path, stale_after_days=90,
+    )
+    assert out == []
+
+
+def test_stale_knowledge_only_includes_files_that_were_read(tmp_path: Path) -> None:
+    """A stale file NOT in the run's prompt_snapshot must NOT be flagged."""
+    conn = duckdb.connect(":memory:")
+    ensure_schema(conn)
+    read = tmp_path / "READ.md"
+    read.write_text("x")
+    _set_mtime(read, days_ago=200)
+    unread = tmp_path / "UNREAD.md"
+    unread.write_text("x")
+    _set_mtime(unread, days_ago=200)
+    # Only READ.md is in the snapshot.
+    _seed_run_with_snapshot(conn, "r", {"READ.md": {"sha256": "abc"}})
+
+    out = q.stale_knowledge_files(
+        conn, "r", base_dir=tmp_path, stale_after_days=90,
+    )
+    paths = {f.path for f in out}
+    assert "READ.md" in paths
+    assert "UNREAD.md" not in paths
+
+
+def test_stale_knowledge_skips_missing_file(tmp_path: Path) -> None:
+    """A snapshot entry whose file no longer exists is silently skipped.
+
+    The prompt_diff already surfaces deletions; this card is about *current*
+    files that have gone stale.
+    """
+    conn = duckdb.connect(":memory:")
+    ensure_schema(conn)
+    _seed_run_with_snapshot(conn, "r", {"GONE.md": {"sha256": "abc"}})
+
+    out = q.stale_knowledge_files(
+        conn, "r", base_dir=tmp_path, stale_after_days=90,
+    )
+    assert out == []
+
+
+def test_stale_knowledge_sorted_oldest_first(tmp_path: Path) -> None:
+    conn = duckdb.connect(":memory:")
+    ensure_schema(conn)
+    older = tmp_path / "OLDER.md"
+    older.write_text("x")
+    _set_mtime(older, days_ago=300)
+    old = tmp_path / "OLD.md"
+    old.write_text("x")
+    _set_mtime(old, days_ago=150)
+    _seed_run_with_snapshot(conn, "r", {
+        "OLD.md": {"sha256": "a"},
+        "OLDER.md": {"sha256": "b"},
+    })
+
+    out = q.stale_knowledge_files(
+        conn, "r", base_dir=tmp_path, stale_after_days=90,
+    )
+    # Both stale; OLDER.md must come first.
+    assert [f.path for f in out] == ["OLDER.md", "OLD.md"]

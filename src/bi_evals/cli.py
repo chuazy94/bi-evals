@@ -99,6 +99,7 @@ def run(
         )
 
     _warn_stale_goldens(config, filter_pattern)
+    _warn_stale_knowledge(config)
 
     models = list(config.agent.models) if config.agent.models else ([config.agent.model] if config.agent.model else [])
     total_trials = test_count * max(1, len(models)) * max(1, config.scoring.repeats)
@@ -227,6 +228,8 @@ def report(ctx: click.Context, run_id: str | None, out_path: str | None) -> None
                 stale_after_days=config.scoring.stale_after_days,
                 cost_alert_multiplier=config.storage.cost_alert_multiplier,
                 cost_alert_window=config.storage.cost_alert_window,
+                knowledge_stale_after_days=config.scoring.knowledge_stale_after_days,
+                base_dir=config._base_dir,
             )
         except KeyError:
             raise click.ClickException(
@@ -407,6 +410,42 @@ def _warn_stale_goldens(config: BiEvalsConfig, filter_pattern: str | None) -> No
             click.echo(f"   - {path}")
     if stale or unverified:
         click.echo("\nProceeding with eval (goldens still run; warning only).\n")
+
+
+def _warn_stale_knowledge(config: BiEvalsConfig) -> None:
+    """Phase 6d: warn about knowledge files that are mtime-stale AND were
+    actually read in the most recent ingested run.
+
+    Silent when there's no run history (nothing to intersect with) or the DB
+    doesn't exist yet. ``knowledge_stale_after_days = 0`` disables.
+    """
+    threshold = config.scoring.knowledge_stale_after_days
+    if threshold <= 0:
+        return
+    db_path = config.resolve_path(config.storage.db_path)
+    if not db_path.exists():
+        return
+    try:
+        with store_connect(db_path, read_only=True) as conn:
+            latest = store_queries.latest_run_id(conn)
+            if latest is None:
+                return
+            stale = store_queries.stale_knowledge_files(
+                conn, latest,
+                base_dir=config._base_dir,
+                stale_after_days=threshold,
+            )
+    except Exception:
+        return
+    if not stale:
+        return
+    click.echo(
+        f"\n⚠  {len(stale)} knowledge file(s) stale "
+        f"(mtime > {threshold} days ago, read in last run):"
+    )
+    for f in stale[:10]:
+        click.echo(f"   - {f.path}  modified {f.mtime} ({f.days_since_modified} days ago)")
+    click.echo("\nProceeding with eval (warning only).\n")
 
 
 def _echo_cost_alert(alert: store_queries.CostAlert) -> None:

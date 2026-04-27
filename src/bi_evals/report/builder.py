@@ -67,6 +67,8 @@ def build_report_html(
     stale_after_days: int = 180,
     cost_alert_multiplier: float = 2.0,
     cost_alert_window: int = 10,
+    knowledge_stale_after_days: int = 90,
+    base_dir: Path | None = None,
 ) -> str:
     """Render the single-run HTML report."""
     run = q.get_run(conn, run_id)
@@ -85,6 +87,15 @@ def build_report_html(
     cost_alert = q.cost_alerts(
         conn, run_id, multiplier=cost_alert_multiplier, window=cost_alert_window
     )
+
+    # Phase 6d: knowledge-file staleness (only when caller passed a base_dir).
+    stale_knowledge: list = []
+    if base_dir is not None and knowledge_stale_after_days > 0:
+        stale_knowledge = q.stale_knowledge_files(
+            conn, run_id,
+            base_dir=base_dir,
+            stale_after_days=knowledge_stale_after_days,
+        )
 
     overall_pass_rate = (run.pass_count / run.test_count) if run.test_count else 0.0
     total_latency_s = (
@@ -108,6 +119,8 @@ def build_report_html(
         unverified_goldens=unverified,
         fresh_vs_stale=fresh_vs_stale,
         cost_alert=cost_alert,
+        stale_knowledge=stale_knowledge,
+        knowledge_stale_after_days=knowledge_stale_after_days,
     )
 
 
