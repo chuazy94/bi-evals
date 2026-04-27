@@ -17,6 +17,7 @@ from bi_evals.db.factory import create_db_client
 from bi_evals.golden.loader import load_golden_test
 from bi_evals.scorer.dimensions import (
     DimensionResult,
+    check_anti_pattern_compliance,
     check_column_alignment,
     check_execution,
     check_filter_correctness,
@@ -146,6 +147,9 @@ def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
 
     if "skill_path_correctness" in enabled:
         results.append(check_skill_path_correctness(trace_steps, golden))
+
+    if "anti_pattern_compliance" in enabled:
+        results.append(check_anti_pattern_compliance(generated_sql, golden))
 
     # Convert to Promptfoo GradingResult with componentResults
     component_results = [

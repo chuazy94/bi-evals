@@ -72,6 +72,7 @@ def build_report_html(
     run = q.get_run(conn, run_id)
     categories = q.aggregate_by_category(conn, run_id)
     dimensions = q.dimension_pass_rates(conn, run_id)
+    dimensions = _drop_vacuous_dimensions(conn, run_id, dimensions)
     models = q.cost_by_model(conn, run_id)
     model_list = q.list_models_for_run(conn, run_id)
     summaries = q.model_summary(conn, run_id) if len(model_list) > 1 else []
@@ -108,6 +109,41 @@ def build_report_html(
         fresh_vs_stale=fresh_vs_stale,
         cost_alert=cost_alert,
     )
+
+
+def _drop_vacuous_dimensions(
+    conn: duckdb.DuckDBPyConnection,
+    run_id: str,
+    dimensions: list,
+) -> list:
+    """Drop dimensions whose every row is a vacuous pass — they add no signal.
+
+    Currently this only fires for ``anti_pattern_compliance`` on runs where no
+    golden defines anti-patterns: every dimension row passes for the boring
+    reason "no anti-patterns defined", which would otherwise show as 100% in
+    the report and dilute the user's attention.
+
+    A dimension is vacuous when *every* row has ``passed=true`` AND a reason
+    that starts with "skipped" (the marker emitted by ``_skip()``).
+    """
+    if not dimensions:
+        return dimensions
+    candidate_names = {d.dimension for d in dimensions if d.pass_count == d.total}
+    if not candidate_names:
+        return dimensions
+    rows = conn.execute(
+        """
+        SELECT dimension,
+               BOOL_AND(passed) AS all_pass,
+               BOOL_AND(reason LIKE 'skipped:%') AS all_skipped
+        FROM dimension_results
+        WHERE run_id = ? AND dimension IN ({})
+        GROUP BY dimension
+        """.format(",".join(["?"] * len(candidate_names))),
+        [run_id, *sorted(candidate_names)],
+    ).fetchall()
+    drop = {r[0] for r in rows if r[1] and r[2]}
+    return [d for d in dimensions if d.dimension not in drop]
 
 
 def _fresh_vs_stale_pass_rates(

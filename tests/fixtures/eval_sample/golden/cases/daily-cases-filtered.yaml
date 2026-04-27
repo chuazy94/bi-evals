@@ -34,3 +34,10 @@ expected:
 
 tags: [cases, filter, us]
 notes: "Tests date and country filtering. Must use DIFFERENCE (daily) not CASES (cumulative)."
+
+# Phase 6c — known trap: agents sometimes sum CASES (cumulative) and get the
+# right shape but the wrong meaning. Ban it so the violation is visible in the
+# report even when the rows happen to look reasonable.
+anti_patterns:
+  forbidden_columns:
+    - JHU_COVID_19.CASES

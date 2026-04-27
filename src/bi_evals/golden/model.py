@@ -42,6 +42,15 @@ class ExpectedResults(BaseModel):
     row_comparison: RowComparison = RowComparison()
 
 
+class AntiPatterns(BaseModel):
+    """Phase 6c: structural constraints the generated SQL must NOT satisfy."""
+
+    forbidden_tables: list[str] = []
+    # Each entry is either ``"TABLE.COLUMN"`` (exact pair) or bare ``"COLUMN"``
+    # (any reference to a column with that name, regardless of owning table).
+    forbidden_columns: list[str] = []
+
+
 class GoldenTest(BaseModel):
     id: str
     category: str = ""
@@ -55,3 +64,7 @@ class GoldenTest(BaseModel):
     # Phase 6b: ISO date the golden was last manually verified. Optional;
     # used by staleness warnings and the report's freshness section.
     last_verified_at: date | None = None
+    # Phase 6c: optional ban-list checked by the ``anti_pattern_compliance``
+    # scorer dimension. Omitting the field is equivalent to no constraints
+    # (the dimension passes vacuously).
+    anti_patterns: AntiPatterns | None = None

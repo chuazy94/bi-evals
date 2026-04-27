@@ -7,8 +7,13 @@ from typing import Any
 
 from bi_evals.config import ScoringConfig
 from bi_evals.db.client import QueryResult
-from bi_evals.golden.model import GoldenTest
-from bi_evals.scorer.sql_utils import extract_filter_columns, extract_select_columns, extract_tables
+from bi_evals.golden.model import AntiPatterns, GoldenTest
+from bi_evals.scorer.sql_utils import (
+    extract_columns_with_tables,
+    extract_filter_columns,
+    extract_select_columns,
+    extract_tables,
+)
 
 
 @dataclass
@@ -365,6 +370,77 @@ def check_no_hallucinated_columns(
     return DimensionResult(
         name="no_hallucinated_columns", passed=False, score=0.0,
         reason=f"Hallucinated source columns: {sorted(extra)}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dimension 10: Anti-Pattern Compliance (Phase 6c)
+# ---------------------------------------------------------------------------
+
+
+def _check_anti_patterns(sql: str, patterns: AntiPatterns) -> list[str]:
+    """Return human-readable violation descriptions, empty list if compliant."""
+    violations: list[str] = []
+
+    if patterns.forbidden_tables:
+        try:
+            used_tables = extract_tables(sql)
+        except Exception:
+            used_tables = set()
+        # Forbidden lists are written as users want to read them — match against
+        # the *bare* uppercase name (extract_tables returns fully qualified, e.g.
+        # "FINANCE.RAW_ORDERS"). Bare entries match any schema; qualified entries
+        # match exactly.
+        for forbidden in patterns.forbidden_tables:
+            forbidden_upper = forbidden.upper()
+            for used in used_tables:
+                if used == forbidden_upper or used.endswith("." + forbidden_upper):
+                    violations.append(f"forbidden table used: {forbidden_upper}")
+                    break
+
+    if patterns.forbidden_columns:
+        try:
+            used_pairs = extract_columns_with_tables(sql)
+        except Exception:
+            used_pairs = set()
+        for spec in patterns.forbidden_columns:
+            spec_upper = spec.upper()
+            if "." in spec_upper:
+                tbl, col = spec_upper.split(".", 1)
+                # Match exact (TBL, COL); also match (None, COL) since
+                # unresolved owners shouldn't get a free pass.
+                if (tbl, col) in used_pairs or (None, col) in used_pairs:
+                    violations.append(f"forbidden column used: {tbl}.{col}")
+            else:
+                if any(c == spec_upper for _, c in used_pairs):
+                    violations.append(f"forbidden column used: {spec_upper}")
+
+    return violations
+
+
+def check_anti_pattern_compliance(
+    generated_sql: str, golden: GoldenTest,
+) -> DimensionResult:
+    """Fail when the generated SQL uses any forbidden table or column.
+
+    Vacuous-pass when no anti-patterns are defined on the golden — keeps the
+    dimension safely opt-in for goldens that don't care about it.
+    """
+    patterns = golden.anti_patterns
+    if patterns is None or (
+        not patterns.forbidden_tables and not patterns.forbidden_columns
+    ):
+        return _skip("anti_pattern_compliance", "no anti-patterns defined")
+
+    violations = _check_anti_patterns(generated_sql, patterns)
+    if violations:
+        return DimensionResult(
+            name="anti_pattern_compliance", passed=False, score=0.0,
+            reason="; ".join(violations),
+        )
+    return DimensionResult(
+        name="anti_pattern_compliance", passed=True, score=1.0,
+        reason="no forbidden tables/columns used",
     )
 
 
