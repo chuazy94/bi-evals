@@ -1,404 +1,280 @@
-# Phase 8: Web UI for Eval Exploration and Regression Analysis
+# Phase 8: Polish the COVID-19 Example Project
 
 ## Context
 
-Phases 1–5 built the eval pipeline: `bi-evals run` produces data, DuckDB stores it, HTML reports render it. In daily use, the HTML reports hit a ceiling: regenerating files and passing paths around for exploration is clumsy, and "how has this test performed over time" requires raw SQL. The CLI flow is fine for CI artifacts and shareable snapshots, but day-to-day debugging wants an interactive surface.
+A working example exists under `tmp/my-evals/`:
+- Snowflake-backed (COVID-19 public dataset via Snowflake Marketplace)
+- 5 goldens across 3 categories (`cases`, `joins`, `us-states`)
+- 5 skill/knowledge files under `skills/covid-reporting/`
+- 17 historical eval runs (~9.9MB) with traces, reports, and DuckDB history
 
-Phase 8 ships a **local-first web UI** that connects directly to the DuckDB store, rendering runs, tests, comparisons, and per-test history in a modern React app. Deployment stays local for v1 (`bi-evals ui` starts a FastAPI + Vite bundle on `localhost:8000`), but the architecture is explicitly designed for a future migration to a shared team instance backed by Postgres.
+The example is functional but lives in `tmp/` — a scratch directory that:
+- Isn't shipped with the repo (`tmp/` is gitignored)
+- Has local Snowflake credentials wired in as env vars (fine for dev, but no public contributor can run it)
+- Carries 17 accumulated result files plus reports (noise for a first-time reader)
+- Has uneven golden coverage — 5 tests across 3 categories isn't enough to showcase the framework's breadth
 
-Out of scope for v1 (deferred to v2):
-- Golden authoring (forms, YAML validation, preview)
-- Triggering `bi-evals run` from the UI
-- Multi-user / auth / deployment infrastructure
-- Trend charts on the dashboard
-- Advanced search, saved filters, tags
+Phase 8 promotes it to a first-class `examples/covid-19/` directory that a new contributor can clone and run end-to-end, and that demonstrates the framework meaningfully (more goldens, at least one seeded regression, a README walkthrough).
 
----
-
-## Decisions (locked in)
-
-| Area | Choice | Rationale |
-|---|---|---|
-| **Primary user** | Engineer debugging regressions | Immediate pain; analyst/stakeholder views deferred to v2+ |
-| **Deployment** | Local-only, Postgres-ready | YAGNI on auth/hosting; design for migration |
-| **Backend** | FastAPI | Same language as pipeline; reuses `store/queries.py` |
-| **Frontend** | React + Vite + TypeScript | Interactivity needs (charts, diffs, traces) justify SPA |
-| **Base UI** | shadcn/ui + Tailwind CSS | Good defaults, copy-paste components, theming support |
-| **Tables** | TanStack Table | Sort/filter/search at client for small data, ergonomic API |
-| **Charts** | Recharts | React-idiomatic, sufficient for v1 needs |
-| **SQL diff** | Monaco editor | Readonly mode + built-in diff viewer |
-| **Storage abstraction** | `ResultsStore` Protocol | 1-hour upfront cost; cheap insurance for Postgres migration |
-| **API style** | REST / JSON | Simpler than GraphQL; FastAPI auto-generates OpenAPI |
-| **Theme** | Dark default, light toggle | Matches engineering tooling conventions |
-| **Scope** | 7 pages (see below) | Covers read-path exploration without scope creep |
-
-### Future considerations
-- **Trace viewer** — v1 renders traces as collapsible JSON; future phase may integrate Langfuse if external trace tooling becomes standard.
-- **Postgres migration** — schema is 95% portable (JSON → JSONB); auth + deploy are future team decisions.
+This is deliberately a **polish phase**, not a feature phase. No new code in `src/bi_evals/`. Success is a newcomer running `bi-evals run` in `examples/covid-19/` on a fresh clone and seeing the full flow work.
 
 ---
 
-## Architecture
+## Goals
 
-```
-┌──────────────────────────────────────────────┐
-│  Browser (localhost:8000)                    │
-│   React SPA (Vite build, bundled into pkg)   │
-└──────────────┬───────────────────────────────┘
-               │ HTTP / JSON
-┌──────────────▼───────────────────────────────┐
-│  FastAPI (bi-evals ui)                       │
-│   routes/  → REST endpoints                  │
-│   deps/    → ResultsStore injection          │
-└──────────────┬───────────────────────────────┘
-               │
-┌──────────────▼───────────────────────────────┐
-│  ResultsStore (Protocol)                     │
-│   ├── DuckDBStore  (v1)                      │
-│   └── PostgresStore (future)                 │
-└──────────────┬───────────────────────────────┘
-               │
-      existing store/queries.py
-      (unchanged; wrapped by store)
-```
-
-**`bi-evals ui`** boots:
-1. Loads `bi-evals.yaml` to find the DuckDB path
-2. Instantiates `DuckDBStore(db_path)` in read-only mode
-3. Starts `uvicorn` serving FastAPI
-4. FastAPI serves the bundled React app under `/` and JSON under `/api/*`
-5. Opens `http://localhost:8000` in the default browser
-
-No separate dev server in production. For frontend development, run `pnpm dev` (Vite) with a proxy to `localhost:8000/api`.
+1. **Turn the existing scratch project into a documented, shipped example.**
+2. **Demonstrate the framework's breadth** with better golden coverage (8–10 tests across more categories).
+3. **Keep a known-regression run in history** so the `bi-evals compare` walkthrough has something to show.
+4. **Lower the barrier to running the example** — minimal setup instructions, clear credential requirements, no hand-editing needed.
 
 ---
 
-## Pages (v1)
+## Non-goals
 
-### Global shell
-
-- **Top bar**: `[bi-evals]`, project name, `[Run eval]` (disabled, visible as v2 affordance), theme toggle
-- **Left sidebar**: Runs, Tests, Goldens, Compare
-- **Content area**: page-specific
-- **Routing**: `/runs`, `/runs/<id>`, `/runs/<id>/tests/<test-id>`, `/tests`, `/tests/<test-id>`, `/compare`, `/compare/<a>/<b>`, `/goldens`, `/goldens/<id>`
-
-### Page 1 — Runs list (landing, `/runs`)
-
-Table: `Run ID`, `Time`, `Tests`, `Pass%`, `Cost`, `Δ vs prev`.
-
-- Latest 50 rows, "Load more" button to extend
-- Filter: date range, verdict (🟢/🟡/🔴 via existing compare logic against previous run)
-- Search: free-text against run_id
-- Sort: any column (default: timestamp desc)
-- Row click → `/runs/<id>`
-- No sparklines in v1 (text only)
-
-### Page 2 — Run detail (`/runs/<id>`)
-
-Top: run metadata + `[Compare to prev]` + `[Download JSON]`
-
-Sections (top to bottom):
-1. **Summary tiles**: pass rate, avg score, total cost
-2. **Category pass rates**: bars per category
-3. **Dimension pass rates**: 9 bars, worst first, critical dims highlighted
-4. **Cost by model**: collapsed by default (click to expand)
-5. **Tests table**:
-   - Columns: ✓/✗, test_id, category, score, failed dimensions (inline comma list)
-   - Default sort: failures first, then category
-   - Filter: status (pass/fail), category, search
-   - Row click → `/runs/<id>/tests/<test-id>`
-
-### Page 3 — Test drilldown (`/runs/<id>/tests/<test-id>`)
-
-Dense debug view. This is where engineers spend real time.
-
-- Top: test_id, category, pass/fail, score, `[← prev test] [next test →]`, `[View history across runs]`
-- **Question** block
-- **Dimensions (9)**: grid with pass/fail per dim, expand to see reason inline. Critical dims starred.
-- **SQL tabs**: Generated / Reference / **Diff** (Monaco diff viewer)
-- **Row comparison** (when available): side-by-side data tables showing first 20 rows each of expected vs actual
-- **Agent trace**: collapsible tree of tool calls, pretty-printed args/results, step-by-step
-- **Files read**: flat list of skill file paths
-- **Metadata footer**: cost, latency, tokens, model
-
-### Page 4 — Compare view (`/compare`, `/compare/<a>/<b>`)
-
-- Two run pickers at top (searchable dropdowns, sorted by recency)
-- **Verdict banner** (🟢/🟡/🔴) with pass-rate delta
-- **Transitions**: 6 collapsible sections (regressed, fixed, unchanged_pass, unchanged_fail, added, removed) with counts
-  - Failures/changes expanded by default; unchanged collapsed
-  - Row in "regressed" click → test drilldown in **compare mode** (split screen A/B for SQL and data, sequential for metadata)
-- **Category deltas** table
-- **Dimension deltas** table, worst first
-
-### Page 5 — Tests list (`/tests`)
-
-All goldens seen across all runs. The "find flaky tests" page.
-
-- Columns: test_id, category, runs count, pass rate, last-10-runs sparkline (pass/fail strip)
-- Filter: category, last-run status
-- Row click → `/tests/<test-id>` (per-test history)
-
-### Page 6 — Per-test history (`/tests/<test-id>`)
-
-- **Score trend chart**: line chart of score across runs (Recharts)
-- **Pass/fail strip**: one cell per run, colored
-- **Dimension trends**: 9 small-multiples mini-charts, one per dimension
-- **Runs table**: every run this test appeared in (columns: run_id, time, passed, score, failed dims)
-  - Row click → test drilldown for that (run, test)
-- **Golden definition** block: question, reference SQL, YAML link
-
-### Page 7 — Goldens list (`/goldens`, `/goldens/<id>`)
-
-- Table: golden_id, category, difficulty, tags
-- Row click → `/goldens/<id>` showing YAML content + latest run result preview
-- **v1 is read-only.** v2 adds authoring (form, validation, preview).
+- New framework features (those live in Phases 6 and 8)
+- Postgres/BigQuery database support (Snowflake only, matches current MVP scope)
+- Automated Snowflake dataset seeding — users bring their own marketplace share
+- A second example project (keep focus; add more later if demand materializes)
 
 ---
 
-## API surface
+## Work items
 
-All endpoints return JSON. Base: `/api/v1`.
+### 1. Move `tmp/my-evals/` → `examples/covid-19/`
 
-```
-GET  /runs?limit=50&offset=0&verdict=red|amber|green&after=<ts>
-         → [{ run_id, timestamp, test_count, pass_count, total_cost_usd, verdict_vs_prev }]
-
-GET  /runs/<run_id>
-         → full RunRow + category_aggregates + dimension_pass_rates + cost_by_model
-
-GET  /runs/<run_id>/tests
-         → [{ test_id, category, passed, score, failed_dimensions[] }]
-
-GET  /runs/<run_id>/tests/<test_id>
-         → full TestRow + dimensions[] + trace + row_comparison
-
-GET  /tests
-         → [{ test_id, category, runs_count, pass_rate, last_10_runs[] }]
-
-GET  /tests/<test_id>/history
-         → [{ run_id, timestamp, passed, score, failed_dimensions[] }]
-         + dimension_trends (9 series)
-
-GET  /compare?a=<run_a>&b=<run_b>
-         → { verdict, transitions, category_deltas, dimension_deltas }
-
-GET  /goldens
-         → [{ golden_id, category, difficulty, tags }]
-
-GET  /goldens/<golden_id>
-         → { golden YAML content, latest_run_result }
-
-GET  /projects
-         → [{ name, db_path }]  (v1: returns just the current one)
-```
-
-Response shapes mirror existing `store/queries.py` dataclasses as JSON. FastAPI's Pydantic integration handles serialization; `response_model` parameter generates OpenAPI docs.
-
----
-
-## Storage abstraction
-
-Refactor `src/bi_evals/store/queries.py` behind a Protocol so the FastAPI layer doesn't depend on DuckDB directly.
-
-```python
-# src/bi_evals/store/base.py
-class ResultsStore(Protocol):
-    def list_runs(self, limit: int, offset: int, ...) -> list[RunRow]: ...
-    def get_run(self, run_id: str) -> RunRow: ...
-    def list_tests_for_run(self, run_id: str) -> list[TestRow]: ...
-    def get_test(self, run_id: str, test_id: str) -> TestDetail: ...
-    def test_history(self, test_id: str) -> TestHistory: ...
-    def compare(self, run_a: str, run_b: str) -> CompareResult: ...
-    # ...
-
-# src/bi_evals/store/duckdb_store.py
-class DuckDBStore:
-    def __init__(self, db_path: Path):
-        self._db_path = db_path
-
-    def list_runs(self, ...):
-        with connect(self._db_path, read_only=True) as conn:
-            return queries.list_runs(conn, ...)
-    # ...
-```
-
-Existing `queries.py` functions stay as-is — `DuckDBStore` wraps them. When Postgres lands, `PostgresStore` implements the same Protocol. FastAPI routes take `store: ResultsStore = Depends(get_store)` and don't care which backend is active.
-
-**Cost**: ~2 hours of wrapping. Cheap insurance.
-
-**SQL portability**: all existing queries already use standard SQL. Keep it that way — no DuckDB-only functions.
-
----
-
-## File structure
+Target layout:
 
 ```
-src/bi_evals/
-  ui/
-    __init__.py
-    app.py              # FastAPI app factory
-    deps.py             # Dependency injection (get_store, get_config)
-    routes/
-      runs.py
-      tests.py
-      compare.py
-      goldens.py
-      projects.py
-    models.py           # Pydantic response models
-    static/             # Bundled React build output (gitignored; produced by `pnpm build`)
-      index.html
-      assets/…
-
-  store/
-    base.py             # ResultsStore Protocol (NEW)
-    duckdb_store.py     # DuckDB implementation (NEW)
-    __init__.py         # Re-exports connect, ResultsStore, DuckDBStore
-    client.py           # (unchanged)
-    schema.py           # (unchanged)
-    ingest.py           # (unchanged)
-    queries.py          # (unchanged — wrapped by DuckDBStore)
-
-  cli.py                # Add `ui` command
-
-ui/                     # React app source (NEW, at repo root)
-  package.json
-  vite.config.ts
-  tsconfig.json
-  tailwind.config.ts
-  src/
-    main.tsx
-    App.tsx
-    routes/
-      RunsList.tsx
-      RunDetail.tsx
-      TestDrilldown.tsx
-      Compare.tsx
-      TestsList.tsx
-      TestHistory.tsx
-      GoldensList.tsx
-      GoldenDetail.tsx
-    components/
-      Shell.tsx         # Top bar + sidebar layout
-      DataTable.tsx     # TanStack Table wrapper
-      SqlDiff.tsx       # Monaco wrapper
-      TraceViewer.tsx   # Collapsible JSON tree
-      DimensionGrid.tsx
-      VerdictBanner.tsx
-      ThemeToggle.tsx
-    lib/
-      api.ts            # Typed fetch wrappers
-      types.ts          # Mirrored from Pydantic response models (codegen or manual)
-      theme.ts
-    styles/
-      globals.css
-
-tests/
-  test_ui_routes.py     # FastAPI TestClient-based smoke tests (NEW)
-  test_store_abstract.py  # Test DuckDBStore Protocol conformance (NEW)
+examples/
+  covid-19/
+    README.md              # Walkthrough (new)
+    .env.example           # Required env vars with placeholders (new)
+    .gitignore             # Ignore .env, local duckdb, generated reports
+    bi-evals.yaml          # Cleaned config
+    system-prompt.md       # Existing
+    skills/
+      covid-reporting/
+        SKILL.md
+        knowledge/
+          CASE_TRACKING.md
+          MOBILITY_DATA.md
+          TESTING_DATA.md
+          US_STATE_DATA.md
+    golden/
+      cases/
+      joins/
+      us-states/
+      time-series/         # NEW category
+      aggregates/          # NEW category
+    results/
+      eval_<ts>_baseline.json     # ~3 representative runs (see below)
+      eval_<ts>_regressed.json
+      eval_<ts>_fixed.json
+      traces/
+        (corresponding traces only)
+    reports/
+      .gitkeep             # empty; filled by bi-evals run
 ```
 
-### Build pipeline
-- `pnpm build` in `ui/` outputs to `src/bi_evals/ui/static/`
-- Package data manifest (`pyproject.toml`) includes `ui/static/**` so the bundle ships with the Python package
-- CI builds frontend → runs Python tests → publishes
+Keep `tmp/my-evals/` intact for Zhi's personal dev use. Phase 8 **copies** to `examples/`, doesn't move-and-delete.
 
-### Development
-- Terminal 1: `uv run bi-evals ui --dev` (starts FastAPI on :8000 with reload)
-- Terminal 2: `cd ui && pnpm dev` (Vite on :5173 with API proxy to :8000)
-- Production: single `bi-evals ui` serves bundled assets from Python
+### 2. Credential hygiene
 
----
+- **`bi-evals.yaml`**: already uses `${SNOWFLAKE_*}` substitution. No code changes needed — just verify.
+- **`.env.example`** (new):
+  ```
+  SNOWFLAKE_ACCOUNT=xy12345.us-east-1
+  SNOWFLAKE_USER=your_user
+  SNOWFLAKE_PRIVATE_KEY_PATH=/absolute/path/to/rsa_key.p8
+  SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=your_passphrase
+  SNOWFLAKE_WAREHOUSE=COMPUTE_WH
+  SNOWFLAKE_DATABASE=COVID19_EPIDEMIOLOGICAL_DATA
+  SNOWFLAKE_SCHEMA=PUBLIC
+  ANTHROPIC_API_KEY=sk-ant-...
+  ```
+- **`.gitignore`** (new): `.env`, `results/bi-evals.duckdb`, `reports/*.html`
+- Verify no hardcoded creds leak into any skill/knowledge files (spot check).
 
-## `bi-evals ui` command
+### 3. Trim and curate results history
+
+Current `results/` has 17 runs with accumulated noise. Keep 3 that tell a clear story:
+
+- **Baseline** (all passing) — demonstrates a healthy run
+- **Regressed** (1+ critical-dim regression vs baseline) — enables the `bi-evals compare` walkthrough
+- **Fixed** (regression resolved) — demonstrates the full lifecycle
+
+Pick from existing files (prefer recent runs that already show this pattern). Rename with suffixes to make the story obvious: `eval_baseline.json`, `eval_regressed.json`, `eval_fixed.json`. Also trim `results/traces/` to only trace files referenced by these three runs.
+
+Re-ingest into a fresh `results/bi-evals.duckdb` so the ingested DB matches what's on disk. Don't ship the `.duckdb` file — `bi-evals ingest` or a fresh `bi-evals run` produces it.
+
+### 4. Fill golden coverage gaps
+
+Target 8–10 goldens across 5 categories. Current state: 5 goldens / 3 categories.
+
+Existing (keep):
+- `cases/total-cases-by-country.yaml`
+- `cases/daily-cases-filtered.yaml`
+- `joins/us-test-positivity.yaml`
+- `joins/cases-vs-mobility.yaml`
+- `us-states/state-level-deaths.yaml`
+
+Add (propose):
+- **`time-series/weekly-cases-rolling-avg.yaml`** — 7-day rolling average; exercises window functions
+- **`time-series/cases-peak-date.yaml`** — find the date of peak cases per country; exercises argmax patterns
+- **`aggregates/top-10-countries-by-deaths.yaml`** — ranked aggregation with ORDER BY + LIMIT
+- **`aggregates/mobility-categories-summary.yaml`** — multi-column GROUP BY; exercises MOBILITY_DATA knowledge
+- **`us-states/state-testing-trends.yaml`** — state-level test positivity over time; combines TESTING + US_STATE knowledge
+
+Each new golden: reference SQL verified against the actual Snowflake marketplace COVID dataset, row_comparison enabled where deterministic, expected skill-path documented.
+
+Mix difficulties so the suite isn't all trivial: include at least two "hard" (multi-table joins + aggregation), four "medium", a couple "easy" smoke tests.
+
+### 5. Write `examples/covid-19/README.md`
+
+Structure:
+
+```markdown
+# COVID-19 BI Evals Example
+
+A complete, working bi-evals project demonstrating the framework against
+the public COVID-19 Epidemiology dataset on Snowflake Marketplace.
+
+## Prerequisites
+- Python 3.11+, uv installed
+- Node.js + npm (for Promptfoo)
+- Anthropic API key
+- Snowflake account with access to COVID19_EPIDEMIOLOGICAL_DATA marketplace share
+
+## One-time setup
+1. Get the Snowflake marketplace share (link)
+2. Create Snowflake key-pair auth (link to Snowflake docs)
+3. Copy env: `cp .env.example .env`; fill in values
+4. Install: `uv sync`
+
+## Run your first eval
+```bash
+cd examples/covid-19
+bi-evals run
+bi-evals report
+open reports/report_*.html
+```
+
+## Run the regression-compare walkthrough
+We've included three pre-ingested runs telling a story:
+- `eval_baseline` — all passing
+- `eval_regressed` — one regression (row_completeness on daily-cases-filtered)
+- `eval_fixed` — regression resolved
 
 ```bash
-bi-evals ui [--port 8000] [--no-open] [--dev]
+bi-evals ingest results/eval_baseline.json
+bi-evals ingest results/eval_regressed.json
+bi-evals compare prev latest
+open reports/compare_*.html
 ```
 
-- Loads config, resolves DB path, verifies DB exists
-- Starts uvicorn with FastAPI app
-- Opens browser to `localhost:<port>` unless `--no-open`
-- `--dev` mode: enables reload, expects Vite dev server separately
+## Project structure
+[brief tour]
+
+## Adding your own goldens
+[link to docs/golden-tests-guide.md]
+
+## Troubleshooting
+- `Snowflake connection failed` → [common fixes]
+- `Promptfoo not found` → `npm install -g promptfoo`
+- `DuckDB locked` → close any open `duckdb` CLI sessions
+```
+
+Keep it under ~150 lines. Link to the main repo README and `docs/` for deep detail; this is an onramp, not the reference.
+
+### 6. Update the top-level README
+
+The repo's `README.md` should link to `examples/covid-19/` as the canonical example. One-paragraph addition: "To see bi-evals in action, see `examples/covid-19/`." Don't rewrite the whole thing.
+
+### 7. Verification on a fresh clone
+
+After the files are in place, verify on a clean checkout (worktree or fresh clone):
+- `cd examples/covid-19 && bi-evals run` succeeds end-to-end (requires real credentials — document this caveat)
+- `bi-evals report` and `bi-evals compare prev latest` both produce HTML output
+- Ingest of the 3 shipped eval JSONs works without errors
+- All shipped goldens execute successfully against Snowflake
+
+### 8. Update STATUS.md
+
+Mark Phase 8 complete once merged. Move the "polish example" item from Remaining to Completed.
 
 ---
 
-## Deployment migration path (future shared instance)
+## File changes
 
-For when the team decides to move off local-only. Documented here so the v1 design doesn't paint us into a corner.
-
-1. **New `PostgresStore`** implementing `ResultsStore`. Port DDL from DuckDB → Postgres (JSON → JSONB, minor type swaps). Migration script to backfill from one or more DuckDB files.
-2. **Ingest** writes to Postgres instead of DuckDB. `bi-evals run` in CI publishes results to the shared DB.
-3. **Auth layer** in FastAPI (middleware; can use FastAPI's built-in `OAuth2PasswordBearer` + team SSO via Auth0/Clerk/Okta).
-4. **Frontend config** — point at hosted URL instead of localhost. Zero code change.
-5. **Deploy** — Docker image bundling Python backend + React build + PG migration. Reverse proxy (nginx/Caddy) for TLS.
-
-None of this blocks v1; none of it needs to be written speculatively.
-
----
-
-## File changes summary
-
-| Path | Action | Purpose |
+| Path | Action | Notes |
 |---|---|---|
-| `pyproject.toml` | Modify | Add `fastapi`, `uvicorn[standard]`, `httpx` (tests) |
-| `src/bi_evals/store/base.py` | New | `ResultsStore` Protocol |
-| `src/bi_evals/store/duckdb_store.py` | New | DuckDB-backed implementation |
-| `src/bi_evals/store/__init__.py` | Modify | Export new types |
-| `src/bi_evals/ui/app.py` | New | FastAPI app factory |
-| `src/bi_evals/ui/deps.py` | New | DI for store, config |
-| `src/bi_evals/ui/routes/` | New | REST endpoints |
-| `src/bi_evals/ui/models.py` | New | Pydantic response models |
-| `src/bi_evals/ui/static/` | New (build artifact) | React bundle |
-| `src/bi_evals/cli.py` | Modify | Add `ui` command |
-| `ui/` | New | React app source |
-| `tests/test_ui_routes.py` | New | FastAPI smoke tests |
-| `tests/test_store_abstract.py` | New | Protocol conformance |
-| `docs/duckdb-schema.md` | Modify | Link to `ResultsStore` abstraction |
+| `examples/covid-19/README.md` | New | Walkthrough |
+| `examples/covid-19/.env.example` | New | Env var placeholders |
+| `examples/covid-19/.gitignore` | New | Ignore .env, .duckdb, reports |
+| `examples/covid-19/bi-evals.yaml` | Copy+verify | From tmp/my-evals/ |
+| `examples/covid-19/system-prompt.md` | Copy | From tmp/my-evals/ |
+| `examples/covid-19/skills/covid-reporting/**` | Copy | From tmp/my-evals/ |
+| `examples/covid-19/golden/cases/*.yaml` | Copy | 2 existing |
+| `examples/covid-19/golden/joins/*.yaml` | Copy | 2 existing |
+| `examples/covid-19/golden/us-states/state-level-deaths.yaml` | Copy | 1 existing |
+| `examples/covid-19/golden/us-states/state-testing-trends.yaml` | New | |
+| `examples/covid-19/golden/time-series/weekly-cases-rolling-avg.yaml` | New | |
+| `examples/covid-19/golden/time-series/cases-peak-date.yaml` | New | |
+| `examples/covid-19/golden/aggregates/top-10-countries-by-deaths.yaml` | New | |
+| `examples/covid-19/golden/aggregates/mobility-categories-summary.yaml` | New | |
+| `examples/covid-19/results/eval_baseline.json` | Curated copy | From tmp/my-evals/results/ |
+| `examples/covid-19/results/eval_regressed.json` | Curated copy | |
+| `examples/covid-19/results/eval_fixed.json` | Curated copy | |
+| `examples/covid-19/results/traces/*.json` | Curated copy | Only those referenced |
+| `examples/covid-19/reports/.gitkeep` | New | Keep empty dir |
+| `README.md` | Modify | Add link to example |
+| `STATUS.md` | Modify | Mark Phase 8 complete |
 
 ---
 
 ## Risks / Gotchas
 
-- **React build complexity** — first time the repo has a Node toolchain. Mitigate: use Vite (simplest modern setup), commit lockfile, document `pnpm install` as part of contributor setup. CI builds the bundle.
-- **Bundle size** — Monaco editor is ~2MB. Lazy-load on test drilldown page only; don't include in initial bundle.
-- **Trace size** — 1MB traces will crash naive rendering. Virtualize via `react-window` if it becomes a problem. v1 assumes modest traces.
-- **DuckDB read-only concurrency** — solved in Phase 5 (`read_only=True`); UI uses same pattern. Multiple UI sessions + a `duckdb -readonly` CLI coexist cleanly.
-- **Stale data** — UI fetches fresh from DB on every navigation. No client-side caching layer in v1. Consider React Query later if perf warrants.
-- **Dark mode flash on load** — apply theme class from localStorage in inline `<head>` script before React mounts. Standard pattern.
-- **Proxy config mismatch** — dev proxy (5173 → 8000) vs prod serving. Document both; test both before shipping.
-- **Type drift between backend and frontend** — manual `types.ts` mirrors Pydantic models. Consider `datamodel-code-generator` or OpenAPI-based codegen in v2 if drift becomes a maintenance burden.
+- **Snowflake marketplace access** is a real prerequisite — many contributors won't have it. Document clearly; don't pretend the example is zero-setup.
+- **Reference SQL drift** — the COVID marketplace dataset may be updated; golden reference SQL must be re-verified before shipping. Run every golden once against live Snowflake to confirm.
+- **Regression seeding** — finding (or producing) a run with a clean, understandable regression takes care. Worst case: intentionally perturb a skill file to produce a regression, then revert.
+- **Bundle size** — 17 result JSONs + traces + reports is ~10MB today. Trimmed to 3 runs it should be well under 2MB. Don't accidentally commit the full history.
+- **Credential leakage** — one stray `grep -r` of `account:` or real API keys before committing. Add a pre-push safety check to the verification step.
+- **`.duckdb` file** — easy to forget in `.gitignore`. Confirm it's not committed.
 
 ---
 
 ## Verification
 
 ```bash
-# Backend tests
-uv run python -m pytest tests/test_ui_routes.py tests/test_store_abstract.py -v
+# Structure check
+ls examples/covid-19/
+find examples/covid-19/golden -name "*.yaml" | wc -l  # Expect 8-10
+find examples/covid-19/results -name "*.json" | wc -l # Expect 3 (+ traces)
 
-# Full suite regression
-uv run python -m pytest tests/ -m "not integration" -v
+# No credential leaks
+grep -rE "(sk-ant|p8|password|\.snowflakecomputing\.com)" examples/covid-19/ \
+    --include="*.yaml" --include="*.md" --include="*.json"
+# Expect: no matches (only .env.example placeholders)
 
-# Frontend build
-cd ui && pnpm install && pnpm build
-# Expect: src/bi_evals/ui/static/ populated
+# Fresh-clone simulation
+git worktree add /tmp/bi-evals-fresh main
+cd /tmp/bi-evals-fresh/examples/covid-19
+cp .env.example .env  # then fill in creds
+uv run bi-evals run --filter cases
+# Expect: promptfooconfig generated, cases tests run, auto-ingest succeeds
 
-# End-to-end smoke
-uv run bi-evals --config tmp/my-evals/bi-evals.yaml ui --no-open &
-curl -s http://localhost:8000/api/v1/runs | head -c 500
-# Expect: JSON array of runs
+uv run bi-evals ingest results/eval_baseline.json
+uv run bi-evals ingest results/eval_regressed.json
+uv run bi-evals compare prev latest
+# Expect: compare_*.html with red verdict
 
-# Manual: navigate every page with real data
-open http://localhost:8000
-# Test: runs list, run detail, test drilldown (with trace + SQL diff + row comparison),
-#       compare, test history, goldens list
+# Cleanup
+cd - && git worktree remove /tmp/bi-evals-fresh
 ```
 
 Success criteria:
-- Every page works end-to-end against `tmp/my-evals/` data (16 runs, 5 tests each)
-- Dark mode default, light toggle persists via localStorage
-- Multiple browser tabs coexist without locking DuckDB
-- Can navigate from a regression in the compare view → test drilldown → per-test history without using the URL bar
-- Bundle size under 1MB initial load (Monaco lazy-loaded)
-- Full test suite stays green
+- A developer with Anthropic + Snowflake credentials can go from `git clone` to a passing `bi-evals run` in under 10 minutes of setup
+- The shipped `results/` tells the baseline → regression → fixed story on first `bi-evals compare`
+- 8–10 goldens covering 5 categories run cleanly
+- No leaked credentials, no stale `.duckdb`, no orphan traces
+- STATUS.md reflects Phase 8 complete

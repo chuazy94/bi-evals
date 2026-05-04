@@ -153,7 +153,7 @@ For teams that care about this strongly, setting the weight high (e.g., 3.0, sam
 
 ### Reporting
 
-In the single-run report, `anti_pattern_compliance` appears in the dimension pass-rate list like any other dimension. No new section needed. The per-test drilldown (in Phase 8 UI) shows which specific forbidden tables/columns were violated via the `reason` field.
+In the single-run report, `anti_pattern_compliance` appears in the dimension pass-rate list like any other dimension. No new section needed. The per-test drilldown (in Phase 7 UI) shows which specific forbidden tables/columns were violated via the `reason` field.
 
 For now, the existing report already shows `reason` inline for failed dimensions. That's enough for CLI-era debugging.
 

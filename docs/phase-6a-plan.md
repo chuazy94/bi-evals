@@ -4,7 +4,7 @@
 
 Phases 1–5 produce a **single bit of information per test per run**: pass or fail. In practice that bit is noisy — LLMs are non-deterministic even at `temperature=0`, and a "regression" from the `compare` command might just be an unlucky draw. Today we have no way to distinguish "this test is flaky" from "this test broke," and no way to answer "would Haiku be 90% as accurate as Sonnet at 20% of the cost?"
 
-Phase 6a fixes the quality of the signal itself. Everything downstream — Phase 6b's causation tooling, Phase 6c's anti-patterns, Phase 8's UI — gets sharper when the underlying data is trustworthy. Three features:
+Phase 6a fixes the quality of the signal itself. Everything downstream — Phase 6b's causation tooling, Phase 6c's anti-patterns, Phase 7's UI — gets sharper when the underlying data is trustworthy. Three features:
 
 1. **Repeat-run variance** — run each golden N times, aggregate pass rate + stddev. Replace single-bit pass/fail with a distribution.
 2. **Multi-model evaluation** — run the same goldens across multiple models in one eval. Surface quality-vs-cost tradeoffs.
@@ -201,7 +201,7 @@ def flakiest_tests(conn, *, last_n_runs: int = 10, limit: int = 20) -> list[Test
 - **CLI**: new command `bi-evals flakiness [--last-n 10]` lists tests sorted by flip count. Text output; no new HTML.
 - **Report**: add a "Stability" section listing the top 5 flakiest tests with their flip counts and current streak.
 - **Compare**: unchanged. Stability is about history, not pair-wise diff.
-- **Phase 8 (UI)** later: per-test history view gets a prominent "flipped N times" badge.
+- **Phase 7 (UI)** later: per-test history view gets a prominent "flipped N times" badge.
 
 ### When it's useful
 

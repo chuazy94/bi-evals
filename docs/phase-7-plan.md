@@ -1,206 +1,109 @@
-# Phase 7: Polish the COVID-19 Example Project
+# Phase 7: Minimal Local Viewer
 
 ## Context
 
-A working example exists under `tmp/my-evals/`:
-- Snowflake-backed (COVID-19 public dataset via Snowflake Marketplace)
-- 5 goldens across 3 categories (`cases`, `joins`, `us-states`)
-- 5 skill/knowledge files under `skills/covid-reporting/`
-- 17 historical eval runs (~9.9MB) with traces, reports, and DuckDB history
+The current loop — `bi-evals run` → `bi-evals report` → find file → `open file://...html` → `bi-evals compare A B` → open another file — is a friction tax paid every eval cycle. Phase 7 replaces it with a single command (`bi-evals ui`) that serves the same content over HTTP, so browsing runs is one click instead of three CLI invocations.
 
-The example is functional but lives in `tmp/` — a scratch directory that:
-- Isn't shipped with the repo (`tmp/` is gitignored)
-- Has local Snowflake credentials wired in as env vars (fine for dev, but no public contributor can run it)
-- Carries 17 accumulated result files plus reports (noise for a first-time reader)
-- Has uneven golden coverage — 5 tests across 3 categories isn't enough to showcase the framework's breadth
+This is **deliberately the minimum to remove that friction**. No SPA, no build step, no React, no charts library, no editor component. If a richer UI ever becomes warranted (regression drilldowns, trend charts, golden authoring), it gets a separate phase based on actual usage data — not on guesses about what users will want.
 
-Phase 7 promotes it to a first-class `examples/covid-19/` directory that a new contributor can clone and run end-to-end, and that demonstrates the framework meaningfully (more goldens, at least one seeded regression, a README walkthrough).
-
-This is deliberately a **polish phase**, not a feature phase. No new code in `src/bi_evals/`. Success is a newcomer running `bi-evals run` in `examples/covid-19/` on a fresh clone and seeing the full flow work.
+An earlier draft of this phase planned a full SPA (FastAPI + Vite + React + TypeScript + shadcn + TanStack + Recharts + Monaco). That was designing v3 of the UI before v1 existed. This plan is v1.
 
 ---
 
 ## Goals
 
-1. **Turn the existing scratch project into a documented, shipped example.**
-2. **Demonstrate the framework's breadth** with better golden coverage (8–10 tests across more categories).
-3. **Keep a known-regression run in history** so the `bi-evals compare` walkthrough has something to show.
-4. **Lower the barrier to running the example** — minimal setup instructions, clear credential requirements, no hand-editing needed.
+1. **One command:** `bi-evals ui` starts a local server, opens the browser. No more manual report generation.
+2. **Three pages:** runs list, single-run view, compare view. That's it.
+3. **Zero new dependencies beyond FastAPI + Uvicorn.** Reuse the existing Jinja templates verbatim.
+
+Success: I never have to run `bi-evals report` or `bi-evals compare` from the CLI again. After a `bi-evals run`, I refresh the browser and see the new run.
 
 ---
 
 ## Non-goals
 
-- New framework features (those live in Phases 6 and 8)
-- Postgres/BigQuery database support (Snowflake only, matches current MVP scope)
-- Automated Snowflake dataset seeding — users bring their own marketplace share
-- A second example project (keep focus; add more later if demand materializes)
+- Auth (it's localhost, single user — match Promptfoo's `view` UX)
+- Trigger runs from the UI (`bi-evals run` stays in the CLI)
+- Golden authoring forms
+- Live progress streaming
+- Trend charts, dashboards, search, filters
+- Per-test history, prompt-drift visualizer, flakiness drilldown
+- Postgres-ready storage abstraction (`ResultsStore` Protocol from the old plan) — YAGNI; revisit when there's a real reason to share state
+- Any frontend framework, build step, or `node_modules`
+
+If any of these become genuinely painful after v1 ships, they go in a separate phase.
 
 ---
 
-## Work items
+## Stack
 
-### 1. Move `tmp/my-evals/` → `examples/covid-19/`
+- **FastAPI** + **Uvicorn** — Python, no build step
+- **Jinja2** — already used by `report/builder.py`; templates port over with minimal changes
+- **Inline CSS** — already self-contained in the existing report templates
+- **No JavaScript** for v1. If a single page needs partial updates, add HTMX (one `<script>` tag). Don't add it preemptively.
 
-Target layout:
+---
 
-```
-examples/
-  covid-19/
-    README.md              # Walkthrough (new)
-    .env.example           # Required env vars with placeholders (new)
-    .gitignore             # Ignore .env, local duckdb, generated reports
-    bi-evals.yaml          # Cleaned config
-    system-prompt.md       # Existing
-    skills/
-      covid-reporting/
-        SKILL.md
-        knowledge/
-          CASE_TRACKING.md
-          MOBILITY_DATA.md
-          TESTING_DATA.md
-          US_STATE_DATA.md
-    golden/
-      cases/
-      joins/
-      us-states/
-      time-series/         # NEW category
-      aggregates/          # NEW category
-    results/
-      eval_<ts>_baseline.json     # ~3 representative runs (see below)
-      eval_<ts>_regressed.json
-      eval_<ts>_fixed.json
-      traces/
-        (corresponding traces only)
-    reports/
-      .gitkeep             # empty; filled by bi-evals run
-```
+## Pages
 
-Keep `tmp/my-evals/` intact for Zhi's personal dev use. Phase 7 **copies** to `examples/`, doesn't move-and-delete.
+### `GET /` — Runs list
 
-### 2. Credential hygiene
+A table of recent runs from the DuckDB store. Columns: timestamp, run-id, model(s), test count, pass rate, total cost, links.
 
-- **`bi-evals.yaml`**: already uses `${SNOWFLAKE_*}` substitution. No code changes needed — just verify.
-- **`.env.example`** (new):
-  ```
-  SNOWFLAKE_ACCOUNT=xy12345.us-east-1
-  SNOWFLAKE_USER=your_user
-  SNOWFLAKE_PRIVATE_KEY_PATH=/absolute/path/to/rsa_key.p8
-  SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=your_passphrase
-  SNOWFLAKE_WAREHOUSE=COMPUTE_WH
-  SNOWFLAKE_DATABASE=COVID19_EPIDEMIOLOGICAL_DATA
-  SNOWFLAKE_SCHEMA=PUBLIC
-  ANTHROPIC_API_KEY=sk-ant-...
-  ```
-- **`.gitignore`** (new): `.env`, `results/bi-evals.duckdb`, `reports/*.html`
-- Verify no hardcoded creds leak into any skill/knowledge files (spot check).
+- Sorted newest-first
+- Each row links to `/runs/<run_id>`
+- Two checkboxes per row + a "Compare selected" button → `/compare?a=<id>&b=<id>`
+- "Latest vs prev" shortcut button at the top
 
-### 3. Trim and curate results history
+Replaces: `ls results/eval_*.json`, `bi-evals cost`, `bi-evals flakiness` for the basic "what runs do I have" question.
 
-Current `results/` has 17 runs with accumulated noise. Keep 3 that tell a clear story:
+### `GET /runs/<run_id>` — Single run
 
-- **Baseline** (all passing) — demonstrates a healthy run
-- **Regressed** (1+ critical-dim regression vs baseline) — enables the `bi-evals compare` walkthrough
-- **Fixed** (regression resolved) — demonstrates the full lifecycle
+Renders exactly what `build_report_html(conn, run_id, ...)` produces today — the same template, same data, same CSS — but served from the DB instead of written to disk.
 
-Pick from existing files (prefer recent runs that already show this pattern). Rename with suffixes to make the story obvious: `eval_baseline.json`, `eval_regressed.json`, `eval_fixed.json`. Also trim `results/traces/` to only trace files referenced by these three runs.
+Reuses: `bi_evals.report.builder.build_report_html` directly. The function already takes a `duckdb` connection.
 
-Re-ingest into a fresh `results/bi-evals.duckdb` so the ingested DB matches what's on disk. Don't ship the `.duckdb` file — `bi-evals ingest` or a fresh `bi-evals run` produces it.
+### `GET /compare?a=<id>&b=<id>` — Compare two runs
 
-### 4. Fill golden coverage gaps
+Renders exactly what `build_compare_html(conn, a, b, ...)` produces today.
 
-Target 8–10 goldens across 5 categories. Current state: 5 goldens / 3 categories.
+Reuses: `bi_evals.report.builder.build_compare_html` directly.
 
-Existing (keep):
-- `cases/total-cases-by-country.yaml`
-- `cases/daily-cases-filtered.yaml`
-- `joins/us-test-positivity.yaml`
-- `joins/cases-vs-mobility.yaml`
-- `us-states/state-level-deaths.yaml`
+---
 
-Add (propose):
-- **`time-series/weekly-cases-rolling-avg.yaml`** — 7-day rolling average; exercises window functions
-- **`time-series/cases-peak-date.yaml`** — find the date of peak cases per country; exercises argmax patterns
-- **`aggregates/top-10-countries-by-deaths.yaml`** — ranked aggregation with ORDER BY + LIMIT
-- **`aggregates/mobility-categories-summary.yaml`** — multi-column GROUP BY; exercises MOBILITY_DATA knowledge
-- **`us-states/state-testing-trends.yaml`** — state-level test positivity over time; combines TESTING + US_STATE knowledge
-
-Each new golden: reference SQL verified against the actual Snowflake marketplace COVID dataset, row_comparison enabled where deterministic, expected skill-path documented.
-
-Mix difficulties so the suite isn't all trivial: include at least two "hard" (multi-table joins + aggregation), four "medium", a couple "easy" smoke tests.
-
-### 5. Write `examples/covid-19/README.md`
-
-Structure:
-
-```markdown
-# COVID-19 BI Evals Example
-
-A complete, working bi-evals project demonstrating the framework against
-the public COVID-19 Epidemiology dataset on Snowflake Marketplace.
-
-## Prerequisites
-- Python 3.11+, uv installed
-- Node.js + npm (for Promptfoo)
-- Anthropic API key
-- Snowflake account with access to COVID19_EPIDEMIOLOGICAL_DATA marketplace share
-
-## One-time setup
-1. Get the Snowflake marketplace share (link)
-2. Create Snowflake key-pair auth (link to Snowflake docs)
-3. Copy env: `cp .env.example .env`; fill in values
-4. Install: `uv sync`
-
-## Run your first eval
-```bash
-cd examples/covid-19
-bi-evals run
-bi-evals report
-open reports/report_*.html
-```
-
-## Run the regression-compare walkthrough
-We've included three pre-ingested runs telling a story:
-- `eval_baseline` — all passing
-- `eval_regressed` — one regression (row_completeness on daily-cases-filtered)
-- `eval_fixed` — regression resolved
+## CLI
 
 ```bash
-bi-evals ingest results/eval_baseline.json
-bi-evals ingest results/eval_regressed.json
-bi-evals compare prev latest
-open reports/compare_*.html
+bi-evals ui
+# Opening bi-evals viewer at http://localhost:8765 ...
+
+bi-evals ui --port 9000 --no-open
 ```
 
-## Project structure
-[brief tour]
+- Default port: `8765` (avoids collision with Promptfoo's `15500`)
+- Opens browser automatically (suppressible with `--no-open`)
+- Reads `storage.db_path` from config like every other command
+- `Ctrl+C` to stop
 
-## Adding your own goldens
-[link to docs/golden-tests-guide.md]
+---
 
-## Troubleshooting
-- `Snowflake connection failed` → [common fixes]
-- `Promptfoo not found` → `npm install -g promptfoo`
-- `DuckDB locked` → close any open `duckdb` CLI sessions
+## Code
+
+- New `src/bi_evals/ui/__init__.py`
+- New `src/bi_evals/ui/server.py` — FastAPI app, ~100 lines, three route handlers
+- New `src/bi_evals/ui/templates/runs_list.html.j2` — the only new template (the other two pages reuse `report.html.j2` and `compare.html.j2` from `bi_evals/report/templates/`)
+- Modify `src/bi_evals/cli.py` — add `ui` command that imports lazily (so `fastapi` doesn't slow down unrelated commands)
+- Modify `pyproject.toml` — add `fastapi`, `uvicorn[standard]` to deps
+- `tests/test_ui.py` — use FastAPI's `TestClient`; assert each route returns 200, contains expected text from a seeded DB fixture. ~5 tests.
+
+The handler functions are essentially:
+
+```python
+@app.get("/runs/{run_id}", response_class=HTMLResponse)
+def run_view(run_id: str):
+    with store_connect(db_path, read_only=True) as conn:
+        return build_report_html(conn, run_id, ...)
 ```
-
-Keep it under ~150 lines. Link to the main repo README and `docs/` for deep detail; this is an onramp, not the reference.
-
-### 6. Update the top-level README
-
-The repo's `README.md` should link to `examples/covid-19/` as the canonical example. One-paragraph addition: "To see bi-evals in action, see `examples/covid-19/`." Don't rewrite the whole thing.
-
-### 7. Verification on a fresh clone
-
-After the files are in place, verify on a clean checkout (worktree or fresh clone):
-- `cd examples/covid-19 && bi-evals run` succeeds end-to-end (requires real credentials — document this caveat)
-- `bi-evals report` and `bi-evals compare prev latest` both produce HTML output
-- Ingest of the 3 shipped eval JSONs works without errors
-- All shipped goldens execute successfully against Snowflake
-
-### 8. Update STATUS.md
-
-Mark Phase 7 complete once merged. Move the "polish example" item from Remaining to Completed.
 
 ---
 
@@ -208,73 +111,45 @@ Mark Phase 7 complete once merged. Move the "polish example" item from Remaining
 
 | Path | Action | Notes |
 |---|---|---|
-| `examples/covid-19/README.md` | New | Walkthrough |
-| `examples/covid-19/.env.example` | New | Env var placeholders |
-| `examples/covid-19/.gitignore` | New | Ignore .env, .duckdb, reports |
-| `examples/covid-19/bi-evals.yaml` | Copy+verify | From tmp/my-evals/ |
-| `examples/covid-19/system-prompt.md` | Copy | From tmp/my-evals/ |
-| `examples/covid-19/skills/covid-reporting/**` | Copy | From tmp/my-evals/ |
-| `examples/covid-19/golden/cases/*.yaml` | Copy | 2 existing |
-| `examples/covid-19/golden/joins/*.yaml` | Copy | 2 existing |
-| `examples/covid-19/golden/us-states/state-level-deaths.yaml` | Copy | 1 existing |
-| `examples/covid-19/golden/us-states/state-testing-trends.yaml` | New | |
-| `examples/covid-19/golden/time-series/weekly-cases-rolling-avg.yaml` | New | |
-| `examples/covid-19/golden/time-series/cases-peak-date.yaml` | New | |
-| `examples/covid-19/golden/aggregates/top-10-countries-by-deaths.yaml` | New | |
-| `examples/covid-19/golden/aggregates/mobility-categories-summary.yaml` | New | |
-| `examples/covid-19/results/eval_baseline.json` | Curated copy | From tmp/my-evals/results/ |
-| `examples/covid-19/results/eval_regressed.json` | Curated copy | |
-| `examples/covid-19/results/eval_fixed.json` | Curated copy | |
-| `examples/covid-19/results/traces/*.json` | Curated copy | Only those referenced |
-| `examples/covid-19/reports/.gitkeep` | New | Keep empty dir |
-| `README.md` | Modify | Add link to example |
+| `src/bi_evals/ui/__init__.py` | New | Empty |
+| `src/bi_evals/ui/server.py` | New | FastAPI app, ~100 lines |
+| `src/bi_evals/ui/templates/runs_list.html.j2` | New | Only new template |
+| `src/bi_evals/cli.py` | Modify | Add `ui` command |
+| `pyproject.toml` | Modify | Add `fastapi`, `uvicorn[standard]` |
+| `tests/test_ui.py` | New | Route smoke tests against `TestClient` |
+| `docs/feature_summary.md` | Modify | Document `bi-evals ui` |
 | `STATUS.md` | Modify | Mark Phase 7 complete |
 
 ---
 
-## Risks / Gotchas
+## Risks / gotchas
 
-- **Snowflake marketplace access** is a real prerequisite — many contributors won't have it. Document clearly; don't pretend the example is zero-setup.
-- **Reference SQL drift** — the COVID marketplace dataset may be updated; golden reference SQL must be re-verified before shipping. Run every golden once against live Snowflake to confirm.
-- **Regression seeding** — finding (or producing) a run with a clean, understandable regression takes care. Worst case: intentionally perturb a skill file to produce a regression, then revert.
-- **Bundle size** — 17 result JSONs + traces + reports is ~10MB today. Trimmed to 3 runs it should be well under 2MB. Don't accidentally commit the full history.
-- **Credential leakage** — one stray `grep -r` of `account:` or real API keys before committing. Add a pre-push safety check to the verification step.
-- **`.duckdb` file** — easy to forget in `.gitignore`. Confirm it's not committed.
+- **Read-only DB connection in handlers.** Multiple browser tabs + an in-progress `bi-evals run` writing to the same DuckDB file can lock. Open all UI connections with `read_only=True` (already supported by `store_connect`).
+- **Stale browser tab after a new run.** Acceptable for v1 — user refreshes. Don't build websockets/SSE for this.
+- **Port collision.** Default to a less-common port (`8765`); document `--port`.
+- **Template drift.** The two reused templates (`report.html.j2`, `compare.html.j2`) currently render as standalone HTML files. Confirm they work when served from a route — they should, since they include their own CSS and have no relative URLs. If they need a layout wrapper, keep it minimal.
+- **Scope creep is the real risk.** The temptation to add "just one chart" or "just a search box" will be strong. Defer everything to a future phase. Ship the boring version, see what people actually use.
+
+---
+
+## Estimate
+
+~3 days end-to-end. Most of the work is wiring, not building — the data layer and templates already exist.
 
 ---
 
 ## Verification
 
 ```bash
-# Structure check
-ls examples/covid-19/
-find examples/covid-19/golden -name "*.yaml" | wc -l  # Expect 8-10
-find examples/covid-19/results -name "*.json" | wc -l # Expect 3 (+ traces)
-
-# No credential leaks
-grep -rE "(sk-ant|p8|password|\.snowflakecomputing\.com)" examples/covid-19/ \
-    --include="*.yaml" --include="*.md" --include="*.json"
-# Expect: no matches (only .env.example placeholders)
-
-# Fresh-clone simulation
-git worktree add /tmp/bi-evals-fresh main
-cd /tmp/bi-evals-fresh/examples/covid-19
-cp .env.example .env  # then fill in creds
-uv run bi-evals run --filter cases
-# Expect: promptfooconfig generated, cases tests run, auto-ingest succeeds
-
-uv run bi-evals ingest results/eval_baseline.json
-uv run bi-evals ingest results/eval_regressed.json
-uv run bi-evals compare prev latest
-# Expect: compare_*.html with red verdict
-
-# Cleanup
-cd - && git worktree remove /tmp/bi-evals-fresh
+uv run bi-evals ui
+# Browser opens to http://localhost:8765 showing the runs list
+# Click a run → single-run view renders identically to bi-evals report
+# Check two rows + Compare → compare view renders identically to bi-evals compare
+# Ctrl+C exits cleanly
 ```
 
 Success criteria:
-- A developer with Anthropic + Snowflake credentials can go from `git clone` to a passing `bi-evals run` in under 10 minutes of setup
-- The shipped `results/` tells the baseline → regression → fixed story on first `bi-evals compare`
-- 8–10 goldens covering 5 categories run cleanly
-- No leaked credentials, no stale `.duckdb`, no orphan traces
-- STATUS.md reflects Phase 7 complete
+- All three routes return 200 with expected content for a seeded DB
+- Single-run and compare pages are visually identical to the CLI-generated HTML
+- `bi-evals report` and `bi-evals compare` CLI commands continue to work (not removed; the UI is additive)
+- ≥5 new tests in `tests/test_ui.py`

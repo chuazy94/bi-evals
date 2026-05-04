@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Users provide their own skill/knowledge files, golden tests, and database credentials — the framework handles the LLM provider loop, 9-dimension accuracy scoring, HTML reporting, and regression detection. Promptfoo (Node.js) is used as the test runner engine; all custom logic is Python.
+bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Users provide their own skill/knowledge files, golden tests, and database credentials — the framework handles the LLM provider loop, 10-dimension accuracy scoring, HTML reporting, and regression detection. Promptfoo (Node.js) is used as the test runner engine; all custom logic is Python.
 
 ## Commands
 
@@ -29,9 +29,13 @@ uv run python -m pytest tests/ -m "not integration" -v
 
 # CLI commands
 uv run bi-evals init --dir /tmp/test-project
-uv run bi-evals run
-uv run bi-evals report
-uv run bi-evals compare <run1.json> <run2.json>
+uv run bi-evals run                                     # runs Promptfoo + auto-ingests
+uv run bi-evals ingest results/eval_<ts>.json           # backfill an old run into DuckDB
+uv run bi-evals report [--run-id ID]                    # single-run HTML
+uv run bi-evals compare <run_a> <run_b>                 # accepts evalId or `latest`/`prev`
+uv run bi-evals cost                                    # cost-vs-median history
+uv run bi-evals flakiness                               # tests that flip pass/fail across runs
+uv run bi-evals view                                    # opens Promptfoo's per-test UI
 ```
 
 ## Architecture
@@ -61,11 +65,19 @@ Tools follow a `Tool` protocol (name, definition, execute). `FileReaderTool` rea
 
 ### Database abstraction (`src/bi_evals/db/`)
 
-`DatabaseClient` protocol with `SnowflakeClient` implementation. Adding new databases = new file + one line in factory. Not yet implemented.
+`DatabaseClient` protocol with `SnowflakeClient` as the only current implementation. Adding new databases = new file + one line in `factory.py`.
 
 ### Scorer (`src/bi_evals/scorer/`)
 
-9 binary pass/fail dimensions. Each dimension is an independent evaluator function. The scorer entry point (`entry.py`) provides Promptfoo's `get_assert()` interface. Not yet implemented.
+10 binary pass/fail dimensions, each an independent evaluator (`dimensions/*.py`). Pass/fail rule: every `critical_dimensions` entry must pass AND the weighted score ≥ `pass_threshold`. The scorer entry point (`entry.py`) implements Promptfoo's `get_assert()` interface. A dimension whose golden has nothing to evaluate (e.g. `anti_pattern_compliance` when no `anti_patterns` are declared) skips with `passed=true` and a `"skipped: ..."` reason; vacuously-passing dims are dropped from the HTML report.
+
+### Storage (`src/bi_evals/store/`)
+
+Embedded DuckDB at `results/bi-evals.duckdb`. `bi-evals run` auto-ingests after Promptfoo finishes; ingest is idempotent (`DELETE` + re-insert per `run_id`). The JSON files in `results/` remain the replayable source of truth — DuckDB is the queryable view. Schema is in `schema.py`; query helpers return frozen dataclasses (`queries.py`). Each run snapshots `prompt_snapshot` (SHA256/size/mtime per file the agent read) into `runs.prompt_snapshot` for prompt-drift detection.
+
+### Report & compare (`src/bi_evals/report/`, `src/bi_evals/compare/`)
+
+Jinja2 templates extending `_base.html.j2`. **No CDN, no external URLs** (enforced by test). `report/builder.py` and `compare/builder.py` do all computation; templates only iterate. Compare uses a tiered verdict — 🔴 if any test regressed (overall pass T→F, or critical dim flipped pass→fail), 🟡 for non-regression deltas, 🟢 otherwise. `added`/`removed` tests never flip the verdict to red.
 
 ### Key patterns
 
@@ -78,4 +90,25 @@ Tools follow a `Tool` protocol (name, definition, execute). `FileReaderTool` rea
 ### Testing
 When creating tests, there are 2 different types of tests. It is important to delineate between the 2 as the demo testing may consume loads of API credits.
 1. Unit testing - these are tests that test individual functionality, and dont actually call any LLM API endpoints. For eg. tests/test_agent_loop.py. Naming convention would be test_<functionality>.py
-2. Demo testing - These tests make actual LLM API endpoint calls and will consume credits. For eg. tests/test_demo_routing.py. Naming convention will be test_demo_<functionality>.py. 
+2. Demo testing - These tests make actual LLM API endpoint calls and will consume credits. For eg. tests/test_demo_routing.py. Naming convention will be test_demo_<functionality>.py.
+
+## Live test project at `tmp/my-evals/`
+
+`tmp/my-evals/` is the user's active end-to-end project — real `bi-evals.yaml`, golden tests, knowledge files, and an ingested DuckDB. It's used to manually verify features against a working setup, so it must stay in sync with the framework.
+
+**When adding or changing a feature, also update `tmp/my-evals/` if the change touches user-visible config or scaffolded files.** Specifically:
+
+- New config field with a non-default behavior to demo → add it to `tmp/my-evals/bi-evals.yaml`
+- New golden-test field (e.g. `last_verified_at`, `anti_patterns`) → add it to at least one golden in `tmp/my-evals/golden/cases/` so the feature actually exercises
+- New CLI command or flag that warrants a smoke test → mention the exact command to run against `tmp/my-evals/` in the PR description
+- Schema change that requires re-ingest → call it out so the user can rebuild `tmp/my-evals/results/bi-evals.duckdb`
+
+If a feature has no surface in the user-facing config (pure internal refactor, new test fixture, etc.), no `tmp/my-evals/` change is needed. When in doubt, ask.
+
+## Documentation
+
+- `docs/feature_summary.md` — consolidated reference for every feature with the commands to invoke it
+- `docs/golden-tests-guide.md` — golden-test schema and authoring guide
+- `docs/duckdb-schema.md` — storage schema reference
+- `docs/mvp-eval-platform.md` — original design doc and roadmap
+- `STATUS.md` — implementation status snapshot, updated via the `/project-status` skill 

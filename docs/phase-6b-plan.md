@@ -78,7 +78,7 @@ Skill files changed between runs:
 ### What drift does NOT do
 
 - Never flips a verdict on its own. Informational only. Regressions stay the verdict signal.
-- Does not auto-diff file contents — only reports "changed." Diff viewing lives in Phase 8 UI.
+- Does not auto-diff file contents — only reports "changed." Diff viewing lives in Phase 7 UI.
 - Does not track git commit hashes of skill files. Content hashing handles uncommitted edits cleanly; git tracking would miss the "I edited this during debugging and forgot" case which is exactly the one we want to catch.
 
 ---

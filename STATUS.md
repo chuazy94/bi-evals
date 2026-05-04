@@ -120,25 +120,34 @@ What works today:
 
 ## Remaining
 
-### Phase 7: COVID-19 Example Project
+### Phase 7: Minimal local viewer (~3 days)
+
+Replace the `run → report → open file://...html` loop with a single command. See `docs/phase-7-plan.md`. Deliberately minimal — no SPA, no React, no build step.
+
+- `bi-evals ui` starts FastAPI + Jinja server on `localhost:8765`, opens browser
+- Three pages: runs list, single-run view, compare view (latter two reuse existing report templates)
+- Reuses `store/queries.py` + `report/builder.py` directly; ~100 lines of new server code
+- Defers richer UI (charts, drilldowns, golden authoring, run triggering) until v1 usage shows what's actually wanted
+
+### Phase 8: COVID-19 Example Project
 
 A working COVID-19 example exists under `tmp/my-evals/` (config + skill files + 3 golden categories + 16+ prior runs). Promote it to a first-class repo example:
 - Move `tmp/my-evals/` → `examples/covid-19/` with cleaned-up config (no creds, `.env.example` instead)
 - Trim results history to 2–3 representative runs (keep one with seeded regression)
-- `examples/covid-19/README.md` walkthrough: setup, `run`, `report`, `compare`
+- `examples/covid-19/README.md` walkthrough: setup, `run`, viewer
 - Fill golden-coverage gaps (target 8–10 tests across categories)
 - Verify on a fresh clone
 
-### Phase 8: UI for Authoring, Running, and Reviewing
+### Deferred (no committed phase yet)
 
-CLI + HTML reports cover the engineering loop. UI unlocks non-developer contributors. Scope:
-- Golden authoring web form (validates against DB schema, previews row output, writes YAML)
-- Run triggering with live progress
-- Inline report/compare browsing
-- Regression drilldown (full trace, SQL diff, dimension failures side-by-side)
-- Minimal local auth; design leaves room for multi-user when DB moves to Postgres
-
-Open design questions: embedded Flask/FastAPI + HTMX vs SPA; bundled with CLI vs separate package; reuse Jinja vs rebuild in React.
+Sized once Phase 7 ships and we have real users:
+- `bi-evals doctor` — pre-run validation of config, env vars, DB connectivity, API keys
+- DuckDB as a built-in `database.type` — zero-cred eval target for demos
+- `bi-evals init --from <dir>` — scaffold from existing artifacts
+- Snowflake SSO (`authenticator: externalbrowser`)
+- Additional warehouses (Postgres, BigQuery, Redshift, Databricks) — add when ≥2 users ask for the same one
+- Richer UI: per-test history, regression drilldown with SQL diff, trend charts, golden authoring, run triggering
+- Production-traffic golden import (PostHog / Langfuse / CSV)
 
 ### Pillars 2 & 3 (post-MVP — see `docs/mvp-eval-platform.md`)
 
