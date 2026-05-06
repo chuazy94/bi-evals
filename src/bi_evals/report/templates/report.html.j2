@@ -66,6 +66,17 @@
   </div>
 </div>
 
+<h2>Scoring rule</h2>
+<div class="card">
+  <p style="margin: 0;">
+    A test passes when (a) every <em>critical dimension</em> is green
+    AND (b) the weighted score across all dimensions reaches the pass threshold
+    (<strong>{{ "%.2f"|format(pass_threshold) }}</strong>).
+    Critical dimensions:
+    {% for d in critical_dimensions %}<span class="mono">{{ d }}</span>{% if not loop.last %}, {% endif %}{% endfor %}{% if not critical_dimensions %}<span class="muted">none configured</span>{% endif %}.
+  </p>
+</div>
+
 {% if failures %}
 <h2>Failures{% if failures_total > failures|length %} ({{ failures|length }} of {{ failures_total }} shown){% endif %}</h2>
 <div class="card">
@@ -73,7 +84,7 @@
     <thead>
       <tr>
         <th style="width: 30%;">Test</th>
-        <th class="num" style="width: 60px;">Score</th>
+        <th class="num" style="width: 110px;">Weighted score (&ge; {{ "%.2f"|format(pass_threshold) }})</th>
         <th>Why it failed</th>
       </tr>
     </thead>
@@ -381,7 +392,7 @@
         <th>Category</th>
         {% if available_models|length > 1 %}<th>Model</th>{% endif %}
         <th>Status</th>
-        <th class="num">Score</th>
+        <th class="num">Weighted score (&ge; {{ "%.2f"|format(pass_threshold) }})</th>
         <th class="num">Cost</th>
       </tr>
     </thead>

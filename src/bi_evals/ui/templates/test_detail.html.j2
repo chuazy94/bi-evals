@@ -85,7 +85,7 @@
       </div>
     </div>
     <div class="stat">
-      <div class="label">Score</div>
+      <div class="label">Weighted score (&ge; {{ "%.2f"|format(pass_threshold) }})</div>
       <div class="value">{{ "%.2f"|format(test.score) }}</div>
     </div>
     {% if test.pass_rate is defined and test.trial_count > 1 %}
@@ -107,6 +107,13 @@
     </div>
     {% endif %}
   </div>
+
+  {% if verdict_sentence %}
+  <p class="verdict-line {% if test.passed %}pass{% else %}fail{% endif %}"
+     style="margin: -8px 0 16px; font-size: 13px; color: {% if test.passed %}var(--pass){% else %}var(--fail){% endif %};">
+    {{ verdict_sentence }}
+  </p>
+  {% endif %}
 
   {% if test.question %}
   <h2>Question</h2>

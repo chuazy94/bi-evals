@@ -6,11 +6,18 @@ from pathlib import Path
 
 from bi_evals.config import BiEvalsConfig
 from bi_evals.report import build_compare_html, build_report_html
-from bi_evals.report.builder import sanitize_for_filename
+from bi_evals.report.builder import compute_verdict_sentence, sanitize_for_filename
 from bi_evals.store import connect
 from bi_evals.store.ingest import ingest_run
 
 from tests.conftest import RUN_A_ID, RUN_A_JSON, RUN_B_ID, RUN_B_JSON
+
+
+class _FakeDim:
+    """Minimal stand-in for ``DimRow`` used by verdict-sentence tests."""
+    def __init__(self, dimension: str, passed: bool) -> None:
+        self.dimension = dimension
+        self.passed = passed
 
 
 def _seed(tmp_path: Path, config: BiEvalsConfig) -> Path:
@@ -89,6 +96,105 @@ def test_report_renders_failure_reasons(
     assert "Failures" in html
     # The failing test surfaces in the failures table
     assert "daily-cases-filtered" in html
+
+
+def test_report_renders_scoring_rule_callout(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
+    db = _seed(tmp_path, eval_sample_config)
+    with connect(db) as conn:
+        html = build_report_html(
+            conn, RUN_B_ID,
+            pass_threshold=0.75,
+            critical_dimensions=["execution", "row_completeness", "value_accuracy"],
+        )
+    assert "Scoring rule" in html
+    assert "critical dimension" in html
+    assert "0.75" in html
+    for dim in ("execution", "row_completeness", "value_accuracy"):
+        assert dim in html
+
+
+def test_report_weighted_score_column_header_uses_threshold(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
+    db = _seed(tmp_path, eval_sample_config)
+    with connect(db) as conn:
+        html = build_report_html(conn, RUN_B_ID, pass_threshold=0.90)
+    # The "All tests" + "Failures" tables both share the header text.
+    assert "Weighted score (&ge; 0.90)" in html or "Weighted score (\u2265 0.90)" in html
+    # Bare "Score" header (without the qualifier) should be gone from the
+    # tables we updated. Other "Score" labels (e.g. dimension table column
+    # "Score") may still exist, but the precise standalone "<th class=\"num\">Score</th>"
+    # should not.
+    assert '<th class="num">Score</th>' not in html
+
+
+def test_report_pass_threshold_threading(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
+    """Custom threshold should propagate into the rendered HTML verbatim."""
+    db = _seed(tmp_path, eval_sample_config)
+    with connect(db) as conn:
+        html = build_report_html(
+            conn, RUN_B_ID,
+            pass_threshold=0.42,
+            critical_dimensions=["execution"],
+        )
+    assert "0.42" in html
+    # The default 0.75 should NOT appear in the scoring callout / column header
+    # for this overridden run. (It can still appear elsewhere, e.g. as a
+    # numeric score; assert against the formatted column header instead.)
+    assert "Weighted score (&ge; 0.75)" not in html
+    assert "Weighted score (\u2265 0.75)" not in html
+
+
+def test_compute_verdict_sentence_pass_path() -> None:
+    sentence = compute_verdict_sentence(
+        passed=True,
+        score=0.91,
+        dimensions=[_FakeDim("execution", True), _FakeDim("value_accuracy", True)],
+        pass_threshold=0.75,
+        critical_dimensions=["execution", "value_accuracy"],
+    )
+    assert sentence.startswith("Passed:")
+    assert "all critical dimensions green" in sentence
+    assert "0.91" in sentence
+    assert "0.75" in sentence
+
+
+def test_compute_verdict_sentence_fail_critical_path() -> None:
+    sentence = compute_verdict_sentence(
+        passed=False,
+        score=0.62,
+        dimensions=[
+            _FakeDim("execution", True),
+            _FakeDim("value_accuracy", False),
+        ],
+        pass_threshold=0.75,
+        critical_dimensions=["execution", "value_accuracy"],
+    )
+    assert sentence.startswith("Failed:")
+    assert "value_accuracy" in sentence
+    assert "critical dimension" in sentence
+
+
+def test_compute_verdict_sentence_fail_threshold_path() -> None:
+    sentence = compute_verdict_sentence(
+        passed=False,
+        score=0.62,
+        dimensions=[
+            _FakeDim("execution", True),
+            _FakeDim("value_accuracy", True),
+            _FakeDim("row_completeness", True),
+        ],
+        pass_threshold=0.75,
+        critical_dimensions=["execution", "value_accuracy", "row_completeness"],
+    )
+    assert sentence.startswith("Failed:")
+    assert "0.62" in sentence
+    assert "0.75" in sentence
+    assert "3/3 critical green" in sentence
 
 
 def test_report_filter_by_category_excludes_other_categories(
