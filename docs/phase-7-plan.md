@@ -87,6 +87,26 @@ bi-evals ui --port 9000 --no-open
 
 ---
 
+## Locked design decisions
+
+These were open in an earlier draft. Defaults below; revisit only if v1 usage proves them wrong.
+
+| # | Decision | Choice | Rationale |
+|---|---|---|---|
+| 1 | Template wrapping | **None.** Reuse `report.html.j2` and `compare.html.j2` as-is. | Templates already extend `_base.html.j2` and ship inline CSS — they render as standalone documents. Verified by inspection. |
+| 2 | Runs list scope | **Last 50 runs, no pagination, no filters.** Sort by timestamp DESC, secondary by `run_id` for stable ordering when timestamps tie. | If you have >50 runs and need older ones, that's a real signal to add filtering — don't pre-build it. |
+| 3 | "Compare selected" UX | **`<form>` wrapping the table; server validates exactly 2 boxes checked; bad count → render the runs list with an inline error banner.** No JS. | Crude but correct. Vanilla JS adds a script tag's worth of code we don't need yet. |
+| 4 | Empty state (no runs in DB) | **Render the runs list with a centered message: "No runs yet. Run `bi-evals run` to create one."** Return 200, not 404. | First-run UX matters; 404 looks broken. |
+| 5 | Config loading | **Load `BiEvalsConfig` once at server startup; store on `app.state.config` and `app.state.db_path`.** Handlers read from `app.state`. | Standard FastAPI pattern. Avoids reloading YAML per request. The config is immutable for the server's lifetime — restart `bi-evals ui` if you edit `bi-evals.yaml`. |
+| 6 | Live refresh on new runs | **HTML meta refresh on the runs list only**, 10-second cadence: `<meta http-equiv="refresh" content="10">`. Single-run and compare views don't refresh (they're snapshots of a specific run). | Zero JS, zero new endpoints, one line in `runs_list.html.j2`. Localhost SQL is sub-100ms so the flash is barely perceptible. Upgrade to fetch+swap if/when the flash becomes annoying. |
+
+Two follow-on details from the above:
+
+- **Kwargs to `build_report_html` / `build_compare_html`** come from `app.state.config` (`stale_after_days`, `cost_alert_multiplier`, `cost_alert_window`, `regression_threshold`). Same wiring as `cli.py:225-230` and `cli.py:261-264` — copy that pattern.
+- **Bad run-id in URL** (e.g., `/runs/does-not-exist`) → 404 with a "run not found, here are the runs we have" link back to `/`. This is the one place 404 is right.
+
+---
+
 ## Code
 
 - New `src/bi_evals/ui/__init__.py`
@@ -125,7 +145,7 @@ def run_view(run_id: str):
 ## Risks / gotchas
 
 - **Read-only DB connection in handlers.** Multiple browser tabs + an in-progress `bi-evals run` writing to the same DuckDB file can lock. Open all UI connections with `read_only=True` (already supported by `store_connect`).
-- **Stale browser tab after a new run.** Acceptable for v1 — user refreshes. Don't build websockets/SSE for this.
+- **Auto-refresh + concurrent writes.** The runs list polls every 10s via meta refresh. Worth verifying once during implementation that read-only `store_connect` calls see new rows committed by an in-progress `bi-evals run` — the existing retry-on-lock code suggests they do, but confirm with a manual test (start `bi-evals ui`, run `bi-evals run` in another terminal, watch the list update). If reads are stuck on a stale snapshot, opening a fresh connection per request (which the context manager does anyway) should fix it.
 - **Port collision.** Default to a less-common port (`8765`); document `--port`.
 - **Template drift.** The two reused templates (`report.html.j2`, `compare.html.j2`) currently render as standalone HTML files. Confirm they work when served from a route — they should, since they include their own CSS and have no relative URLs. If they need a layout wrapper, keep it minimal.
 - **Scope creep is the real risk.** The temptation to add "just one chart" or "just a search box" will be strong. Defer everything to a future phase. Ship the boring version, see what people actually use.

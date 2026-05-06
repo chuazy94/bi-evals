@@ -414,19 +414,120 @@ def critical_dimensions(conn: duckdb.DuckDBPyConnection, run_id: str) -> set[str
     return {r[0] for r in rows}
 
 
-def list_runs(conn: duckdb.DuckDBPyConnection, limit: int = 50) -> list[RunRow]:
-    rows = conn.execute(
-        """
+def list_runs(
+    conn: duckdb.DuckDBPyConnection,
+    limit: int = 50,
+    *,
+    project_name: str | None = None,
+) -> list[RunRow]:
+    sql = """
         SELECT run_id, project_name, timestamp, test_count, pass_count, fail_count,
                error_count, total_cost_usd, total_latency_ms,
                total_prompt_tokens, total_completion_tokens
         FROM runs
-        ORDER BY timestamp DESC
-        LIMIT ?
-        """,
-        [limit],
-    ).fetchall()
+    """
+    params: list[Any] = []
+    if project_name:
+        sql += " WHERE project_name = ?"
+        params.append(project_name)
+    sql += " ORDER BY timestamp DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
     return [RunRow(*r) for r in rows]
+
+
+def list_projects(conn: duckdb.DuckDBPyConnection) -> list[str]:
+    """Distinct project names ever ingested, sorted alphabetically."""
+    rows = conn.execute(
+        "SELECT DISTINCT project_name FROM runs WHERE project_name IS NOT NULL ORDER BY project_name"
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def get_test(
+    conn: duckdb.DuckDBPyConnection,
+    run_id: str,
+    test_id: str,
+    *,
+    model: str | None = None,
+) -> TestRow:
+    """Single-row variant of list_tests, for the drilldown page.
+
+    When ``model`` is None and the test exists for multiple models, returns
+    the first row deterministically (alphabetical by model). Callers that need
+    disambiguation should pass ``model`` explicitly.
+    """
+    sql = """
+        SELECT test_id, category, difficulty, question, passed, score, fail_reason,
+               cost_usd, latency_ms, model,
+               COALESCE(trial_count, 1),
+               COALESCE(pass_count, CASE WHEN passed THEN 1 ELSE 0 END),
+               COALESCE(pass_rate, CASE WHEN passed THEN 1.0 ELSE 0.0 END),
+               COALESCE(score_mean, score),
+               COALESCE(score_stddev, 0.0)
+        FROM test_results
+        WHERE run_id = ? AND test_id = ?
+    """
+    params: list[Any] = [run_id, test_id]
+    if model is not None:
+        sql += " AND COALESCE(model, '') = ?"
+        params.append(model)
+    sql += " ORDER BY model LIMIT 1"
+    row = conn.execute(sql, params).fetchone()
+    if row is None:
+        raise KeyError(f"Test not found: run_id={run_id} test_id={test_id} model={model!r}")
+    return TestRow(*row)
+
+
+def get_test_extras(
+    conn: duckdb.DuckDBPyConnection,
+    run_id: str,
+    test_id: str,
+    *,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Drilldown-only fields not in TestRow: generated_sql, reference_sql,
+    files_read, trace_json. Returns empty strings/lists when missing.
+    """
+    sql = """
+        SELECT generated_sql, reference_sql, files_read, trace_json
+        FROM test_results
+        WHERE run_id = ? AND test_id = ?
+    """
+    params: list[Any] = [run_id, test_id]
+    if model is not None:
+        sql += " AND COALESCE(model, '') = ?"
+        params.append(model)
+    sql += " ORDER BY model LIMIT 1"
+    row = conn.execute(sql, params).fetchone()
+    if row is None:
+        return {"generated_sql": "", "reference_sql": "", "files_read": [], "trace_json": ""}
+    generated_sql, reference_sql, files_read, trace_json = row
+
+    files: list[str] = []
+    if files_read:
+        try:
+            files = json.loads(files_read) if isinstance(files_read, str) else list(files_read)
+        except json.JSONDecodeError:
+            files = []
+
+    trace_text = ""
+    if trace_json:
+        if isinstance(trace_json, str):
+            try:
+                parsed = json.loads(trace_json)
+                trace_text = json.dumps(parsed, indent=2, default=str)
+            except json.JSONDecodeError:
+                trace_text = trace_json
+        else:
+            trace_text = json.dumps(trace_json, indent=2, default=str)
+
+    return {
+        "generated_sql": generated_sql or "",
+        "reference_sql": reference_sql or "",
+        "files_read": files,
+        "trace_json": trace_text,
+    }
 
 
 def _to_dict(obj: Any) -> dict[str, Any]:

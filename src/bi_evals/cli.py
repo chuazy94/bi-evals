@@ -141,10 +141,10 @@ def run(
         repeat=max(1, config.scoring.repeats),
     )
 
-    if exit_code != 0:
-        raise click.ClickException(f"Promptfoo exited with code {exit_code}")
-
-    if config.storage.auto_ingest:
+    # Ingest whenever the results JSON exists, even if Promptfoo exited non-zero
+    # (it returns a non-zero code when any test fails — but a failing run is
+    # exactly when the user wants to inspect the report).
+    if config.storage.auto_ingest and results_output.exists():
         try:
             db_path = config.resolve_path(config.storage.db_path)
             with store_connect(db_path) as conn:
@@ -163,6 +163,9 @@ def run(
                 f"Warning: ingest failed ({e}). Raw JSON still at {results_output}",
                 err=True,
             )
+
+    if exit_code != 0:
+        raise click.ClickException(f"Promptfoo exited with code {exit_code}")
 
     click.echo(f"\nDone. View results: npx promptfoo view")
 
@@ -186,6 +189,33 @@ def view(port: int) -> None:
         stdout=sys.stdout,
         stderr=sys.stderr,
     )
+
+
+@cli.command()
+@click.option("--port", "-p", default=8765, help="Port to serve the UI on.")
+@click.option("--host", default="127.0.0.1", help="Host interface to bind.")
+@click.option("--no-open", is_flag=True, help="Do not auto-open the browser.")
+@click.pass_context
+def ui(ctx: click.Context, port: int, host: str, no_open: bool) -> None:
+    """Launch the local web viewer (runs list, single-run, compare)."""
+    import threading
+    import webbrowser
+
+    import uvicorn
+
+    from bi_evals.ui import create_app
+
+    config = BiEvalsConfig.load(ctx.obj["config_path"])
+    app = create_app(config)
+
+    url = f"http://{host}:{port}"
+    click.echo(f"bi-evals viewer → {url}")
+    click.echo("Ctrl+C to stop.")
+
+    if not no_open:
+        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+
+    uvicorn.run(app, host=host, port=port, log_level="warning")
 
 
 @cli.command()

@@ -84,6 +84,26 @@
   svg.scatter .scatter-label { fill: var(--fg); font-size: 10px; font-family: var(--mono); }
   ul.prompt-diff { list-style: none; margin: 0; padding: 0; }
   ul.prompt-diff li { padding: 4px 0; display: flex; align-items: center; gap: 8px; }
+  .filter-strip {
+    display: flex; align-items: center; gap: 16px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px; margin: 0 0 16px;
+    font-size: 13px;
+  }
+  .filter-strip label { display: flex; align-items: center; gap: 6px; color: var(--fg-muted); }
+  .filter-strip select { font: inherit; padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border); background: #fff; color: var(--fg); }
+  .filter-strip a { color: var(--fg-muted); text-decoration: none; font-size: 12px; }
+  .filter-strip a:hover { text-decoration: underline; }
+  td.reason { font-size: 12.5px; color: var(--fg-muted); max-width: 380px; }
+  ul.failure-reasons { list-style: none; margin: 0; padding: 0; }
+  ul.failure-reasons li { padding: 3px 0; display: flex; align-items: baseline; gap: 8px; }
+  ul.failure-reasons li .pill { flex-shrink: 0; }
+  ul.failure-reasons .reason-text { font-size: 12.5px; color: var(--fg); word-break: break-word; }
+  pre.code { background: var(--bar-bg); padding: 12px; border-radius: 6px; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.45; margin: 0; }
+  details.trace { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-top: 8px; }
+  details.trace summary { font-weight: 600; color: var(--fg); }
+  a { color: #0b5ed7; }
+  a:hover { color: #0a52b8; }
 </style>
 </head>
 <body>

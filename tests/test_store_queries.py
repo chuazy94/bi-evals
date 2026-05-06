@@ -98,3 +98,53 @@ def test_list_runs_ordering(tmp_path: Path, eval_sample_config: BiEvalsConfig) -
     with connect(db) as conn:
         runs = q.list_runs(conn)
     assert [r.run_id for r in runs] == [RUN_B_ID, RUN_A_ID]
+
+
+def test_list_projects(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
+    db = _seed_both_runs(tmp_path, eval_sample_config)
+    with connect(db) as conn:
+        projects = q.list_projects(conn)
+    assert projects == [eval_sample_config.project.name]
+
+
+def test_list_runs_filtered_by_project(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
+    db = _seed_both_runs(tmp_path, eval_sample_config)
+    with connect(db) as conn:
+        match = q.list_runs(conn, project_name=eval_sample_config.project.name)
+        miss = q.list_runs(conn, project_name="does-not-exist")
+    assert len(match) == 2
+    assert len(miss) == 0
+
+
+def test_get_test_returns_known_failure(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
+    db = _seed_both_runs(tmp_path, eval_sample_config)
+    with connect(db) as conn:
+        t = q.get_test(conn, RUN_B_ID, "golden/cases/daily-cases-filtered.yaml")
+    assert t.test_id == "golden/cases/daily-cases-filtered.yaml"
+    assert t.passed is False
+    assert t.fail_reason  # something populated
+
+
+def test_get_test_unknown_raises(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
+    db = _seed_both_runs(tmp_path, eval_sample_config)
+    with connect(db) as conn:
+        try:
+            q.get_test(conn, RUN_B_ID, "does-not-exist")
+        except KeyError:
+            return
+    raise AssertionError("expected KeyError")
+
+
+def test_get_test_extras_has_sql_and_trace(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
+    db = _seed_both_runs(tmp_path, eval_sample_config)
+    with connect(db) as conn:
+        extras = q.get_test_extras(conn, RUN_B_ID, "golden/cases/total-cases-by-country.yaml")
+    assert extras["generated_sql"]  # non-empty SQL
+    assert isinstance(extras["files_read"], list)
+    assert isinstance(extras["trace_json"], str)

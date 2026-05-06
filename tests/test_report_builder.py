@@ -77,3 +77,32 @@ def test_compare_no_external_urls(tmp_path: Path, eval_sample_config: BiEvalsCon
 def test_sanitize_for_filename_handles_colons_and_slashes() -> None:
     assert sanitize_for_filename("eval-11c-2026-04-19T22:19:05") == "eval-11c-2026-04-19T22-19-05"
     assert sanitize_for_filename("a/b:c") == "a_b-c"
+
+
+def test_report_renders_failure_reasons(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
+    db = _seed(tmp_path, eval_sample_config)
+    with connect(db) as conn:
+        html = build_report_html(conn, RUN_B_ID)
+    # Failures section header is present (run B has 1 known failure)
+    assert "Failures" in html
+    # The failing test surfaces in the failures table
+    assert "daily-cases-filtered" in html
+
+
+def test_report_filter_by_category_excludes_other_categories(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
+    db = _seed(tmp_path, eval_sample_config)
+    with connect(db) as conn:
+        html = build_report_html(conn, RUN_B_ID, category="cases")
+    # The "All tests" table should only contain cases tests, not joins or us-states.
+    # The category dropdown lists every category, so we can't just check absence
+    # of the strings "joins"/"us-states" globally. Instead, check that the per-test
+    # rows (mono test_id cells with .yaml suffix) only mention `cases`.
+    import re
+    test_id_rows = re.findall(r'href="/runs/[^"]+/tests/([^"?]+)', html)
+    assert test_id_rows, "expected at least one test row"
+    for tid in test_id_rows:
+        assert "/cases/" in tid, f"unexpected non-cases row: {tid}"

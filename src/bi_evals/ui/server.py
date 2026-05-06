@@ -1,0 +1,206 @@
+"""FastAPI app serving runs list, single-run, and compare views."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+from bi_evals.config import BiEvalsConfig
+from bi_evals.report.builder import build_compare_html, build_report_html
+from bi_evals.store import connect as store_connect
+from bi_evals.store import queries as q
+
+UI_TEMPLATES_DIR = Path(__file__).parent / "templates"
+RUNS_LIST_REFRESH_SECONDS = 10
+
+
+def create_app(config: BiEvalsConfig) -> FastAPI:
+    """Build the FastAPI app bound to a loaded config.
+
+    Config is read once at startup. Restart the server after editing
+    ``bi-evals.yaml`` for changes to take effect.
+    """
+    app = FastAPI(title="bi-evals viewer", docs_url=None, redoc_url=None)
+    app.state.config = config
+    app.state.db_path = config.resolve_path(config.storage.db_path)
+    app.state.env = _build_jinja_env()
+
+    @app.get("/", response_class=HTMLResponse)
+    def runs_list(
+        request: Request,
+        error: str | None = Query(default=None),
+        project: str | None = Query(default=None),
+    ) -> str:
+        return _render_runs_list(app, error=error, project=project)
+
+    @app.get("/runs/{run_id}", response_class=HTMLResponse)
+    def run_view(
+        run_id: str,
+        category: str | None = Query(default=None),
+        model: str | None = Query(default=None),
+    ) -> str:
+        cfg: BiEvalsConfig = app.state.config
+        try:
+            with store_connect(app.state.db_path, read_only=True) as conn:
+                return build_report_html(
+                    conn, run_id,
+                    stale_after_days=cfg.scoring.stale_after_days,
+                    cost_alert_multiplier=cfg.storage.cost_alert_multiplier,
+                    cost_alert_window=cfg.storage.cost_alert_window,
+                    category=category,
+                    model=model,
+                )
+        except KeyError:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Run not found: {run_id}",
+            )
+
+    @app.get("/runs/{run_id}/tests/{test_id:path}", response_class=HTMLResponse)
+    def test_detail(
+        run_id: str,
+        test_id: str,
+        model: str | None = Query(default=None),
+    ) -> Any:
+        cfg: BiEvalsConfig = app.state.config  # noqa: F841 (reserved for future kwargs)
+        try:
+            with store_connect(app.state.db_path, read_only=True) as conn:
+                run = q.get_run(conn, run_id)
+                available_models = sorted({
+                    t.model or ""
+                    for t in q.list_tests(conn, run_id)
+                    if t.test_id == test_id
+                })
+                # If the test exists for >1 model and the user didn't pick one,
+                # redirect to the first so the page always shows a single result.
+                if model is None and len(available_models) > 1:
+                    return RedirectResponse(
+                        url=f"/runs/{run_id}/tests/{_quote(test_id)}?model={_quote(available_models[0])}",
+                        status_code=303,
+                    )
+                effective_model = model if model is not None else (available_models[0] if available_models else None)
+                test = q.get_test(conn, run_id, test_id, model=effective_model)
+                dimensions = q.list_dimensions(conn, run_id, test_id, model=effective_model)
+                extras = q.get_test_extras(conn, run_id, test_id, model=effective_model)
+                return app.state.env.get_template("test_detail.html.j2").render(
+                    run=run,
+                    test=test,
+                    dimensions=dimensions,
+                    extras=extras,
+                    available_models=available_models,
+                )
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    @app.get("/compare", response_class=HTMLResponse)
+    def compare_view(a: str = Query(...), b: str = Query(...)) -> Any:
+        cfg: BiEvalsConfig = app.state.config
+        try:
+            with store_connect(app.state.db_path, read_only=True) as conn:
+                return build_compare_html(
+                    conn, a, b,
+                    regression_threshold=cfg.compare.regression_threshold,
+                )
+        except KeyError as e:
+            return RedirectResponse(
+                url=f"/?error={_quote(str(e))}",
+                status_code=303,
+            )
+
+    @app.post("/compare-selected", response_class=HTMLResponse)
+    async def compare_selected(request: Request) -> Any:
+        """Form target for the runs-list checkboxes. Validates exactly 2 picks."""
+        form = await request.form()
+        picks = form.getlist("run_ids")
+        if len(picks) != 2:
+            msg = (
+                f"Pick exactly 2 runs to compare (got {len(picks)})."
+            )
+            return RedirectResponse(
+                url=f"/?error={_quote(msg)}",
+                status_code=303,
+            )
+        a, b = picks
+        return RedirectResponse(url=f"/compare?a={a}&b={b}", status_code=303)
+
+    @app.exception_handler(404)
+    async def _not_found(request: Request, exc: HTTPException) -> HTMLResponse:
+        message = exc.detail if isinstance(exc.detail, str) else "Not found"
+        html = app.state.env.get_template("not_found.html.j2").render(message=message)
+        return HTMLResponse(content=html, status_code=404)
+
+    return app
+
+
+def _render_runs_list(
+    app: FastAPI,
+    *,
+    error: str | None = None,
+    project: str | None = None,
+) -> str:
+    db_path: Path = app.state.db_path
+    env: Environment = app.state.env
+
+    if not db_path.exists():
+        return env.get_template("runs_list.html.j2").render(
+            runs=[],
+            empty=True,
+            error=error,
+            refresh_seconds=RUNS_LIST_REFRESH_SECONDS,
+            available_projects=[],
+            active_project=project or "",
+            refresh_qs="",
+        )
+
+    with store_connect(db_path, read_only=True) as conn:
+        runs = q.list_runs(conn, limit=50, project_name=project or None)
+        available_projects = q.list_projects(conn)
+        latest = runs[0].run_id if runs else None
+        prev = runs[1].run_id if len(runs) > 1 else None
+
+    refresh_qs = f"?project={_quote(project)}" if project else ""
+
+    return env.get_template("runs_list.html.j2").render(
+        runs=runs,
+        empty=False,
+        error=error,
+        latest_id=latest,
+        prev_id=prev,
+        refresh_seconds=RUNS_LIST_REFRESH_SECONDS,
+        available_projects=available_projects,
+        active_project=project or "",
+        refresh_qs=refresh_qs,
+    )
+
+
+def _build_jinja_env() -> Environment:
+    env = Environment(
+        loader=FileSystemLoader(str(UI_TEMPLATES_DIR)),
+        autoescape=select_autoescape(["html", "htm", "j2"]),
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
+    env.filters["pct"] = _pct_filter
+    env.filters["money"] = _money_filter
+    return env
+
+
+def _pct_filter(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return f"{value * 100:.0f}%"
+
+
+def _money_filter(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return f"${value:.4f}"
+
+
+def _quote(s: str) -> str:
+    from urllib.parse import quote
+    return quote(s, safe="")
