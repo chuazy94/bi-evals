@@ -8,10 +8,8 @@ results in Promptfoo's expected format.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import re
 import secrets
 from pathlib import Path
 from typing import Any
@@ -20,6 +18,7 @@ from bi_evals.config import BiEvalsConfig
 from bi_evals.provider.agent_loop import AgentResult, run_agent_loop
 from bi_evals.provider.api_endpoint import call_api_endpoint
 from bi_evals.tools.registry import build_tools
+from bi_evals.trace_paths import make_test_id_slug, slugify_model
 
 
 def _run_anthropic_tool_loop(
@@ -103,11 +102,10 @@ def call_api(prompt: str, options: dict[str, Any], context: dict[str, Any]) -> d
     trace_dir.mkdir(parents=True, exist_ok=True)
 
     vars_ = context.get("vars", {})
-    golden_file = vars_.get("golden_file", "")
-    test_id = golden_file if golden_file else hashlib.md5(prompt.encode()).hexdigest()
-    test_id_slug = test_id.replace("/", "_").replace(".", "_")
+    test_id_slug = make_test_id_slug(prompt, vars_)
+    test_id = vars_.get("golden_file") or test_id_slug
     effective_model = model_override or config.agent.model
-    model_slug = _slugify_model(effective_model)
+    model_slug = slugify_model(effective_model)
     # Unique suffix so N repeats against the same (test, model) don't overwrite.
     suffix = secrets.token_hex(4)
 
@@ -149,8 +147,3 @@ def call_api(prompt: str, options: dict[str, Any], context: dict[str, Any]) -> d
     }
 
 
-def _slugify_model(model: str) -> str:
-    """Filesystem-safe model slug. Keeps letters, digits, dash; collapses others."""
-    if not model:
-        return "unknown"
-    return re.sub(r"[^A-Za-z0-9\-]+", "_", model).strip("_") or "unknown"
