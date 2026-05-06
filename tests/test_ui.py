@@ -177,3 +177,88 @@ def test_runs_list_refresh_preserves_project_filter(client: TestClient) -> None:
     # The meta-refresh tag should encode the project so the 10s reload doesn't drop it.
     # Format: content="10;url=/?project=Foo"
     assert ";url=/?project=" in res.text or "?project=Foo" in res.text
+
+
+# --- runs-list triage filters (since/band/regression badge) ----------------
+
+
+def test_runs_list_since_filter_excludes_old_runs(client: TestClient) -> None:
+    """Fixture runs are weeks/months in the past, so `since=1d` returns nothing."""
+    res = client.get("/?since=1d")
+    assert res.status_code == 200
+    body = res.text
+    assert RUN_A_ID not in body
+    assert RUN_B_ID not in body
+    # The selected option round-trips.
+    assert 'value="1d" selected' in body
+
+
+def test_runs_list_since_filter_dropdown_default(client: TestClient) -> None:
+    res = client.get("/")
+    assert res.status_code == 200
+    # "All time" is the default selection when no filter is set.
+    assert 'value="" selected' in res.text
+
+
+def test_runs_list_since_invalid_value_falls_back(client: TestClient) -> None:
+    """Bad input → ignore filter, surface an error banner, still show runs."""
+    res = client.get("/?since=garbage")
+    assert res.status_code == 200
+    body = res.text
+    assert RUN_A_ID in body and RUN_B_ID in body
+    assert "Ignored invalid `since`" in body
+
+
+def test_runs_list_band_filter_pass_excludes_failures(client: TestClient) -> None:
+    """RUN_B has a known failing test and pass rate &lt; 90%, so band=pass excludes it."""
+    res = client.get("/?band=pass")
+    assert res.status_code == 200
+    body = res.text
+    # RUN_B has at least one failure baked into the fixture, so it isn't in the pass band.
+    assert RUN_B_ID not in body
+    assert 'value="pass" selected' in body
+
+
+def test_runs_list_band_filter_all_keeps_all(client: TestClient) -> None:
+    res = client.get("/?band=all")
+    assert res.status_code == 200
+    body = res.text
+    assert RUN_A_ID in body and RUN_B_ID in body
+    assert 'value="all" selected' in body
+
+
+def test_runs_list_band_invalid_value_falls_back(client: TestClient) -> None:
+    res = client.get("/?band=neon")
+    assert res.status_code == 200
+    body = res.text
+    assert RUN_A_ID in body and RUN_B_ID in body
+    assert "Ignored invalid `band`" in body
+
+
+def test_runs_list_regression_pill_renders_for_regressed_run(client: TestClient) -> None:
+    """RUN_B is the documented regression vs RUN_A; the badge should render on its row."""
+    res = client.get("/")
+    assert res.status_code == 200
+    body = res.text
+    # Locate the row for RUN_B and assert the regressed pill is present in it.
+    # Rows are <tr> ... </tr>; cheap structural check is enough here.
+    import re
+    rows = re.findall(r"<tr>.*?</tr>", body, flags=re.DOTALL)
+    matching_rows = [r for r in rows if RUN_B_ID in r]
+    assert matching_rows, "RUN_B row not found in rendered HTML"
+    assert any('class="pill regressed"' in r for r in matching_rows), (
+        "Expected `regressed` pill on the RUN_B row"
+    )
+    # And not on RUN_A (which has no predecessor).
+    a_rows = [r for r in rows if RUN_A_ID in r]
+    assert a_rows
+    assert not any('class="pill regressed"' in r for r in a_rows)
+
+
+def test_runs_list_refresh_preserves_since_and_band(client: TestClient) -> None:
+    res = client.get("/?since=30d&band=fail")
+    assert res.status_code == 200
+    body = res.text
+    # The auto-refresh URL should include both parameters.
+    assert "since=30d" in body
+    assert "band=fail" in body

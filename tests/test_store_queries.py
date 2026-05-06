@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from bi_evals.config import BiEvalsConfig
@@ -114,6 +115,59 @@ def test_list_runs_filtered_by_project(tmp_path: Path, eval_sample_config: BiEva
         miss = q.list_runs(conn, project_name="does-not-exist")
     assert len(match) == 2
     assert len(miss) == 0
+
+
+def test_list_runs_since_filter(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
+    """``since`` filters out runs with timestamp older than the threshold.
+
+    The fixture runs are anchored at fixed dates (April 2026), so a tight
+    window (e.g. 1 day before each run) deterministically excludes the older
+    one regardless of when the test is executed.
+    """
+    db = _seed_both_runs(tmp_path, eval_sample_config)
+    with connect(db) as conn:
+        all_runs = q.list_runs(conn)
+        assert len(all_runs) == 2
+        # Pick a threshold strictly between the two run timestamps.
+        ts_b = all_runs[0].timestamp
+        threshold = ts_b - timedelta(hours=1)
+        only_b = q.list_runs(conn, since=threshold)
+        assert [r.run_id for r in only_b] == [RUN_B_ID]
+
+        # A threshold far in the future excludes everything.
+        future = datetime.now(timezone.utc) + timedelta(days=3650)
+        nothing = q.list_runs(conn, since=future)
+        assert nothing == []
+
+
+def test_runs_with_regressions_flags_known_regression(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
+    """RUN_B is the documented regression vs RUN_A; RUN_A has no predecessor."""
+    db = _seed_both_runs(tmp_path, eval_sample_config)
+    with connect(db) as conn:
+        flagged = q.runs_with_regressions(conn, [RUN_A_ID, RUN_B_ID])
+    assert flagged == {RUN_B_ID}
+
+
+def test_runs_with_regressions_empty_input(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
+    db = _seed_both_runs(tmp_path, eval_sample_config)
+    with connect(db) as conn:
+        assert q.runs_with_regressions(conn, []) == set()
+
+
+def test_runs_with_regressions_threshold_disables(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
+    """A threshold above 1.0 makes any single-trial flip non-regressive."""
+    db = _seed_both_runs(tmp_path, eval_sample_config)
+    with connect(db) as conn:
+        flagged = q.runs_with_regressions(
+            conn, [RUN_A_ID, RUN_B_ID], regression_threshold=1.5
+        )
+    assert flagged == set()
 
 
 def test_get_test_returns_known_failure(

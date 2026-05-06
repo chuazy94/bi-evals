@@ -419,6 +419,7 @@ def list_runs(
     limit: int = 50,
     *,
     project_name: str | None = None,
+    since: datetime | None = None,
 ) -> list[RunRow]:
     sql = """
         SELECT run_id, project_name, timestamp, test_count, pass_count, fail_count,
@@ -427,13 +428,71 @@ def list_runs(
         FROM runs
     """
     params: list[Any] = []
+    where: list[str] = []
     if project_name:
-        sql += " WHERE project_name = ?"
+        where.append("project_name = ?")
         params.append(project_name)
+    if since is not None:
+        where.append("timestamp >= ?")
+        params.append(since)
+    if where:
+        sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY timestamp DESC LIMIT ?"
     params.append(limit)
     rows = conn.execute(sql, params).fetchall()
     return [RunRow(*r) for r in rows]
+
+
+def runs_with_regressions(
+    conn: duckdb.DuckDBPyConnection,
+    run_ids: list[str],
+    *,
+    regression_threshold: float = 0.2,
+) -> set[str]:
+    """Return the subset of ``run_ids`` whose test diff vs. the immediately
+    preceding run (chronologically, across all projects) contains ≥1 regression.
+
+    "Immediate predecessor" matches the global ordering used by
+    ``previous_run_id`` and the "Compare prev → latest" shortcut so the badge
+    is consistent with the existing affordance, regardless of any caller-side
+    filtering (project, since, band).
+
+    Reuses ``test_diff`` + ``classify_pairs`` so the regression definition stays
+    in one place. Runs without a predecessor (the first run ever ingested) are
+    never marked.
+    """
+    if not run_ids:
+        return set()
+
+    from bi_evals.compare.diff import classify_pairs
+
+    timeline = conn.execute(
+        "SELECT run_id FROM runs ORDER BY timestamp DESC"
+    ).fetchall()
+    order = [r[0] for r in timeline]
+    prev_of: dict[str, str] = {}
+    for i, rid in enumerate(order):
+        if i + 1 < len(order):
+            prev_of[rid] = order[i + 1]
+
+    requested = set(run_ids)
+    out: set[str] = set()
+    for rid in run_ids:
+        prev = prev_of.get(rid)
+        if not prev:
+            continue
+        try:
+            diff = test_diff(conn, prev, rid)
+        except KeyError:
+            continue
+        critical = critical_dimensions(conn, rid) or critical_dimensions(conn, prev)
+        classified = classify_pairs(
+            diff.pairs, critical, regression_threshold=regression_threshold
+        )
+        if any(c.bucket == "regressed" for c in classified):
+            out.add(rid)
+    # Defensive: never return ids that weren't asked about.
+    return out & requested
 
 
 def list_projects(conn: duckdb.DuckDBPyConnection) -> list[str]:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,13 @@ from bi_evals.store import queries as q
 
 UI_TEMPLATES_DIR = Path(__file__).parent / "templates"
 RUNS_LIST_REFRESH_SECONDS = 10
+
+# Pass-rate band thresholds. Kept in sync with the pill classes computed in
+# runs_list.html.j2 so server-side filtering matches the rendered colour.
+_BAND_PASS_MIN = 0.9
+_BAND_WARN_MIN = 0.6
+_VALID_BANDS = {"all", "pass", "warn", "fail"}
+_SINCE_PATTERN = re.compile(r"^(\d+)d$")
 
 
 def create_app(config: BiEvalsConfig) -> FastAPI:
@@ -34,8 +43,18 @@ def create_app(config: BiEvalsConfig) -> FastAPI:
         request: Request,
         error: str | None = Query(default=None),
         project: str | None = Query(default=None),
+        since: str | None = Query(default=None),
+        band: str | None = Query(default=None),
     ) -> str:
-        return _render_runs_list(app, error=error, project=project)
+        cfg: BiEvalsConfig = app.state.config
+        return _render_runs_list(
+            app,
+            error=error,
+            project=project,
+            since=since,
+            band=band,
+            regression_threshold=cfg.compare.regression_threshold,
+        )
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
     def run_view(
@@ -141,40 +160,124 @@ def _render_runs_list(
     *,
     error: str | None = None,
     project: str | None = None,
+    since: str | None = None,
+    band: str | None = None,
+    regression_threshold: float = 0.2,
 ) -> str:
     db_path: Path = app.state.db_path
     env: Environment = app.state.env
+
+    since_value = (since or "").strip()
+    since_dt = _parse_since(since_value)
+    if since_value and since_dt is None:
+        # Invalid input → ignore the filter, surface the value back, banner.
+        bad_since = since_value
+        active_since = ""
+        since_error = f"Ignored invalid `since` value: {bad_since!r}. Use e.g. `7d` or `30d`."
+    else:
+        active_since = since_value
+        since_error = None
+
+    band_value = (band or "all").strip().lower()
+    if band_value not in _VALID_BANDS:
+        band_error = f"Ignored invalid `band` value: {band!r}. Use pass, warn, fail, or all."
+        band_value = "all"
+    else:
+        band_error = None
+
+    composed_error = error
+    extra_msgs = [m for m in (since_error, band_error) if m]
+    if extra_msgs:
+        composed_error = " ".join(([error] if error else []) + extra_msgs)
 
     if not db_path.exists():
         return env.get_template("runs_list.html.j2").render(
             runs=[],
             empty=True,
-            error=error,
+            error=composed_error,
             refresh_seconds=RUNS_LIST_REFRESH_SECONDS,
             available_projects=[],
             active_project=project or "",
+            active_since=active_since,
+            active_band=band_value,
+            regressed_run_ids=set(),
             refresh_qs="",
         )
 
     with store_connect(db_path, read_only=True) as conn:
-        runs = q.list_runs(conn, limit=50, project_name=project or None)
+        runs = q.list_runs(
+            conn,
+            limit=50,
+            project_name=project or None,
+            since=since_dt,
+        )
+        runs = _filter_by_band(runs, band_value)
         available_projects = q.list_projects(conn)
         latest = runs[0].run_id if runs else None
         prev = runs[1].run_id if len(runs) > 1 else None
+        regressed_ids = q.runs_with_regressions(
+            conn,
+            [r.run_id for r in runs],
+            regression_threshold=regression_threshold,
+        )
 
-    refresh_qs = f"?project={_quote(project)}" if project else ""
+    refresh_qs = _build_refresh_qs(project=project, since=active_since, band=band_value)
 
     return env.get_template("runs_list.html.j2").render(
         runs=runs,
         empty=False,
-        error=error,
+        error=composed_error,
         latest_id=latest,
         prev_id=prev,
         refresh_seconds=RUNS_LIST_REFRESH_SECONDS,
         available_projects=available_projects,
         active_project=project or "",
+        active_since=active_since,
+        active_band=band_value,
+        regressed_run_ids=regressed_ids,
         refresh_qs=refresh_qs,
     )
+
+
+def _parse_since(raw: str) -> datetime | None:
+    """Parse an `Nd` window into a UTC threshold. Returns None on empty/bad input."""
+    if not raw:
+        return None
+    m = _SINCE_PATTERN.match(raw)
+    if not m:
+        return None
+    days = int(m.group(1))
+    if days <= 0:
+        return None
+    return datetime.now(timezone.utc) - timedelta(days=days)
+
+
+def _filter_by_band(runs: list[q.RunRow], band: str) -> list[q.RunRow]:
+    if band == "all":
+        return runs
+    out: list[q.RunRow] = []
+    for r in runs:
+        rate = (r.pass_count / r.test_count) if r.test_count else 0.0
+        if band == "pass" and rate >= _BAND_PASS_MIN:
+            out.append(r)
+        elif band == "warn" and _BAND_WARN_MIN <= rate < _BAND_PASS_MIN:
+            out.append(r)
+        elif band == "fail" and rate < _BAND_WARN_MIN:
+            out.append(r)
+    return out
+
+
+def _build_refresh_qs(
+    *, project: str | None, since: str | None, band: str | None
+) -> str:
+    parts: list[str] = []
+    if project:
+        parts.append(f"project={_quote(project)}")
+    if since:
+        parts.append(f"since={_quote(since)}")
+    if band and band != "all":
+        parts.append(f"band={_quote(band)}")
+    return ("?" + "&".join(parts)) if parts else ""
 
 
 def _build_jinja_env() -> Environment:
