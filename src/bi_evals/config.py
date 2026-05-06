@@ -12,13 +12,90 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, model_validator
 
 
+_ENV_VAR_RE = re.compile(r"\$\{(\w+)\}")
+
+
 def _resolve_env_vars(raw: str) -> str:
-    """Replace ${ENV_VAR} placeholders with environment variable values."""
-    return re.sub(
-        r"\$\{(\w+)\}",
-        lambda m: os.environ.get(m.group(1), ""),
-        raw,
-    )
+    """Replace ``${ENV_VAR}`` placeholders with environment variable values.
+
+    Raises ``ValueError`` listing every placeholder that can't be resolved
+    (env var is unset, distinct from set-but-empty). Failing at config-load
+    time produces an obviously-actionable error rather than silently
+    substituting empty strings that propagate into downstream connectors
+    (Snowflake, Anthropic) and surface as cryptic errors several layers
+    deep.
+
+    A var that is *set but empty* is intentionally allowed — some optional
+    fields (e.g. ``private_key_passphrase``) are legitimately blank.
+    """
+    missing: list[str] = []
+
+    def _replace(m: re.Match[str]) -> str:
+        name = m.group(1)
+        value = os.environ.get(name)
+        if value is None:
+            missing.append(name)
+            return ""
+        return value
+
+    resolved = _ENV_VAR_RE.sub(_replace, raw)
+    if missing:
+        unique = sorted(set(missing))
+        raise ValueError(
+            "Unresolved environment variables in config: "
+            f"{unique}. Set them in your shell or in a .env file alongside "
+            "the config; if the field isn't used, remove it from the YAML."
+        )
+    return resolved
+
+
+class _DuplicateKeyError(ValueError):
+    """Raised when a YAML mapping contains the same key twice.
+
+    PyYAML's default ``SafeLoader`` silently lets the second value win, which
+    once let ``tmp/my-evals/bi-evals.yaml`` ship with two ``scoring:`` blocks
+    where the second silently dropped the entire scoring config on the floor.
+    """
+
+
+class _StrictSafeLoader(yaml.SafeLoader):
+    """SafeLoader that rejects duplicate mapping keys."""
+
+
+def _construct_mapping_strict(
+    loader: _StrictSafeLoader, node: yaml.MappingNode, deep: bool = False
+) -> dict[Any, Any]:
+    if not isinstance(node, yaml.MappingNode):
+        raise yaml.constructor.ConstructorError(
+            None, None,
+            f"expected a mapping node, but found {node.id}",
+            node.start_mark,
+        )
+    mapping: dict[Any, Any] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise _DuplicateKeyError(
+                f"duplicate key {key!r} in YAML mapping at line "
+                f"{key_node.start_mark.line + 1}, column "
+                f"{key_node.start_mark.column + 1}. "
+                "PyYAML normally lets the second value silently win — strict "
+                "loading rejects this so a stray duplicate (e.g. two "
+                "``scoring:`` blocks) can't quietly drop config on the floor."
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_StrictSafeLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_mapping_strict,
+)
+
+
+def _safe_load_strict(text: str) -> Any:
+    """``yaml.safe_load`` that rejects duplicate mapping keys."""
+    return yaml.load(text, Loader=_StrictSafeLoader)  # noqa: S506 — strict subclass
 
 
 class ToolConfig(BaseModel):
@@ -228,7 +305,7 @@ class BiEvalsConfig(BaseModel):
 
         raw = path.read_text()
         resolved = _resolve_env_vars(raw)
-        data = yaml.safe_load(resolved)
+        data = _safe_load_strict(resolved)
 
         config = cls(**data)
         config._base_dir = path.parent.resolve()
