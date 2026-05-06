@@ -65,6 +65,10 @@
   .pill.pass { background: #e8f5e9; color: var(--pass); }
   .pill.warn { background: #fff4e5; color: var(--warn); }
   .pill.fail { background: #ffebee; color: var(--fail); }
+  .pill.regressed { background: #ffebee; color: var(--fail); margin-left: 6px; text-transform: uppercase; letter-spacing: 0.04em; font-size: 10.5px; }
+  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-bottom: 12px; font-size: 13px; color: var(--fg-muted); }
+  .filters label { display: inline-flex; align-items: center; gap: 6px; }
+  .filters select { font-size: 13px; padding: 2px 6px; }
   .empty {
     padding: 48px 24px;
     text-align: center;
@@ -88,8 +92,8 @@
   <h1>bi-evals</h1>
   <div class="subtitle">Recent runs · auto-refreshes every {{ refresh_seconds }}s</div>
 
-  {% if available_projects and available_projects|length > 1 %}
-  <form method="get" style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; font-size: 13px; color: var(--fg-muted);">
+  <form method="get" class="filters">
+    {% if available_projects and available_projects|length > 1 %}
     <label>
       Project:
       <select name="project" onchange="this.form.submit()">
@@ -99,9 +103,28 @@
         {% endfor %}
       </select>
     </label>
+    {% endif %}
+    <label>
+      Since:
+      <select name="since" onchange="this.form.submit()">
+        <option value="" {% if not active_since %}selected{% endif %}>All time</option>
+        <option value="1d" {% if active_since == '1d' %}selected{% endif %}>Last 24h</option>
+        <option value="7d" {% if active_since == '7d' %}selected{% endif %}>Last 7 days</option>
+        <option value="30d" {% if active_since == '30d' %}selected{% endif %}>Last 30 days</option>
+        <option value="90d" {% if active_since == '90d' %}selected{% endif %}>Last 90 days</option>
+      </select>
+    </label>
+    <label>
+      Band:
+      <select name="band" onchange="this.form.submit()">
+        <option value="all" {% if active_band == 'all' %}selected{% endif %}>All bands</option>
+        <option value="pass" {% if active_band == 'pass' %}selected{% endif %}>Pass (≥90%)</option>
+        <option value="warn" {% if active_band == 'warn' %}selected{% endif %}>Warn (60–90%)</option>
+        <option value="fail" {% if active_band == 'fail' %}selected{% endif %}>Fail (&lt;60%)</option>
+      </select>
+    </label>
     <noscript><button type="submit" class="btn">Apply</button></noscript>
   </form>
-  {% endif %}
 
   {% if error %}
     <div class="error">{{ error }}</div>
@@ -151,7 +174,10 @@
                 <td class="mono"><a href="/runs/{{ r.run_id }}">{{ r.run_id }}</a></td>
                 <td>{{ r.project_name }}</td>
                 <td class="num">{{ r.test_count }}</td>
-                <td class="num"><span class="pill {{ pill }}">{{ rate | pct }}</span></td>
+                <td class="num">
+                  <span class="pill {{ pill }}">{{ rate | pct }}</span>
+                  {% if r.run_id in regressed_run_ids %}<span class="pill regressed" title="At least one test regressed vs. the prior run">regressed</span>{% endif %}
+                </td>
                 <td class="num">{{ r.total_cost_usd | money }}</td>
               </tr>
             {% endfor %}
