@@ -8,6 +8,37 @@
   {% if run.timestamp %} · {{ run.timestamp }}{% endif %}
 </div>
 
+{% if available_categories or available_models %}
+<form method="get" class="filter-strip">
+  {% if available_categories %}
+  <label>
+    Category:
+    <select name="category" onchange="this.form.submit()">
+      <option value="">All</option>
+      {% for cat in available_categories %}
+      <option value="{{ cat }}" {% if active_filters.category == cat %}selected{% endif %}>{{ cat }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endif %}
+  {% if available_models and available_models|length > 1 %}
+  <label>
+    Model:
+    <select name="model" onchange="this.form.submit()">
+      <option value="">All</option>
+      {% for m in available_models %}
+      <option value="{{ m }}" {% if active_filters.model == m %}selected{% endif %}>{{ m }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endif %}
+  <noscript><button type="submit">Apply</button></noscript>
+  {% if any_filter_active %}
+  <a href="?" class="muted">Clear filters</a>
+  {% endif %}
+</form>
+{% endif %}
+
 <div class="summary-grid">
   <div class="stat">
     <div class="label">Tests</div>
@@ -34,6 +65,49 @@
     <div class="value">{{ total_tokens }}</div>
   </div>
 </div>
+
+{% if failures %}
+<h2>Failures{% if failures_total > failures|length %} ({{ failures|length }} of {{ failures_total }} shown){% endif %}</h2>
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 30%;">Test</th>
+        <th class="num" style="width: 60px;">Score</th>
+        <th>Why it failed</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in failures %}
+      <tr>
+        <td>
+          <a href="/runs/{{ run.run_id|urlencode }}/tests/{{ f.test_id|urlencode }}{% if f.model %}?model={{ f.model|urlencode }}{% endif %}" class="mono">{{ f.test_id }}</a>
+          <div class="muted" style="font-size: 11.5px; margin-top: 2px;">
+            {{ f.category }}{% if available_models|length > 1 and f.model %} · <span class="mono">{{ f.model }}</span>{% endif %}
+          </div>
+        </td>
+        <td class="num">{{ "%.2f"|format(f.score) }}</td>
+        <td>
+          <ul class="failure-reasons">
+            {% for d in f.failed_dimensions %}
+            <li>
+              <span class="pill {% if d.is_critical %}fail{% else %}warn{% endif %}">{{ d.dimension }}</span>
+              <span class="reason-text">{{ d.reason or '(no detail captured)' }}</span>
+            </li>
+            {% endfor %}
+          </ul>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if failures_total > failures|length %}
+  <p class="muted" style="margin-top: 8px; font-size: 12px;">
+    Showing {{ failures|length }} of {{ failures_total }} failures. Click a test for full SQL, trace, and all dimensions.
+  </p>
+  {% endif %}
+</div>
+{% endif %}
 
 <h2>Category dashboard</h2>
 <div class="card">
@@ -297,9 +371,34 @@
 </div>
 {% endif %}
 
-<p class="muted" style="margin-top: 24px;">
-  For per-test deep-dive (SQL, trace, skill path), open Promptfoo's viewer with
-  <span class="kbd">bi-evals view</span>.
-</p>
+{% if tests %}
+<h2>All tests{% if any_filter_active %} (filtered){% endif %}</h2>
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>Test</th>
+        <th>Category</th>
+        {% if available_models|length > 1 %}<th>Model</th>{% endif %}
+        <th>Status</th>
+        <th class="num">Score</th>
+        <th class="num">Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in tests %}
+      <tr>
+        <td class="mono"><a href="/runs/{{ run.run_id|urlencode }}/tests/{{ t.test_id|urlencode }}{% if t.model %}?model={{ t.model|urlencode }}{% endif %}">{{ t.test_id }}</a></td>
+        <td>{{ t.category or '—' }}</td>
+        {% if available_models|length > 1 %}<td class="mono">{{ t.model or '—' }}</td>{% endif %}
+        <td>{{ pass_pill(t.passed)|safe }}</td>
+        <td class="num">{{ "%.2f"|format(t.score) }}</td>
+        <td class="num">{% if t.cost_usd is not none %}${{ "%.4f"|format(t.cost_usd) }}{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 
 {% endblock %}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import duckdb
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -60,6 +61,9 @@ def _pass_pill(passed: bool | None) -> str:
     return '<span class="pill neutral">—</span>'
 
 
+FAILURES_SECTION_LIMIT = 10
+
+
 def build_report_html(
     conn: duckdb.DuckDBPyConnection,
     run_id: str,
@@ -69,10 +73,18 @@ def build_report_html(
     cost_alert_window: int = 10,
     knowledge_stale_after_days: int = 90,
     base_dir: Path | None = None,
+    category: str | None = None,
+    model: str | None = None,
 ) -> str:
-    """Render the single-run HTML report."""
+    """Render the single-run HTML report.
+
+    ``category`` and ``model`` are Phase-7.5 filters applied at the data layer
+    so the rendered report only includes matching rows. Run-level summaries
+    (cost alert, freshness) render unfiltered; they are properties of the
+    whole run.
+    """
     run = q.get_run(conn, run_id)
-    categories = q.aggregate_by_category(conn, run_id)
+    categories_all = q.aggregate_by_category(conn, run_id)
     dimensions = q.dimension_pass_rates(conn, run_id)
     dimensions = _drop_vacuous_dimensions(conn, run_id, dimensions)
     models = q.cost_by_model(conn, run_id)
@@ -80,6 +92,21 @@ def build_report_html(
     summaries = q.model_summary(conn, run_id) if len(model_list) > 1 else []
     scatter_svg = _quality_cost_scatter(summaries) if summaries else ""
     stability = q.flakiest_tests(conn, last_n_runs=10, limit=5)
+
+    all_tests = q.list_tests(conn, run_id)
+    filtered_tests = _apply_filters(all_tests, category=category, model=model)
+    categories = (
+        [c for c in categories_all if c.category == category]
+        if category else categories_all
+    )
+
+    failed_tests = [t for t in filtered_tests if not t.passed]
+    failure_view = _build_failure_view(conn, run_id, failed_tests)
+    available_categories = sorted({c.category for c in categories_all})
+    active_filters = {
+        "category": category or "",
+        "model": model or "",
+    }
 
     # Phase 6b: freshness + cost alert
     stale, unverified = q.stale_goldens(conn, run_id, stale_after_days=stale_after_days)
@@ -121,7 +148,61 @@ def build_report_html(
         cost_alert=cost_alert,
         stale_knowledge=stale_knowledge,
         knowledge_stale_after_days=knowledge_stale_after_days,
+        failures=failure_view,
+        failures_total=len(failed_tests),
+        failures_limit=FAILURES_SECTION_LIMIT,
+        tests=filtered_tests,
+        available_categories=available_categories,
+        available_models=model_list,
+        active_filters=active_filters,
+        any_filter_active=bool(category or model),
     )
+
+
+def _apply_filters(
+    tests: list,
+    *,
+    category: str | None,
+    model: str | None,
+) -> list:
+    """Narrow a list of TestRow by optional category/model filters."""
+    out = tests
+    if category:
+        out = [t for t in out if (t.category or "") == category]
+    if model:
+        out = [t for t in out if (t.model or "") == model]
+    return out
+
+
+def _build_failure_view(
+    conn: duckdb.DuckDBPyConnection,
+    run_id: str,
+    failed_tests: list,
+) -> list[dict[str, Any]]:
+    """Top-of-page failure summary: id, category, model, per-dimension reasons.
+
+    Renders the *informative* per-dimension reasons (e.g. "missing filters:
+    ['STATE']") rather than only the aggregate ``fail_reason`` text, which
+    is just the verdict ("Failed critical dimension(s): [...]").
+
+    Capped at FAILURES_SECTION_LIMIT entries; the drilldown page shows the
+    full per-dimension table including passed-and-skipped dimensions.
+    """
+    out: list[dict[str, Any]] = []
+    for t in failed_tests[:FAILURES_SECTION_LIMIT]:
+        dims = q.list_dimensions(conn, run_id, t.test_id, model=t.model)
+        failed_dims = [d for d in dims if not d.passed]
+        # Sort: critical failures first, then alphabetical
+        failed_dims.sort(key=lambda d: (not d.is_critical, d.dimension))
+        out.append({
+            "test_id": t.test_id,
+            "category": t.category or "(uncategorized)",
+            "model": t.model or "",
+            "fail_reason": t.fail_reason or "",
+            "score": t.score,
+            "failed_dimensions": failed_dims,
+        })
+    return out
 
 
 def _drop_vacuous_dimensions(

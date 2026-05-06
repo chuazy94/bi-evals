@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>bi-evals · runs</title>
+<meta http-equiv="refresh" content="{{ refresh_seconds }}{% if refresh_qs %};url=/{{ refresh_qs }}{% endif %}">
+<style>
+  :root {
+    --fg: #1a1a1a;
+    --fg-muted: #666;
+    --bg: #fafafa;
+    --card: #fff;
+    --border: #e5e5e5;
+    --pass: #2e7d32;
+    --fail: #c62828;
+    --warn: #ed6c02;
+    --bar-bg: #eef0f2;
+    --mono: ui-monospace, "SF Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+    margin: 0;
+    padding: 24px;
+    line-height: 1.5;
+    font-size: 14px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .subtitle { color: var(--fg-muted); margin-bottom: 16px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.mono { font-family: var(--mono); font-size: 12.5px; color: var(--fg-muted); }
+  td.check { width: 28px; }
+  a { color: #0b5ed7; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .toolbar { display: flex; gap: 12px; align-items: center; margin: 12px 0 8px; }
+  .btn {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--fg);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .btn:hover { background: var(--bar-bg); }
+  .btn.primary { background: #0b5ed7; color: #fff; border-color: #0b5ed7; }
+  .btn.primary:hover { background: #0a52b8; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .pill.pass { background: #e8f5e9; color: var(--pass); }
+  .pill.warn { background: #fff4e5; color: var(--warn); }
+  .pill.fail { background: #ffebee; color: var(--fail); }
+  .empty {
+    padding: 48px 24px;
+    text-align: center;
+    color: var(--fg-muted);
+  }
+  .empty .kbd { font-family: var(--mono); background: var(--bar-bg); padding: 2px 6px; border-radius: 4px; font-size: 13px; color: var(--fg); }
+  .error {
+    background: #ffebee;
+    border: 1px solid var(--fail);
+    color: var(--fail);
+    padding: 10px 14px;
+    border-radius: 6px;
+    margin-bottom: 12px;
+    font-size: 13px;
+  }
+  .footer { margin-top: 32px; color: var(--fg-muted); font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>bi-evals</h1>
+  <div class="subtitle">Recent runs · auto-refreshes every {{ refresh_seconds }}s</div>
+
+  {% if available_projects and available_projects|length > 1 %}
+  <form method="get" style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; font-size: 13px; color: var(--fg-muted);">
+    <label>
+      Project:
+      <select name="project" onchange="this.form.submit()">
+        <option value="">All projects</option>
+        {% for p in available_projects %}
+        <option value="{{ p }}" {% if active_project == p %}selected{% endif %}>{{ p }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <noscript><button type="submit" class="btn">Apply</button></noscript>
+  </form>
+  {% endif %}
+
+  {% if error %}
+    <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if empty %}
+    <div class="card">
+      <div class="empty">
+        <div style="font-size: 16px; margin-bottom: 8px;">No runs yet</div>
+        <div>Run <span class="kbd">bi-evals run</span> to create one.</div>
+      </div>
+    </div>
+  {% else %}
+    <form method="post" action="/compare-selected">
+      <div class="toolbar">
+        <button type="submit" class="btn primary">Compare selected</button>
+        {% if prev_id and latest_id and prev_id != latest_id %}
+          <a class="btn" href="/compare?a={{ prev_id }}&b={{ latest_id }}">Compare prev → latest</a>
+        {% endif %}
+        <span class="muted" style="color: var(--fg-muted); font-size: 12px;">
+          Showing {{ runs|length }} most recent runs
+        </span>
+      </div>
+
+      <div class="card" style="padding: 0;">
+        <table>
+          <thead>
+            <tr>
+              <th class="check"></th>
+              <th>Timestamp</th>
+              <th>Run</th>
+              <th>Project</th>
+              <th class="num">Tests</th>
+              <th class="num">Pass rate</th>
+              <th class="num">Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in runs %}
+              {% set rate = (r.pass_count / r.test_count) if r.test_count else 0.0 %}
+              {% set pill = 'pass' if rate >= 0.9 else ('warn' if rate >= 0.6 else 'fail') %}
+              <tr>
+                <td class="check">
+                  <input type="checkbox" name="run_ids" value="{{ r.run_id }}">
+                </td>
+                <td>{{ r.timestamp.strftime('%Y-%m-%d %H:%M') if r.timestamp else '—' }}</td>
+                <td class="mono"><a href="/runs/{{ r.run_id }}">{{ r.run_id }}</a></td>
+                <td>{{ r.project_name }}</td>
+                <td class="num">{{ r.test_count }}</td>
+                <td class="num"><span class="pill {{ pill }}">{{ rate | pct }}</span></td>
+                <td class="num">{{ r.total_cost_usd | money }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </form>
+  {% endif %}
+
+  <div class="footer">bi-evals viewer</div>
+</div>
+</body>
+</html>

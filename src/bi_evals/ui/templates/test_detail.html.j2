@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ test.test_id }} · {{ run.project_name }}</title>
+<style>
+  :root {
+    --fg: #1a1a1a;
+    --fg-muted: #666;
+    --bg: #fafafa;
+    --card: #fff;
+    --border: #e5e5e5;
+    --pass: #2e7d32;
+    --fail: #c62828;
+    --warn: #ed6c02;
+    --bar-bg: #eef0f2;
+    --mono: ui-monospace, "SF Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--fg); background: var(--bg); margin: 0; padding: 24px; line-height: 1.5; font-size: 14px; }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; word-break: break-all; }
+  h2 { font-size: 16px; margin: 24px 0 12px; letter-spacing: 0.02em; text-transform: uppercase; color: var(--fg-muted); font-weight: 600; }
+  .subtitle { color: var(--fg-muted); margin-bottom: 16px; }
+  .breadcrumbs { color: var(--fg-muted); font-size: 13px; margin-bottom: 12px; }
+  .breadcrumbs a { color: #0b5ed7; text-decoration: none; }
+  .breadcrumbs a:hover { text-decoration: underline; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.mono, .mono { font-family: var(--mono); font-size: 12.5px; }
+  td.reason { font-size: 12.5px; color: var(--fg-muted); max-width: 480px; }
+  .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .stat .label { font-size: 11px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat .value { font-size: 20px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11.5px; font-weight: 600; }
+  .pill.pass { background: #e8f5e9; color: var(--pass); }
+  .pill.fail { background: #ffebee; color: var(--fail); }
+  .pill.warn { background: #fff4e5; color: var(--warn); }
+  .pill.neutral { background: #eef0f2; color: var(--fg-muted); }
+  pre.code { background: var(--bar-bg); padding: 12px; border-radius: 6px; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.45; margin: 0; white-space: pre-wrap; word-break: break-word; }
+  details.trace { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-top: 8px; }
+  details.trace summary { font-weight: 600; cursor: pointer; color: var(--fg); }
+  details.trace pre.code { margin-top: 12px; max-height: 600px; overflow-y: auto; }
+  ul.files { list-style: none; margin: 0; padding: 0; font-family: var(--mono); font-size: 12.5px; }
+  ul.files li { padding: 3px 0; }
+  .model-picker { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .model-picker a { padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; text-decoration: none; color: var(--fg); background: var(--card); font-family: var(--mono); font-size: 12.5px; }
+  .model-picker a.active { background: #0b5ed7; color: #fff; border-color: #0b5ed7; }
+  .footer { margin-top: 32px; color: var(--fg-muted); font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="breadcrumbs">
+    <a href="/">runs</a> ›
+    <a href="/runs/{{ run.run_id }}">{{ run.run_id }}</a> › <span class="mono">{{ test.test_id }}</span>
+  </div>
+
+  <h1>{{ test.test_id }}</h1>
+  <div class="subtitle">
+    {% if test.category %}{{ test.category }} · {% endif %}
+    {% if test.difficulty %}{{ test.difficulty }} · {% endif %}
+    {% if test.model %}<span class="mono">{{ test.model }}</span>{% endif %}
+  </div>
+
+  {% if available_models|length > 1 %}
+  <div class="model-picker">
+    <span style="color: var(--fg-muted); font-size: 12.5px; align-self: center;">Models:</span>
+    {% for m in available_models %}
+      <a href="?model={{ m|urlencode }}" class="{% if m == test.model %}active{% endif %}">{{ m }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="summary-grid">
+    <div class="stat">
+      <div class="label">Status</div>
+      <div class="value">
+        {% if test.passed %}<span class="pill pass">pass</span>{% else %}<span class="pill fail">fail</span>{% endif %}
+      </div>
+    </div>
+    <div class="stat">
+      <div class="label">Score</div>
+      <div class="value">{{ "%.2f"|format(test.score) }}</div>
+    </div>
+    {% if test.pass_rate is defined and test.trial_count > 1 %}
+    <div class="stat">
+      <div class="label">Pass rate</div>
+      <div class="value">{{ (test.pass_rate * 100)|round(0, 'floor') }}%</div>
+    </div>
+    {% endif %}
+    {% if test.cost_usd is not none %}
+    <div class="stat">
+      <div class="label">Cost</div>
+      <div class="value">${{ "%.4f"|format(test.cost_usd) }}</div>
+    </div>
+    {% endif %}
+    {% if test.latency_ms is not none %}
+    <div class="stat">
+      <div class="label">Latency</div>
+      <div class="value">{{ (test.latency_ms / 1000.0)|round(2) }}s</div>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if test.question %}
+  <h2>Question</h2>
+  <div class="card"><p style="margin: 0;">{{ test.question }}</p></div>
+  {% endif %}
+
+  {% if not test.passed and test.fail_reason %}
+  <h2>Failure summary</h2>
+  <div class="card">
+    <p style="margin: 0;" class="reason">{{ test.fail_reason }}</p>
+  </div>
+  {% endif %}
+
+  <h2>Dimensions</h2>
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Dimension</th>
+          <th>Status</th>
+          <th class="num">Score</th>
+          <th>Tier</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in dimensions %}
+        <tr>
+          <td>{{ d.dimension }}</td>
+          <td>{% if d.passed %}<span class="pill pass">pass</span>{% else %}<span class="pill fail">fail</span>{% endif %}</td>
+          <td class="num">{{ "%.2f"|format(d.score) }}</td>
+          <td>{% if d.is_critical %}<span class="pill fail">critical</span>{% else %}<span class="pill neutral">diagnostic</span>{% endif %}</td>
+          <td class="reason">{{ d.reason or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if extras.generated_sql %}
+  <h2>Generated SQL</h2>
+  <div class="card"><pre class="code">{{ extras.generated_sql }}</pre></div>
+  {% endif %}
+
+  {% if extras.reference_sql %}
+  <h2>Reference SQL</h2>
+  <div class="card"><pre class="code">{{ extras.reference_sql }}</pre></div>
+  {% endif %}
+
+  {% if extras.files_read %}
+  <h2>Files read by agent</h2>
+  <div class="card">
+    <ul class="files">
+      {% for path in extras.files_read %}<li>{{ path }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if extras.trace_json %}
+  <h2>Trace</h2>
+  <details class="trace">
+    <summary>Show full trace JSON ({{ extras.trace_json|length }} chars)</summary>
+    <pre class="code">{{ extras.trace_json }}</pre>
+  </details>
+  {% endif %}
+
+  <div class="footer">bi-evals viewer</div>
+</div>
+</body>
+</html>
