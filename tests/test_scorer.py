@@ -597,6 +597,194 @@ class TestGetAssert:
         assert results["pass"] is False
         assert "not found" in results["reason"]
 
+    @patch("bi_evals.scorer.entry.create_db_client")
+    def test_grades_per_model_trace_in_multi_model_run(
+        self, mock_create: MagicMock, tmp_path: Path,
+    ) -> None:
+        """Regression: with two traces present at the same test slug for
+        different models (the multi-model layout the provider writes), the
+        scorer must grade against the trace for the model in
+        provider_config, not whichever file happens to sit at the legacy
+        ``{slug}.json`` path.
+
+        Pre-fix this read the legacy path and silently graded a stale
+        single-model trace, marking obviously wrong outputs as 100% pass.
+        """
+        config_content = dedent("""\
+            project:
+              name: "Test"
+            agent:
+              system_prompt: "p.md"
+              models:
+                - "claude-sonnet-4-5-20250929"
+                - "claude-haiku-4-5-20251001"
+            database:
+              type: snowflake
+            scoring:
+              dimensions:
+                - execution
+                - table_alignment
+        """)
+        config_file = tmp_path / "bi-evals.yaml"
+        config_file.write_text(config_content)
+
+        golden_dir = tmp_path / "golden"
+        golden_dir.mkdir()
+        (golden_dir / "test-001.yaml").write_text(dedent("""\
+            id: test-001
+            question: "Q"
+            reference_sql: "SELECT a FROM RIGHT_TABLE"
+        """))
+
+        trace_dir = tmp_path / "results" / "traces"
+        trace_dir.mkdir(parents=True)
+        # Stale single-model trace at the legacy path. Pre-fix this is
+        # what the scorer always read regardless of which model ran.
+        (trace_dir / "golden_test-001_yaml.json").write_text(json.dumps({
+            "test_id": "golden/test-001.yaml",
+            "model": "claude-sonnet-4-5-20250929",
+            "generated_sql": "SELECT a FROM RIGHT_TABLE",
+            "trace": [],
+        }))
+        # The two correct, per-(test, model) traces the provider would
+        # actually have written for this run.
+        (trace_dir
+         / "golden_test-001_yaml__claude-sonnet-4-5-20250929__abc123.json"
+         ).write_text(json.dumps({
+            "test_id": "golden/test-001.yaml",
+            "model": "claude-sonnet-4-5-20250929",
+            "generated_sql": "SELECT a FROM RIGHT_TABLE",
+            "trace": [],
+        }))
+        (trace_dir
+         / "golden_test-001_yaml__claude-haiku-4-5-20251001__def456.json"
+         ).write_text(json.dumps({
+            "test_id": "golden/test-001.yaml",
+            "model": "claude-haiku-4-5-20251001",
+            "generated_sql": "SELECT a FROM WRONG_TABLE",
+            "trace": [],
+        }))
+
+        # Mock execute so each SQL string returns a result we can identify.
+        def fake_execute(sql: str) -> QueryResult:
+            return QueryResult(columns=["A"], rows=[{"A": sql}], row_count=1)
+        mock_client = MagicMock()
+        mock_client.execute.side_effect = fake_execute
+        mock_create.return_value = mock_client
+
+        from bi_evals.scorer.entry import get_assert
+
+        # Scorer call for the haiku run — must grade haiku's trace
+        # (WRONG_TABLE), so table_alignment fails.
+        results = get_assert("output", {
+            "config": {
+                "config_path": str(config_file),
+                "model": "claude-haiku-4-5-20251001",
+            },
+            "vars": {"golden_file": "golden/test-001.yaml"},
+            "prompt": "Q",
+        })
+        component_by_name = {
+            list(c["namedScores"].keys())[0]: c
+            for c in results["componentResults"]
+            if c.get("namedScores")
+        }
+        assert component_by_name["table_alignment"]["pass"] is False, (
+            "Scorer graded the wrong trace — pre-fix bug. "
+            f"Reason: {component_by_name['table_alignment']['reason']}"
+        )
+
+        # Scorer call for the sonnet run — must grade sonnet's trace
+        # (RIGHT_TABLE), table_alignment passes.
+        results = get_assert("output", {
+            "config": {
+                "config_path": str(config_file),
+                "model": "claude-sonnet-4-5-20250929",
+            },
+            "vars": {"golden_file": "golden/test-001.yaml"},
+            "prompt": "Q",
+        })
+        component_by_name = {
+            list(c["namedScores"].keys())[0]: c
+            for c in results["componentResults"]
+            if c.get("namedScores")
+        }
+        assert component_by_name["table_alignment"]["pass"] is True
+
+    @patch("bi_evals.scorer.entry.create_db_client")
+    def test_picks_most_recent_trace_for_repeats(
+        self, mock_create: MagicMock, tmp_path: Path,
+    ) -> None:
+        """With repeat-N each repeat writes a fresh ``{slug}__{model}__{suffix}.json``.
+        The scorer for each invocation should grade the most recent trace
+        for that (test, model)."""
+        import time
+
+        config_content = dedent("""\
+            project:
+              name: "Test"
+            agent:
+              model: "claude-sonnet-4-5-20250929"
+              system_prompt: "p.md"
+            database:
+              type: snowflake
+            scoring:
+              dimensions:
+                - execution
+                - table_alignment
+        """)
+        config_file = tmp_path / "bi-evals.yaml"
+        config_file.write_text(config_content)
+
+        golden_dir = tmp_path / "golden"
+        golden_dir.mkdir()
+        (golden_dir / "test-001.yaml").write_text(dedent("""\
+            id: test-001
+            question: "Q"
+            reference_sql: "SELECT a FROM NEW_TABLE"
+        """))
+
+        trace_dir = tmp_path / "results" / "traces"
+        trace_dir.mkdir(parents=True)
+        old_trace = (trace_dir
+                     / "golden_test-001_yaml__claude-sonnet-4-5-20250929__old111.json")
+        old_trace.write_text(json.dumps({
+            "test_id": "golden/test-001.yaml",
+            "generated_sql": "SELECT a FROM OLD_TABLE",
+            "trace": [],
+        }))
+        # Force a measurably-older mtime so the sort is unambiguous.
+        time.sleep(0.01)
+        new_trace = (trace_dir
+                     / "golden_test-001_yaml__claude-sonnet-4-5-20250929__new222.json")
+        new_trace.write_text(json.dumps({
+            "test_id": "golden/test-001.yaml",
+            "generated_sql": "SELECT a FROM NEW_TABLE",
+            "trace": [],
+        }))
+
+        mock_client = MagicMock()
+        mock_client.execute.return_value = QueryResult(
+            columns=["A"], rows=[{"A": 1}], row_count=1,
+        )
+        mock_create.return_value = mock_client
+
+        from bi_evals.scorer.entry import get_assert
+
+        results = get_assert("output", {
+            "config": {"config_path": str(config_file)},
+            "vars": {"golden_file": "golden/test-001.yaml"},
+            "prompt": "Q",
+        })
+        component_by_name = {
+            list(c["namedScores"].keys())[0]: c
+            for c in results["componentResults"]
+            if c.get("namedScores")
+        }
+        # Most-recent trace queries NEW_TABLE which matches reference;
+        # if the older OLD_TABLE trace had been picked, this would fail.
+        assert component_by_name["table_alignment"]["pass"] is True
+
     def test_no_golden_file_var(self, tmp_path: Path) -> None:
         config_content = dedent("""\
             project:

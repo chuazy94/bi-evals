@@ -7,7 +7,6 @@ SQL, runs enabled dimensions, and returns per-dimension results.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -15,6 +14,7 @@ from typing import Any
 from bi_evals.config import BiEvalsConfig
 from bi_evals.db.factory import create_db_client
 from bi_evals.golden.loader import load_golden_test
+from bi_evals.trace_paths import make_test_id_slug, slugify_model
 from bi_evals.scorer.dimensions import (
     DimensionResult,
     check_anti_pattern_compliance,
@@ -38,11 +38,46 @@ def _load_trace(trace_path: Path) -> dict[str, Any]:
     return json.loads(trace_path.read_text())
 
 
-def _make_test_id_slug(prompt: str, vars_: dict[str, Any]) -> str:
-    """Derive trace file slug matching provider/entry.py logic."""
-    golden_file = vars_.get("golden_file", "")
-    test_id = golden_file if golden_file else hashlib.md5(prompt.encode()).hexdigest()
-    return test_id.replace("/", "_").replace(".", "_")
+def _resolve_trace_path(
+    trace_dir: Path,
+    test_id_slug: str,
+    model_slug: str | None,
+) -> Path:
+    """Pick the trace file the provider just wrote for this (test, model).
+
+    The provider writes `{slug}__{model}__{suffix}.json` per invocation so
+    that multi-model runs and repeat-N don't collide. The scorer used to
+    read `{slug}.json` — a path the provider hasn't written to since
+    multi-model support landed — which silently graded whatever stale
+    trace happened to be at that path. This resolver fixes that by:
+
+      1. Preferring the most recent `{slug}__{model_slug}__*.json` match
+         when we know the model (the same `provider_config["model"]` the
+         provider read at write-time).
+      2. Falling back to the most recent `{slug}__*.json` if model is
+         unknown (e.g. single-model legacy config).
+      3. Falling back to the legacy `{slug}.json` path so manually-written
+         test fixtures keep working.
+
+    Picking by mtime handles repeat-N: each repeat writes a fresh trace
+    and the scorer for that repeat sees the newest.
+    """
+    if model_slug:
+        per_model = sorted(
+            trace_dir.glob(f"{test_id_slug}__{model_slug}__*.json"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        if per_model:
+            return per_model[-1]
+
+    any_model = sorted(
+        trace_dir.glob(f"{test_id_slug}__*.json"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    if any_model:
+        return any_model[-1]
+
+    return trace_dir / f"{test_id_slug}.json"
 
 
 def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
@@ -72,10 +107,14 @@ def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
 
     golden = load_golden_test(golden_path)
 
-    # Load trace
-    test_id_slug = _make_test_id_slug(prompt, vars_)
+    # Load trace. The model slug must match what the provider used at
+    # write-time so we grade *this* run's trace, not a stale one from a
+    # different model that happens to share the test slug.
+    test_id_slug = make_test_id_slug(prompt, vars_)
     trace_dir = config.resolve_path(config.reporting.results_dir) / "traces"
-    trace_path = trace_dir / f"{test_id_slug}.json"
+    model_for_trace = provider_config.get("model") or config.agent.model
+    model_slug = slugify_model(model_for_trace) if model_for_trace else None
+    trace_path = _resolve_trace_path(trace_dir, test_id_slug, model_slug)
     trace_data = _load_trace(trace_path)
 
     generated_sql = trace_data.get("generated_sql", "")
