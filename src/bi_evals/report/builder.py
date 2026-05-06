@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import duckdb
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -16,6 +16,7 @@ from bi_evals.compare.diff import (
     compute_verdict,
     dimension_deltas,
 )
+from bi_evals.config import DEFAULT_CRITICAL_DIMENSIONS
 from bi_evals.store import queries as q
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -64,6 +65,56 @@ def _pass_pill(passed: bool | None) -> str:
 FAILURES_SECTION_LIMIT = 10
 
 
+def compute_verdict_sentence(
+    *,
+    passed: bool,
+    score: float,
+    dimensions: Iterable[Any],
+    pass_threshold: float,
+    critical_dimensions: Iterable[str],
+    fail_reason: str | None = None,
+) -> str:
+    """Return a one-line plain-English explanation of the pass/fail verdict.
+
+    The scorer already produces a usable ``fail_reason`` for failing tests
+    (see ``scorer/entry.py``). This helper wraps that for failures and
+    composes a symmetric "Passed: ..." sentence for the pass path, so the
+    drilldown UI can render the same sentence shape for both outcomes.
+
+    The format is intentionally close to the strings the user sees today
+    in ``test_results.fail_reason`` so muscle-memory transfers across runs.
+    """
+    critical_set = set(critical_dimensions)
+    crit_dims = [d for d in dimensions if d.dimension in critical_set]
+    failed_crit = [d.dimension for d in crit_dims if not d.passed]
+    crit_total = len(crit_dims)
+    crit_pass = crit_total - len(failed_crit)
+
+    if passed:
+        return (
+            f"Passed: all critical dimensions green "
+            f"AND weighted score {score:.2f} \u2265 {pass_threshold:.2f}"
+        )
+
+    if failed_crit:
+        names = ", ".join(f"`{d}`" for d in failed_crit)
+        plural = "s" if len(failed_crit) > 1 else ""
+        return f"Failed: critical dimension{plural} {names} failed"
+
+    if crit_total:
+        return (
+            f"Failed: weighted score {score:.2f} below threshold "
+            f"{pass_threshold:.2f} ({crit_pass}/{crit_total} critical green)"
+        )
+
+    if fail_reason:
+        return f"Failed: {fail_reason}"
+    return (
+        f"Failed: weighted score {score:.2f} below threshold "
+        f"{pass_threshold:.2f}"
+    )
+
+
 def build_report_html(
     conn: duckdb.DuckDBPyConnection,
     run_id: str,
@@ -75,6 +126,8 @@ def build_report_html(
     base_dir: Path | None = None,
     category: str | None = None,
     model: str | None = None,
+    pass_threshold: float = 0.75,
+    critical_dimensions: list[str] | None = None,
 ) -> str:
     """Render the single-run HTML report.
 
@@ -130,6 +183,12 @@ def build_report_html(
     )
     total_tokens = (run.total_prompt_tokens or 0) + (run.total_completion_tokens or 0)
 
+    critical_list = (
+        list(critical_dimensions)
+        if critical_dimensions is not None
+        else list(DEFAULT_CRITICAL_DIMENSIONS)
+    )
+
     env = _env()
     return env.get_template("report.html.j2").render(
         run=run,
@@ -156,6 +215,8 @@ def build_report_html(
         available_models=model_list,
         active_filters=active_filters,
         any_filter_active=bool(category or model),
+        pass_threshold=pass_threshold,
+        critical_dimensions=critical_list,
     )
 
 

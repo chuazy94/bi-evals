@@ -260,6 +260,8 @@ def report(ctx: click.Context, run_id: str | None, out_path: str | None) -> None
                 cost_alert_window=config.storage.cost_alert_window,
                 knowledge_stale_after_days=config.scoring.knowledge_stale_after_days,
                 base_dir=config._base_dir,
+                pass_threshold=config.scoring.pass_threshold,
+                critical_dimensions=list(config.scoring.critical_dimensions),
             )
         except KeyError:
             raise click.ClickException(

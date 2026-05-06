@@ -10,7 +10,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from bi_evals.config import BiEvalsConfig
-from bi_evals.report.builder import build_compare_html, build_report_html
+from bi_evals.report.builder import (
+    build_compare_html,
+    build_report_html,
+    compute_verdict_sentence,
+)
 from bi_evals.store import connect as store_connect
 from bi_evals.store import queries as q
 
@@ -53,6 +57,8 @@ def create_app(config: BiEvalsConfig) -> FastAPI:
                     cost_alert_window=cfg.storage.cost_alert_window,
                     category=category,
                     model=model,
+                    pass_threshold=cfg.scoring.pass_threshold,
+                    critical_dimensions=list(cfg.scoring.critical_dimensions),
                 )
         except KeyError:
             raise HTTPException(
@@ -66,7 +72,7 @@ def create_app(config: BiEvalsConfig) -> FastAPI:
         test_id: str,
         model: str | None = Query(default=None),
     ) -> Any:
-        cfg: BiEvalsConfig = app.state.config  # noqa: F841 (reserved for future kwargs)
+        cfg: BiEvalsConfig = app.state.config
         try:
             with store_connect(app.state.db_path, read_only=True) as conn:
                 run = q.get_run(conn, run_id)
@@ -86,12 +92,23 @@ def create_app(config: BiEvalsConfig) -> FastAPI:
                 test = q.get_test(conn, run_id, test_id, model=effective_model)
                 dimensions = q.list_dimensions(conn, run_id, test_id, model=effective_model)
                 extras = q.get_test_extras(conn, run_id, test_id, model=effective_model)
+                verdict_sentence = compute_verdict_sentence(
+                    passed=bool(test.passed),
+                    score=float(test.score),
+                    dimensions=dimensions,
+                    pass_threshold=cfg.scoring.pass_threshold,
+                    critical_dimensions=cfg.scoring.critical_dimensions,
+                    fail_reason=test.fail_reason,
+                )
                 return app.state.env.get_template("test_detail.html.j2").render(
                     run=run,
                     test=test,
                     dimensions=dimensions,
                     extras=extras,
                     available_models=available_models,
+                    pass_threshold=cfg.scoring.pass_threshold,
+                    critical_dimensions=list(cfg.scoring.critical_dimensions),
+                    verdict_sentence=verdict_sentence,
                 )
         except KeyError as e:
             raise HTTPException(status_code=404, detail=str(e))

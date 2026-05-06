@@ -171,6 +171,43 @@ def test_runs_list_project_filter(client: TestClient, eval_sample_config: BiEval
     assert RUN_B_ID not in miss.text
 
 
+def test_run_view_renders_scoring_rule_callout(client: TestClient) -> None:
+    res = client.get(f"/runs/{RUN_B_ID}")
+    assert res.status_code == 200
+    body = res.text
+    assert "Scoring rule" in body
+    # Default pass_threshold from config is 0.75; it should appear in the
+    # callout AND in the weighted-score column headers.
+    assert "0.75" in body
+    assert "Weighted score" in body
+    # Critical dims listed in the callout
+    for dim in ("execution", "row_completeness", "value_accuracy"):
+        assert dim in body
+
+
+def test_test_drilldown_pass_verdict(client: TestClient) -> None:
+    from urllib.parse import quote
+    res = client.get(f"/runs/{RUN_B_ID}/tests/{quote(PASSING_TEST_ID, safe='')}")
+    assert res.status_code == 200
+    body = res.text
+    assert "Passed:" in body
+    assert "all critical dimensions green" in body
+    # Threshold appears in the verdict sentence and in the score stat label.
+    assert "0.75" in body
+    assert "Weighted score" in body
+
+
+def test_test_drilldown_fail_verdict(client: TestClient) -> None:
+    from urllib.parse import quote
+    res = client.get(f"/runs/{RUN_B_ID}/tests/{quote(FAILING_TEST_ID, safe='')}")
+    assert res.status_code == 200
+    body = res.text
+    assert "Failed:" in body
+    # The fail path should mention either a specific failed critical dim or
+    # the weighted-score-below-threshold case. Either is acceptable.
+    assert ("critical dimension" in body) or ("below threshold" in body)
+
+
 def test_runs_list_refresh_preserves_project_filter(client: TestClient) -> None:
     res = client.get("/?project=Foo")
     assert res.status_code == 200
