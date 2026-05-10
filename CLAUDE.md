@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Current phase: MVP
+
+**North star:** a user installs this SDK, points it at their existing agent/DB setup, and authors their first golden tests with light assistance — quickly.
+
+Every change should be judged against that. In practice:
+
+- **Prioritize:** install/setup ergonomics, clear errors that tell the user what to fix, scaffolding that helps them write their first golden test, docs/examples that get someone productive in one sitting.
+- **Deprioritize:** new scoring dimensions, new provider integrations, new report views, performance work, abstractions for hypothetical future users. These are post-MVP unless the user explicitly asks.
+- **When in doubt, ask** rather than building broadly. A 3-line clarifying question beats a 300-line speculative feature.
+
+If a proposed change doesn't make first-run setup faster, clearer, or more forgiving, flag that tradeoff before building it.
+
 ## What this project is
 
 bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Users provide their own skill/knowledge files, golden tests, and database credentials — the framework handles the LLM provider loop, 10-dimension accuracy scoring, HTML reporting, and regression detection. Promptfoo (Node.js) is used as the test runner engine; all custom logic is Python.
