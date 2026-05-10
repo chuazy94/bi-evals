@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in *.py) cd /Users/zhiyuanchua/Documents/Repos/bi-evals && uv run ruff format \"$f\" ;; esac; } 2>/dev/null || true"
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in *.py) cd \"$(git rev-parse --show-toplevel)\" && uv run ruff format \"$f\" ;; esac; } 2>/dev/null || true"
           },
           {
             "type": "command",
