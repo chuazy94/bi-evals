@@ -24,8 +24,7 @@ from bi_evals.tools.file_reader import FileReaderTool
 skill_dir = Path("./tmp/test_routing")
 skill_dir.mkdir(exist_ok=True)
 (skill_dir / "SKILL.md").write_text(
-    "# Routing\n"
-    "For any question, read knowledge/INFO.md\n"
+    "# Routing\nFor any question, read knowledge/INFO.md\n"
 )
 (skill_dir / "knowledge").mkdir(exist_ok=True)
 (skill_dir / "knowledge" / "INFO.md").write_text(

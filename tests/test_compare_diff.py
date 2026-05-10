@@ -135,7 +135,12 @@ def test_bucket_counts_covers_all_buckets() -> None:
     pairs = [_pair("t", a_pass=True, b_pass=True, a_score=1.0, b_score=1.0)]
     counts = bucket_counts(classify_pairs(pairs, CRITICAL))
     assert set(counts.keys()) == {
-        "regressed", "fixed", "unchanged_pass", "unchanged_fail", "added", "removed"
+        "regressed",
+        "fixed",
+        "unchanged_pass",
+        "unchanged_fail",
+        "added",
+        "removed",
     }
     assert counts["unchanged_pass"] == 1
 
@@ -156,7 +161,10 @@ def test_dimension_deltas_sorted_worst_first() -> None:
     pairs = [
         _pair(
             "t1",
-            a_pass=True, b_pass=True, a_score=1.0, b_score=1.0,
+            a_pass=True,
+            b_pass=True,
+            a_score=1.0,
+            b_score=1.0,
             a_dims={"d1": True, "d2": True},
             b_dims={"d1": False, "d2": True},
         ),

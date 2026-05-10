@@ -137,7 +137,9 @@ def _build_run_row(
         prompt_metrics = prompts[0].get("metrics", {}) or {}
 
     pass_count = stats.get("successes", sum(1 for t in per_trial if t.get("success")))
-    fail_count = stats.get("failures", sum(1 for t in per_trial if not t.get("success")))
+    fail_count = stats.get(
+        "failures", sum(1 for t in per_trial if not t.get("success"))
+    )
     error_count = stats.get("errors", 0)
 
     total_cost = prompt_metrics.get("cost")
@@ -224,30 +226,36 @@ def _build_rows(
             scores.append(score)
             if passed:
                 pass_count += 1
-            trial_cost = float(t.get("cost") or 0.0) if t.get("cost") is not None else None
+            trial_cost = (
+                float(t.get("cost") or 0.0) if t.get("cost") is not None else None
+            )
             if trial_cost is not None:
                 total_cost += trial_cost
-            trial_latency = int(t.get("latencyMs") or 0) if t.get("latencyMs") is not None else None
+            trial_latency = (
+                int(t.get("latencyMs") or 0) if t.get("latencyMs") is not None else None
+            )
             if trial_latency is not None:
                 total_latency += trial_latency
 
-            trial_rows.append([
-                run_id,
-                test_id,
-                model,
-                trial_ix,
-                passed,
-                score,
-                metadata.get("sql"),
-                fail_reason,
-                trial_cost,
-                trial_latency,
-                int(token_usage.get("prompt") or 0),
-                int(token_usage.get("completion") or 0),
-                int(token_usage.get("total") or 0),
-                trace_file_path,
-                trace_json_str,
-            ])
+            trial_rows.append(
+                [
+                    run_id,
+                    test_id,
+                    model,
+                    trial_ix,
+                    passed,
+                    score,
+                    metadata.get("sql"),
+                    fail_reason,
+                    trial_cost,
+                    trial_latency,
+                    int(token_usage.get("prompt") or 0),
+                    int(token_usage.get("completion") or 0),
+                    int(token_usage.get("total") or 0),
+                    trace_file_path,
+                    trace_json_str,
+                ]
+            )
 
             # Per-trial dimension rows (unwrap Promptfoo's nested componentResults).
             outer = (grading.get("componentResults") or [{}])[0]
@@ -256,18 +264,20 @@ def _build_rows(
                 dim_name = _dimension_name(d)
                 if dim_name is None:
                     continue
-                dim_rows.append([
-                    run_id,
-                    test_id,
-                    model,
-                    trial_ix,
-                    dim_name,
-                    bool(d.get("pass")),
-                    float(d.get("score") or 0.0),
-                    d.get("reason"),
-                    dim_name in critical,
-                    float(weights.get(dim_name, 1.0)),
-                ])
+                dim_rows.append(
+                    [
+                        run_id,
+                        test_id,
+                        model,
+                        trial_ix,
+                        dim_name,
+                        bool(d.get("pass")),
+                        float(d.get("score") or 0.0),
+                        d.get("reason"),
+                        dim_name in critical,
+                        float(weights.get(dim_name, 1.0)),
+                    ]
+                )
 
             last_trial = t
 
@@ -297,38 +307,40 @@ def _build_rows(
         # single-trial run this collapses to `passed == True`. Ties count as fail.
         overall_passed = pass_count > (trial_count - pass_count)
 
-        test_rows.append([
-            run_id,
-            test_id,
-            model,
-            golden_snapshot["golden_id"],
-            golden_snapshot["category"],
-            golden_snapshot["difficulty"],
-            json.dumps(golden_snapshot["tags"]),
-            (t_last.get("testCase") or {}).get("vars", {}).get("question")
+        test_rows.append(
+            [
+                run_id,
+                test_id,
+                model,
+                golden_snapshot["golden_id"],
+                golden_snapshot["category"],
+                golden_snapshot["difficulty"],
+                json.dumps(golden_snapshot["tags"]),
+                (t_last.get("testCase") or {}).get("vars", {}).get("question")
                 or (t_last.get("vars") or {}).get("question"),
-            (t_last.get("testCase") or {}).get("description"),
-            golden_snapshot["reference_sql"],
-            metadata_last.get("sql"),
-            json.dumps(metadata_last.get("files_read") or []),
-            metadata_last.get("trace_file"),
-            _load_trace(metadata_last.get("trace_file")),
-            overall_passed,
-            score_mean,
-            rep_fail_reason,
-            float(total_cost) if total_cost else None,
-            int(total_latency) if total_latency else None,
-            int(token_usage_last.get("prompt") or 0),
-            int(token_usage_last.get("completion") or 0),
-            int(token_usage_last.get("total") or 0),
-            provider_str,
-            trial_count,
-            pass_count,
-            pass_rate,
-            score_mean,
-            score_stddev,
-            golden_snapshot["last_verified_at"],
-        ])
+                (t_last.get("testCase") or {}).get("description"),
+                golden_snapshot["reference_sql"],
+                metadata_last.get("sql"),
+                json.dumps(metadata_last.get("files_read") or []),
+                metadata_last.get("trace_file"),
+                _load_trace(metadata_last.get("trace_file")),
+                overall_passed,
+                score_mean,
+                rep_fail_reason,
+                float(total_cost) if total_cost else None,
+                int(total_latency) if total_latency else None,
+                int(token_usage_last.get("prompt") or 0),
+                int(token_usage_last.get("completion") or 0),
+                int(token_usage_last.get("total") or 0),
+                provider_str,
+                trial_count,
+                pass_count,
+                pass_rate,
+                score_mean,
+                score_stddev,
+                golden_snapshot["last_verified_at"],
+            ]
+        )
 
     return trial_rows, test_rows, dim_rows
 
@@ -427,7 +439,8 @@ def _build_prompt_snapshot(
     if len(seen) > MAX_HASHED_FILES:
         LOG.warning(
             "prompt_snapshot: hashing %d files (cap %d) — truncating",
-            len(seen), MAX_HASHED_FILES,
+            len(seen),
+            MAX_HASHED_FILES,
         )
         seen = set(sorted(seen)[:MAX_HASHED_FILES])
 
@@ -469,7 +482,8 @@ def _build_prompt_snapshot(
         if len(data) > MAX_HASH_BYTES:
             LOG.warning(
                 "prompt_snapshot: %s is %d bytes (>1MB); hashing anyway",
-                rel_str, len(data),
+                rel_str,
+                len(data),
             )
 
         try:
@@ -506,7 +520,9 @@ def _load_trace(trace_file_path: str | None) -> str | None:
             if len(steps) > keep * 2:
                 truncated = {
                     **data,
-                    "trace": steps[:keep] + [{"_truncated": len(steps) - keep * 2}] + steps[-keep:],
+                    "trace": steps[:keep]
+                    + [{"_truncated": len(steps) - keep * 2}]
+                    + steps[-keep:],
                 }
                 return json.dumps(truncated)
         except json.JSONDecodeError:

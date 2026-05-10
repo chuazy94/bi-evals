@@ -70,7 +70,8 @@ def create_app(config: BiEvalsConfig) -> FastAPI:
         try:
             with store_connect(app.state.db_path, read_only=True) as conn:
                 return build_report_html(
-                    conn, run_id,
+                    conn,
+                    run_id,
                     stale_after_days=cfg.scoring.stale_after_days,
                     cost_alert_multiplier=cfg.storage.cost_alert_multiplier,
                     cost_alert_window=cfg.storage.cost_alert_window,
@@ -95,11 +96,13 @@ def create_app(config: BiEvalsConfig) -> FastAPI:
         try:
             with store_connect(app.state.db_path, read_only=True) as conn:
                 run = q.get_run(conn, run_id)
-                available_models = sorted({
-                    t.model or ""
-                    for t in q.list_tests(conn, run_id)
-                    if t.test_id == test_id
-                })
+                available_models = sorted(
+                    {
+                        t.model or ""
+                        for t in q.list_tests(conn, run_id)
+                        if t.test_id == test_id
+                    }
+                )
                 # If the test exists for >1 model and the user didn't pick one,
                 # redirect to the first so the page always shows a single result.
                 if model is None and len(available_models) > 1:
@@ -107,9 +110,15 @@ def create_app(config: BiEvalsConfig) -> FastAPI:
                         url=f"/runs/{run_id}/tests/{_quote(test_id)}?model={_quote(available_models[0])}",
                         status_code=303,
                     )
-                effective_model = model if model is not None else (available_models[0] if available_models else None)
+                effective_model = (
+                    model
+                    if model is not None
+                    else (available_models[0] if available_models else None)
+                )
                 test = q.get_test(conn, run_id, test_id, model=effective_model)
-                dimensions = q.list_dimensions(conn, run_id, test_id, model=effective_model)
+                dimensions = q.list_dimensions(
+                    conn, run_id, test_id, model=effective_model
+                )
                 extras = q.get_test_extras(conn, run_id, test_id, model=effective_model)
                 verdict_sentence = compute_verdict_sentence(
                     passed=bool(test.passed),
@@ -138,7 +147,9 @@ def create_app(config: BiEvalsConfig) -> FastAPI:
         try:
             with store_connect(app.state.db_path, read_only=True) as conn:
                 return build_compare_html(
-                    conn, a, b,
+                    conn,
+                    a,
+                    b,
                     regression_threshold=cfg.compare.regression_threshold,
                 )
         except KeyError as e:
@@ -153,9 +164,7 @@ def create_app(config: BiEvalsConfig) -> FastAPI:
         form = await request.form()
         picks = form.getlist("run_ids")
         if len(picks) != 2:
-            msg = (
-                f"Pick exactly 2 runs to compare (got {len(picks)})."
-            )
+            msg = f"Pick exactly 2 runs to compare (got {len(picks)})."
             return RedirectResponse(
                 url=f"/?error={_quote(msg)}",
                 status_code=303,
@@ -190,14 +199,18 @@ def _render_runs_list(
         # Invalid input → ignore the filter, surface the value back, banner.
         bad_since = since_value
         active_since = ""
-        since_error = f"Ignored invalid `since` value: {bad_since!r}. Use e.g. `7d` or `30d`."
+        since_error = (
+            f"Ignored invalid `since` value: {bad_since!r}. Use e.g. `7d` or `30d`."
+        )
     else:
         active_since = since_value
         since_error = None
 
     band_value = (band or "all").strip().lower()
     if band_value not in _VALID_BANDS:
-        band_error = f"Ignored invalid `band` value: {band!r}. Use pass, warn, fail, or all."
+        band_error = (
+            f"Ignored invalid `band` value: {band!r}. Use pass, warn, fail, or all."
+        )
         band_value = "all"
     else:
         band_error = None
@@ -323,4 +336,5 @@ def _money_filter(value: float | None) -> str:
 
 def _quote(s: str) -> str:
     from urllib.parse import quote
+
     return quote(s, safe="")

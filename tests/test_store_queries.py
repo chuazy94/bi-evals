@@ -38,7 +38,9 @@ def test_get_run(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
     assert run.total_cost_usd and run.total_cost_usd > 0
 
 
-def test_aggregate_by_category(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
+def test_aggregate_by_category(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
     db = _seed_both_runs(tmp_path, eval_sample_config)
     with connect(db) as conn:
         cats = q.aggregate_by_category(conn, RUN_B_ID)
@@ -73,7 +75,9 @@ def test_cost_by_model(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> Non
     assert abs(total - (run.total_cost_usd or 0)) < 0.01
 
 
-def test_test_diff_returns_all_tests(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
+def test_test_diff_returns_all_tests(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
     db = _seed_both_runs(tmp_path, eval_sample_config)
     with connect(db) as conn:
         diff = q.test_diff(conn, RUN_A_ID, RUN_B_ID)
@@ -108,7 +112,9 @@ def test_list_projects(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> Non
     assert projects == [eval_sample_config.project.name]
 
 
-def test_list_runs_filtered_by_project(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
+def test_list_runs_filtered_by_project(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
     db = _seed_both_runs(tmp_path, eval_sample_config)
     with connect(db) as conn:
         match = q.list_runs(conn, project_name=eval_sample_config.project.name)
@@ -117,7 +123,9 @@ def test_list_runs_filtered_by_project(tmp_path: Path, eval_sample_config: BiEva
     assert len(miss) == 0
 
 
-def test_list_runs_since_filter(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
+def test_list_runs_since_filter(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
     """``since`` filters out runs with timestamp older than the threshold.
 
     The fixture runs are anchored at fixed dates (April 2026), so a tight
@@ -198,7 +206,9 @@ def test_get_test_extras_has_sql_and_trace(
 ) -> None:
     db = _seed_both_runs(tmp_path, eval_sample_config)
     with connect(db) as conn:
-        extras = q.get_test_extras(conn, RUN_B_ID, "golden/cases/total-cases-by-country.yaml")
+        extras = q.get_test_extras(
+            conn, RUN_B_ID, "golden/cases/total-cases-by-country.yaml"
+        )
     assert extras["generated_sql"]  # non-empty SQL
     assert isinstance(extras["files_read"], list)
     assert isinstance(extras["trace_json"], str)

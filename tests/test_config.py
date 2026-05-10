@@ -194,7 +194,9 @@ class TestBiEvalsConfig:
         resolved = config.resolve_path("prompts/system.md")
         assert resolved == (config_dir / "prompts" / "system.md").resolve()
 
-    def test_dotenv_loaded_from_config_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_dotenv_loaded_from_config_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.delenv("DOTENV_ONLY_VAR", raising=False)
         (tmp_path / ".env").write_text("DOTENV_ONLY_VAR=value-from-dotenv\n")
         config_content = dedent("""\
@@ -214,7 +216,9 @@ class TestBiEvalsConfig:
         config = BiEvalsConfig.load(config_file)
         assert config.database.connection.account == "value-from-dotenv"
 
-    def test_dotenv_does_not_override_shell(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_dotenv_does_not_override_shell(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("DOTENV_PRIORITY", "from-shell")
         (tmp_path / ".env").write_text("DOTENV_PRIORITY=from-dotenv-file\n")
         config_content = dedent("""\
@@ -234,7 +238,9 @@ class TestBiEvalsConfig:
         config = BiEvalsConfig.load(config_file)
         assert config.database.connection.account == "from-shell"
 
-    def test_env_var_resolution(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_env_var_resolution(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("TEST_ACCOUNT", "my-snowflake-account")
         config_content = dedent("""\
             project:

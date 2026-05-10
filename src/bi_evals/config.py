@@ -67,7 +67,8 @@ def _construct_mapping_strict(
 ) -> dict[Any, Any]:
     if not isinstance(node, yaml.MappingNode):
         raise yaml.constructor.ConstructorError(
-            None, None,
+            None,
+            None,
             f"expected a mapping node, but found {node.id}",
             node.start_mark,
         )

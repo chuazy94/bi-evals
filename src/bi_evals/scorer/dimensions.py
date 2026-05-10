@@ -28,21 +28,28 @@ class DimensionResult:
 
 def _skip(name: str, reason: str) -> DimensionResult:
     """Auto-pass a dimension that doesn't apply."""
-    return DimensionResult(name=name, passed=True, score=1.0, reason=f"skipped: {reason}")
+    return DimensionResult(
+        name=name, passed=True, score=1.0, reason=f"skipped: {reason}"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Dimension 1: Execution
 # ---------------------------------------------------------------------------
 
+
 def check_execution(generated: QueryResult) -> DimensionResult:
     if generated.success:
         return DimensionResult(
-            name="execution", passed=True, score=1.0,
+            name="execution",
+            passed=True,
+            score=1.0,
             reason=f"SQL executed successfully, returned {generated.row_count} rows",
         )
     return DimensionResult(
-        name="execution", passed=False, score=0.0,
+        name="execution",
+        passed=False,
+        score=0.0,
         reason=f"SQL execution failed: {generated.error}",
     )
 
@@ -51,13 +58,16 @@ def check_execution(generated: QueryResult) -> DimensionResult:
 # Dimension 2: Table Alignment
 # ---------------------------------------------------------------------------
 
+
 def check_table_alignment(generated_sql: str, reference_sql: str) -> DimensionResult:
     try:
         gen_tables = extract_tables(generated_sql)
         ref_tables = extract_tables(reference_sql)
     except Exception as e:
         return DimensionResult(
-            name="table_alignment", passed=False, score=0.0,
+            name="table_alignment",
+            passed=False,
+            score=0.0,
             reason=f"SQL parse error: {e}",
         )
 
@@ -67,11 +77,15 @@ def check_table_alignment(generated_sql: str, reference_sql: str) -> DimensionRe
     missing = ref_tables - gen_tables
     if not missing:
         return DimensionResult(
-            name="table_alignment", passed=True, score=1.0,
+            name="table_alignment",
+            passed=True,
+            score=1.0,
             reason=f"All reference tables present: {sorted(ref_tables)}",
         )
     return DimensionResult(
-        name="table_alignment", passed=False, score=0.0,
+        name="table_alignment",
+        passed=False,
+        score=0.0,
         reason=f"Missing tables: {sorted(missing)}",
     )
 
@@ -79,6 +93,7 @@ def check_table_alignment(generated_sql: str, reference_sql: str) -> DimensionRe
 # ---------------------------------------------------------------------------
 # Dimension 3: Column Alignment
 # ---------------------------------------------------------------------------
+
 
 def check_column_alignment(generated_sql: str, golden: GoldenTest) -> DimensionResult:
     """Check that the generated SQL references the required source columns.
@@ -94,18 +109,24 @@ def check_column_alignment(generated_sql: str, golden: GoldenTest) -> DimensionR
         gen_cols = extract_select_columns(generated_sql)
     except Exception as e:
         return DimensionResult(
-            name="column_alignment", passed=False, score=0.0,
+            name="column_alignment",
+            passed=False,
+            score=0.0,
             reason=f"SQL parse error: {e}",
         )
 
     missing = required - gen_cols
     if not missing:
         return DimensionResult(
-            name="column_alignment", passed=True, score=1.0,
+            name="column_alignment",
+            passed=True,
+            score=1.0,
             reason=f"All required source columns present: {sorted(required)}",
         )
     return DimensionResult(
-        name="column_alignment", passed=False, score=0.0,
+        name="column_alignment",
+        passed=False,
+        score=0.0,
         reason=f"Missing required source columns: {sorted(missing)}",
     )
 
@@ -114,13 +135,16 @@ def check_column_alignment(generated_sql: str, golden: GoldenTest) -> DimensionR
 # Dimension 4: Filter Correctness
 # ---------------------------------------------------------------------------
 
+
 def check_filter_correctness(generated_sql: str, reference_sql: str) -> DimensionResult:
     try:
         gen_filters = extract_filter_columns(generated_sql)
         ref_filters = extract_filter_columns(reference_sql)
     except Exception as e:
         return DimensionResult(
-            name="filter_correctness", passed=False, score=0.0,
+            name="filter_correctness",
+            passed=False,
+            score=0.0,
             reason=f"SQL parse error: {e}",
         )
 
@@ -129,7 +153,9 @@ def check_filter_correctness(generated_sql: str, reference_sql: str) -> Dimensio
 
     if gen_filters == ref_filters:
         return DimensionResult(
-            name="filter_correctness", passed=True, score=1.0,
+            name="filter_correctness",
+            passed=True,
+            score=1.0,
             reason=f"Filter structure matches: {sorted(ref_filters)}",
         )
 
@@ -141,7 +167,9 @@ def check_filter_correctness(generated_sql: str, reference_sql: str) -> Dimensio
     if extra:
         parts.append(f"extra filters: {sorted(extra)}")
     return DimensionResult(
-        name="filter_correctness", passed=False, score=0.0,
+        name="filter_correctness",
+        passed=False,
+        score=0.0,
         reason="; ".join(parts),
     )
 
@@ -149,6 +177,7 @@ def check_filter_correctness(generated_sql: str, reference_sql: str) -> Dimensio
 # ---------------------------------------------------------------------------
 # Dimension 5: Row Completeness
 # ---------------------------------------------------------------------------
+
 
 def _normalize_value(v: Any, tolerance: float) -> Any:
     """Normalize a value for comparison."""
@@ -182,7 +211,9 @@ def check_row_completeness(
 
     if not reference.success:
         return DimensionResult(
-            name="row_completeness", passed=False, score=0.0,
+            name="row_completeness",
+            passed=False,
+            score=0.0,
             reason="Reference SQL failed — cannot compare rows",
         )
 
@@ -201,7 +232,9 @@ def check_row_completeness(
     passed = ratio >= threshold
 
     return DimensionResult(
-        name="row_completeness", passed=passed, score=1.0 if passed else 0.0,
+        name="row_completeness",
+        passed=passed,
+        score=1.0 if passed else 0.0,
         reason=f"{found}/{len(ref_keys)} reference rows found ({ratio:.1%}), threshold {threshold:.0%}",
     )
 
@@ -209,6 +242,7 @@ def check_row_completeness(
 # ---------------------------------------------------------------------------
 # Dimension 6: Row Precision
 # ---------------------------------------------------------------------------
+
 
 def check_row_precision(
     generated: QueryResult,
@@ -222,7 +256,9 @@ def check_row_precision(
 
     if not reference.success:
         return DimensionResult(
-            name="row_precision", passed=False, score=0.0,
+            name="row_precision",
+            passed=False,
+            score=0.0,
             reason="Reference SQL failed — cannot compare rows",
         )
 
@@ -241,7 +277,9 @@ def check_row_precision(
     passed = ratio >= threshold
 
     return DimensionResult(
-        name="row_precision", passed=passed, score=1.0 if passed else 0.0,
+        name="row_precision",
+        passed=passed,
+        score=1.0 if passed else 0.0,
         reason=f"{matched}/{len(gen_keys)} generated rows match reference ({ratio:.1%}), threshold {threshold:.0%}",
     )
 
@@ -249,6 +287,7 @@ def check_row_precision(
 # ---------------------------------------------------------------------------
 # Dimension 7: Value Accuracy
 # ---------------------------------------------------------------------------
+
 
 def _build_column_map(
     ref_columns: list[str],
@@ -279,7 +318,9 @@ def check_value_accuracy(
 
     if not reference.success:
         return DimensionResult(
-            name="value_accuracy", passed=False, score=0.0,
+            name="value_accuracy",
+            passed=False,
+            score=0.0,
             reason="Reference SQL failed — cannot compare values",
         )
 
@@ -323,17 +364,23 @@ def check_value_accuracy(
 
     if matched_count == 0:
         return DimensionResult(
-            name="value_accuracy", passed=False, score=0.0,
+            name="value_accuracy",
+            passed=False,
+            score=0.0,
             reason="No matching rows found to compare values",
         )
 
     if not mismatches:
         return DimensionResult(
-            name="value_accuracy", passed=True, score=1.0,
+            name="value_accuracy",
+            passed=True,
+            score=1.0,
             reason=f"All values match within tolerance ({tolerance}) across {matched_count} matched rows",
         )
     return DimensionResult(
-        name="value_accuracy", passed=False, score=0.0,
+        name="value_accuracy",
+        passed=False,
+        score=0.0,
         reason=f"Value mismatches: {'; '.join(mismatches[:10])}",
     )
 
@@ -342,8 +389,10 @@ def check_value_accuracy(
 # Dimension 8: No Hallucinated Columns
 # ---------------------------------------------------------------------------
 
+
 def check_no_hallucinated_columns(
-    generated_sql: str, reference_sql: str,
+    generated_sql: str,
+    reference_sql: str,
 ) -> DimensionResult:
     """Check the generated SQL doesn't reference source columns absent from the reference.
 
@@ -354,7 +403,9 @@ def check_no_hallucinated_columns(
         ref_cols = extract_select_columns(reference_sql)
     except Exception as e:
         return DimensionResult(
-            name="no_hallucinated_columns", passed=False, score=0.0,
+            name="no_hallucinated_columns",
+            passed=False,
+            score=0.0,
             reason=f"SQL parse error: {e}",
         )
 
@@ -364,11 +415,15 @@ def check_no_hallucinated_columns(
     extra = gen_cols - ref_cols
     if not extra:
         return DimensionResult(
-            name="no_hallucinated_columns", passed=True, score=1.0,
+            name="no_hallucinated_columns",
+            passed=True,
+            score=1.0,
             reason="No hallucinated source columns beyond reference",
         )
     return DimensionResult(
-        name="no_hallucinated_columns", passed=False, score=0.0,
+        name="no_hallucinated_columns",
+        passed=False,
+        score=0.0,
         reason=f"Hallucinated source columns: {sorted(extra)}",
     )
 
@@ -419,7 +474,8 @@ def _check_anti_patterns(sql: str, patterns: AntiPatterns) -> list[str]:
 
 
 def check_anti_pattern_compliance(
-    generated_sql: str, golden: GoldenTest,
+    generated_sql: str,
+    golden: GoldenTest,
 ) -> DimensionResult:
     """Fail when the generated SQL uses any forbidden table or column.
 
@@ -435,11 +491,15 @@ def check_anti_pattern_compliance(
     violations = _check_anti_patterns(generated_sql, patterns)
     if violations:
         return DimensionResult(
-            name="anti_pattern_compliance", passed=False, score=0.0,
+            name="anti_pattern_compliance",
+            passed=False,
+            score=0.0,
             reason="; ".join(violations),
         )
     return DimensionResult(
-        name="anti_pattern_compliance", passed=True, score=1.0,
+        name="anti_pattern_compliance",
+        passed=True,
+        score=1.0,
         reason="no forbidden tables/columns used",
     )
 
@@ -448,17 +508,17 @@ def check_anti_pattern_compliance(
 # Dimension 9: Skill Path Correctness
 # ---------------------------------------------------------------------------
 
+
 def check_skill_path_correctness(
-    trace: list[dict], golden: GoldenTest,
+    trace: list[dict],
+    golden: GoldenTest,
 ) -> DimensionResult:
     esp = golden.expected_skill_path
     if not esp.required_skills:
         return _skip("skill_path_correctness", "no required_skills defined")
 
     # Extract tool-use steps from trace
-    tool_steps = [
-        s for s in trace if s.get("type") == "tool_use"
-    ]
+    tool_steps = [s for s in trace if s.get("type") == "tool_use"]
 
     matched_indices: list[int] = []
     missing: list[str] = []
@@ -480,18 +540,24 @@ def check_skill_path_correctness(
 
     if missing:
         return DimensionResult(
-            name="skill_path_correctness", passed=False, score=0.0,
+            name="skill_path_correctness",
+            passed=False,
+            score=0.0,
             reason=f"Missing skill invocations: {', '.join(missing)}",
         )
 
     # Check sequence if required
     if esp.sequence_matters and matched_indices != sorted(matched_indices):
         return DimensionResult(
-            name="skill_path_correctness", passed=False, score=0.0,
+            name="skill_path_correctness",
+            passed=False,
+            score=0.0,
             reason="Skills invoked out of expected order",
         )
 
     return DimensionResult(
-        name="skill_path_correctness", passed=True, score=1.0,
+        name="skill_path_correctness",
+        passed=True,
+        score=1.0,
         reason=f"All {len(esp.required_skills)} required skills invoked correctly",
     )

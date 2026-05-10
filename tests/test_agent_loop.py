@@ -8,7 +8,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bi_evals.provider.agent_loop import AgentResult, TraceStep, extract_sql, run_agent_loop
+from bi_evals.provider.agent_loop import (
+    AgentResult,
+    TraceStep,
+    extract_sql,
+    run_agent_loop,
+)
 from bi_evals.provider.cost import calculate_cost
 from bi_evals.tools.file_reader import FileReaderTool
 
@@ -44,10 +49,7 @@ class TestExtractSql:
         assert extract_sql(text) is None
 
     def test_prefers_sql_fence_over_bare(self) -> None:
-        text = (
-            "Some preamble with SELECT noise\n"
-            "```sql\nSELECT id FROM real_query\n```"
-        )
+        text = "Some preamble with SELECT noise\n```sql\nSELECT id FROM real_query\n```"
         assert extract_sql(text) == "SELECT id FROM real_query"
 
     def test_case_insensitive(self) -> None:
@@ -98,8 +100,13 @@ class TestAgentResult:
             final_text="done",
             extracted_sql="SELECT 1",
             trace=[
-                TraceStep(round=1, type="tool_use", tool_name="read_skill_file",
-                          tool_input={"path": "SKILL.md"}, tool_result_preview="content"),
+                TraceStep(
+                    round=1,
+                    type="tool_use",
+                    tool_name="read_skill_file",
+                    tool_input={"path": "SKILL.md"},
+                    tool_result_preview="content",
+                ),
                 TraceStep(round=2, type="text", text="generating SQL"),
             ],
         )
@@ -130,14 +137,18 @@ def _make_tool_use_block(id: str, name: str, input: dict) -> Any:
     return block
 
 
-def _make_response(content: list, input_tokens: int = 100, output_tokens: int = 50) -> Any:
+def _make_response(
+    content: list, input_tokens: int = 100, output_tokens: int = 50
+) -> Any:
     """Create a mock Anthropic response."""
     response = MagicMock()
     response.content = content
     response.usage = MagicMock()
     response.usage.input_tokens = input_tokens
     response.usage.output_tokens = output_tokens
-    response.stop_reason = "end_turn" if not any(b.type == "tool_use" for b in content) else "tool_use"
+    response.stop_reason = (
+        "end_turn" if not any(b.type == "tool_use" for b in content) else "tool_use"
+    )
     return response
 
 
@@ -146,7 +157,9 @@ class TestRunAgentLoop:
         """Create a FileReaderTool with a test file."""
         skill_dir = tmp_path / "skill"
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text("# Routing table\nUse REVENUE.md for revenue questions.")
+        (skill_dir / "SKILL.md").write_text(
+            "# Routing table\nUse REVENUE.md for revenue questions."
+        )
         (skill_dir / "REVENUE.md").write_text("# Revenue\nUse V_UNIFIED_REVENUE table.")
         return FileReaderTool(tool_name="read_skill_file", base_dir=skill_dir)
 
@@ -196,7 +209,9 @@ class TestRunAgentLoop:
         round2_response = _make_response(
             [
                 _make_text_block("Now reading revenue knowledge."),
-                _make_tool_use_block("call_2", "read_skill_file", {"path": "REVENUE.md"}),
+                _make_tool_use_block(
+                    "call_2", "read_skill_file", {"path": "REVENUE.md"}
+                ),
             ],
         )
         # Round 3: agent returns final SQL

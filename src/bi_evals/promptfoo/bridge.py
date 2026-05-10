@@ -83,8 +83,10 @@ def generate_promptfoo_config(
     # Multi-model: one provider block per model in agent.models. Each carries a
     # label so Promptfoo's per-trial `provider.label` identifies the model at
     # ingest time.
-    models = list(config.agent.models) if config.agent.models else (
-        [config.agent.model] if config.agent.model else [""]
+    models = (
+        list(config.agent.models)
+        if config.agent.models
+        else ([config.agent.model] if config.agent.model else [""])
     )
     providers = []
     for model in models:
@@ -139,9 +141,13 @@ def run_promptfoo(
         )
 
     cmd = [
-        "npx", "promptfoo", "eval",
-        "--config", str(config_path),
-        "--output", str(results_path),
+        "npx",
+        "promptfoo",
+        "eval",
+        "--config",
+        str(config_path),
+        "--output",
+        str(results_path),
     ]
     if verbose:
         cmd.append("--verbose")

@@ -45,7 +45,9 @@ class DescribeTableTool:
         if not table_name:
             return "Error: table_name is required."
 
-        allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.")
+        allowed = set(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_."
+        )
         if not all(c in allowed for c in table_name):
             return f"Error: invalid table name '{table_name}'."
 

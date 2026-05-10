@@ -62,7 +62,9 @@ def _run_api_endpoint(prompt: str, config: BiEvalsConfig) -> AgentResult | str:
     return call_api_endpoint(question=prompt, endpoint_config=endpoint)
 
 
-def call_api(prompt: str, options: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+def call_api(
+    prompt: str, options: dict[str, Any], context: dict[str, Any]
+) -> dict[str, Any]:
     """Promptfoo Python provider entry point.
 
     Dispatches to the configured agent type:
@@ -91,7 +93,9 @@ def call_api(prompt: str, options: dict[str, Any], context: dict[str, Any]) -> d
     elif agent_type == "api_endpoint":
         result = _run_api_endpoint(prompt, config)
     else:
-        return {"error": f"Unknown agent type: '{agent_type}'. Use 'anthropic_tool_loop' or 'api_endpoint'."}
+        return {
+            "error": f"Unknown agent type: '{agent_type}'. Use 'anthropic_tool_loop' or 'api_endpoint'."
+        }
 
     # Handle error strings
     if isinstance(result, str):
@@ -145,5 +149,3 @@ def call_api(prompt: str, options: dict[str, Any], context: dict[str, Any]) -> d
             "latency_ms": result.latency_ms,
         },
     }
-
-

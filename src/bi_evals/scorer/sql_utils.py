@@ -89,9 +89,7 @@ def extract_columns_with_tables(
 
         # Names defined as CTEs anywhere in the statement. Columns against
         # these are laundered — owner unknown.
-        cte_names = {
-            cte.alias.upper() for cte in stmt.find_all(exp.CTE) if cte.alias
-        }
+        cte_names = {cte.alias.upper() for cte in stmt.find_all(exp.CTE) if cte.alias}
 
         # Process each SELECT in its own alias scope. A scope's tables are the
         # ones in its own FROM/JOIN clauses, not the whole statement — that
@@ -160,7 +158,9 @@ def extract_columns_with_tables(
     return pairs
 
 
-def extract_filter_columns(sql: str, dialect: str = "snowflake") -> set[tuple[str, str]]:
+def extract_filter_columns(
+    sql: str, dialect: str = "snowflake"
+) -> set[tuple[str, str]]:
     """Extract (column_name, operator) pairs from WHERE clauses.
 
     Returns uppercase column names paired with operator class names.
@@ -175,7 +175,17 @@ def extract_filter_columns(sql: str, dialect: str = "snowflake") -> set[tuple[st
                 parent = col.parent
                 if isinstance(
                     parent,
-                    (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.Like, exp.In, exp.Is),
+                    (
+                        exp.EQ,
+                        exp.NEQ,
+                        exp.GT,
+                        exp.GTE,
+                        exp.LT,
+                        exp.LTE,
+                        exp.Like,
+                        exp.In,
+                        exp.Is,
+                    ),
                 ):
                     op_name = type(parent).__name__.upper()
                     filters.add((col.name.upper(), op_name))

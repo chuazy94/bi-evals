@@ -43,7 +43,9 @@ class TestQueryResult:
 class TestSnowflakeClient:
     @patch("bi_evals.db.snowflake._load_private_key", return_value=b"fake-der-key")
     @patch("bi_evals.db.snowflake.snowflake.connector.connect")
-    def test_execute_success(self, mock_connect: MagicMock, mock_key: MagicMock, db_config: DatabaseConfig) -> None:
+    def test_execute_success(
+        self, mock_connect: MagicMock, mock_key: MagicMock, db_config: DatabaseConfig
+    ) -> None:
         mock_cursor = MagicMock()
         mock_cursor.description = [("name",), ("value",)]
         mock_cursor.fetchall.return_value = [("alice", 100), ("bob", 200)]
@@ -60,7 +62,9 @@ class TestSnowflakeClient:
 
     @patch("bi_evals.db.snowflake._load_private_key", return_value=b"fake-der-key")
     @patch("bi_evals.db.snowflake.snowflake.connector.connect")
-    def test_execute_sql_error(self, mock_connect: MagicMock, mock_key: MagicMock, db_config: DatabaseConfig) -> None:
+    def test_execute_sql_error(
+        self, mock_connect: MagicMock, mock_key: MagicMock, db_config: DatabaseConfig
+    ) -> None:
         from snowflake.connector.errors import ProgrammingError
 
         mock_cursor = MagicMock()
@@ -75,14 +79,18 @@ class TestSnowflakeClient:
 
     @patch("bi_evals.db.snowflake._load_private_key", return_value=b"fake-der-key")
     @patch("bi_evals.db.snowflake.snowflake.connector.connect")
-    def test_close(self, mock_connect: MagicMock, mock_key: MagicMock, db_config: DatabaseConfig) -> None:
+    def test_close(
+        self, mock_connect: MagicMock, mock_key: MagicMock, db_config: DatabaseConfig
+    ) -> None:
         client = SnowflakeClient(db_config)
         client.close()
         mock_connect.return_value.close.assert_called_once()
 
     @patch("bi_evals.db.snowflake._load_private_key", return_value=b"fake-der-key")
     @patch("bi_evals.db.snowflake.snowflake.connector.connect")
-    def test_connects_with_key_pair(self, mock_connect: MagicMock, mock_key: MagicMock, db_config: DatabaseConfig) -> None:
+    def test_connects_with_key_pair(
+        self, mock_connect: MagicMock, mock_key: MagicMock, db_config: DatabaseConfig
+    ) -> None:
         SnowflakeClient(db_config)
         mock_key.assert_called_once_with("/path/to/key.p8", "")
         mock_connect.assert_called_once_with(
@@ -96,7 +104,9 @@ class TestSnowflakeClient:
 
     @patch("bi_evals.db.snowflake._load_private_key", return_value=b"fake-der-key")
     @patch("bi_evals.db.snowflake.snowflake.connector.connect")
-    def test_satisfies_protocol(self, mock_connect: MagicMock, mock_key: MagicMock, db_config: DatabaseConfig) -> None:
+    def test_satisfies_protocol(
+        self, mock_connect: MagicMock, mock_key: MagicMock, db_config: DatabaseConfig
+    ) -> None:
         client = SnowflakeClient(db_config)
         assert isinstance(client, DatabaseClient)
 
@@ -119,7 +129,9 @@ class TestSnowflakeClient:
 class TestFactory:
     @patch("bi_evals.db.snowflake._load_private_key", return_value=b"fake-der-key")
     @patch("bi_evals.db.snowflake.snowflake.connector.connect")
-    def test_create_snowflake(self, mock_connect: MagicMock, mock_key: MagicMock, db_config: DatabaseConfig) -> None:
+    def test_create_snowflake(
+        self, mock_connect: MagicMock, mock_key: MagicMock, db_config: DatabaseConfig
+    ) -> None:
         client = create_db_client(db_config)
         assert isinstance(client, SnowflakeClient)
 

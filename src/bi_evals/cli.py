@@ -55,20 +55,39 @@ def init(target_dir: str) -> None:
     click.echo(f"Scaffolded bi-evals project in {target}")
     click.echo()
     click.echo("Next steps:")
-    click.echo("  1. Edit bi-evals.yaml — point agent.tools[].config.base_dir to your skill/knowledge files")
+    click.echo(
+        "  1. Edit bi-evals.yaml — point agent.tools[].config.base_dir to your skill/knowledge files"
+    )
     click.echo("  2. Edit bi-evals.yaml — configure your database connection")
     click.echo("  3. Create golden tests in golden/")
-    click.echo("  4. Edit .env with your API keys and Snowflake credentials (next to bi-evals.yaml; loaded automatically)")
+    click.echo(
+        "  4. Edit .env with your API keys and Snowflake credentials (next to bi-evals.yaml; loaded automatically)"
+    )
     click.echo("  5. Run: bi-evals run")
 
 
 @cli.command()
-@click.option("--filter", "-f", "filter_pattern", help="Run only tests matching pattern.")
-@click.option("--dry-run", is_flag=True, help="Generate promptfoo config without running.")
+@click.option(
+    "--filter", "-f", "filter_pattern", help="Run only tests matching pattern."
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Generate promptfoo config without running."
+)
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose Promptfoo output.")
-@click.option("--no-cache", is_flag=True, help="Disable Promptfoo provider cache (force fresh API calls).")
-@click.option("--repeats", type=int, default=None, help="Override scoring.repeats: run each golden N times.")
-@click.option("--yes", "-y", is_flag=True, help="Skip cost-estimate confirmation prompt.")
+@click.option(
+    "--no-cache",
+    is_flag=True,
+    help="Disable Promptfoo provider cache (force fresh API calls).",
+)
+@click.option(
+    "--repeats",
+    type=int,
+    default=None,
+    help="Override scoring.repeats: run each golden N times.",
+)
+@click.option(
+    "--yes", "-y", is_flag=True, help="Skip cost-estimate confirmation prompt."
+)
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -101,7 +120,11 @@ def run(
     _warn_stale_goldens(config, filter_pattern)
     _warn_stale_knowledge(config)
 
-    models = list(config.agent.models) if config.agent.models else ([config.agent.model] if config.agent.model else [])
+    models = (
+        list(config.agent.models)
+        if config.agent.models
+        else ([config.agent.model] if config.agent.model else [])
+    )
     total_trials = test_count * max(1, len(models)) * max(1, config.scoring.repeats)
 
     click.echo(f"Project: {config.project.name}")
@@ -111,7 +134,9 @@ def run(
     if config.scoring.repeats > 1:
         click.echo(f"Repeats: {config.scoring.repeats}")
     if total_trials > test_count:
-        click.echo(f"Trials:  {total_trials} (cost multiplier: {total_trials / test_count:.1f}x)")
+        click.echo(
+            f"Trials:  {total_trials} (cost multiplier: {total_trials / test_count:.1f}x)"
+        )
         if not yes and not dry_run:
             if not click.confirm("Proceed?", default=True):
                 raise click.Abort()
@@ -150,7 +175,8 @@ def run(
             with store_connect(db_path) as conn:
                 run_id = ingest_run(conn, results_output, config)
                 alert = store_queries.cost_alerts(
-                    conn, run_id,
+                    conn,
+                    run_id,
                     multiplier=config.storage.cost_alert_multiplier,
                     window=config.storage.cost_alert_window,
                 )
@@ -234,7 +260,9 @@ def ingest(ctx: click.Context, eval_json_path: str, force: bool) -> None:
 
 @cli.command()
 @click.option("--run-id", help="Specific run (default: latest in DB).")
-@click.option("--out", "out_path", type=click.Path(dir_okay=False), help="Output HTML path.")
+@click.option(
+    "--out", "out_path", type=click.Path(dir_okay=False), help="Output HTML path."
+)
 @click.pass_context
 def report(ctx: click.Context, run_id: str | None, out_path: str | None) -> None:
     """Generate an HTML summary report from the ingested run."""
@@ -254,7 +282,8 @@ def report(ctx: click.Context, run_id: str | None, out_path: str | None) -> None
             )
         try:
             html = build_report_html(
-                conn, rid,
+                conn,
+                rid,
                 stale_after_days=config.scoring.stale_after_days,
                 cost_alert_multiplier=config.storage.cost_alert_multiplier,
                 cost_alert_window=config.storage.cost_alert_window,
@@ -268,7 +297,9 @@ def report(ctx: click.Context, run_id: str | None, out_path: str | None) -> None
                 f"Run '{rid}' not found in DB. Ingest it with `bi-evals ingest <eval_json>`."
             )
 
-    out = _resolve_report_output(config, out_path, f"report_{sanitize_for_filename(rid)}.html")
+    out = _resolve_report_output(
+        config, out_path, f"report_{sanitize_for_filename(rid)}.html"
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html)
     click.echo(f"Report: {out}")
@@ -277,7 +308,9 @@ def report(ctx: click.Context, run_id: str | None, out_path: str | None) -> None
 @cli.command()
 @click.argument("run_a")
 @click.argument("run_b")
-@click.option("--out", "out_path", type=click.Path(dir_okay=False), help="Output HTML path.")
+@click.option(
+    "--out", "out_path", type=click.Path(dir_okay=False), help="Output HTML path."
+)
 @click.pass_context
 def compare(ctx: click.Context, run_a: str, run_b: str, out_path: str | None) -> None:
     """Compare two runs (by run-id, or shortcuts 'latest' / 'prev')."""
@@ -294,13 +327,17 @@ def compare(ctx: click.Context, run_a: str, run_b: str, out_path: str | None) ->
         b_id = _resolve_run_ref(conn, run_b)
         try:
             html = build_compare_html(
-                conn, a_id, b_id,
+                conn,
+                a_id,
+                b_id,
                 regression_threshold=config.compare.regression_threshold,
             )
         except KeyError as e:
             raise click.ClickException(str(e))
 
-    filename = f"compare_{sanitize_for_filename(a_id)}__vs__{sanitize_for_filename(b_id)}.html"
+    filename = (
+        f"compare_{sanitize_for_filename(a_id)}__vs__{sanitize_for_filename(b_id)}.html"
+    )
     out = _resolve_report_output(config, out_path, filename)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html)
@@ -322,14 +359,18 @@ def _resolve_run_ref(conn, ref: str) -> str:
     return ref
 
 
-def _resolve_report_output(config: BiEvalsConfig, out_path: str | None, default_name: str) -> Path:
+def _resolve_report_output(
+    config: BiEvalsConfig, out_path: str | None, default_name: str
+) -> Path:
     if out_path:
         return Path(out_path).resolve()
     return config.resolve_path(config.reporting.output_dir) / default_name
 
 
 @cli.command()
-@click.option("--last-n", "last_n", default=10, help="Number of recent runs to consider.")
+@click.option(
+    "--last-n", "last_n", default=10, help="Number of recent runs to consider."
+)
 @click.option("--limit", default=20, help="Maximum tests to list.")
 @click.pass_context
 def flakiness(ctx: click.Context, last_n: int, limit: int) -> None:
@@ -353,8 +394,10 @@ def flakiness(ctx: click.Context, last_n: int, limit: int) -> None:
     click.echo("-" * 90)
     for s in results:
         streak = (
-            f"{s.current_streak} pass" if s.current_streak > 0
-            else f"{-s.current_streak} fail" if s.current_streak < 0
+            f"{s.current_streak} pass"
+            if s.current_streak > 0
+            else f"{-s.current_streak} fail"
+            if s.current_streak < 0
             else "—"
         )
         click.echo(
@@ -364,7 +407,9 @@ def flakiness(ctx: click.Context, last_n: int, limit: int) -> None:
 
 
 @cli.command()
-@click.option("--last-n", "last_n", default=20, help="Number of recent runs to inspect.")
+@click.option(
+    "--last-n", "last_n", default=20, help="Number of recent runs to inspect."
+)
 @click.pass_context
 def cost(ctx: click.Context, last_n: int) -> None:
     """List recent runs with their cost multiplier vs. prior median."""
@@ -386,7 +431,9 @@ def cost(ctx: click.Context, last_n: int) -> None:
     click.echo(f"{'RUN':<40}  {'COST':>8}  {'MULT':>5}  STATUS")
     click.echo("-" * 72)
     for run, mult in rows:
-        cost_str = f"${run.total_cost_usd:.4f}" if run.total_cost_usd is not None else "—"
+        cost_str = (
+            f"${run.total_cost_usd:.4f}" if run.total_cost_usd is not None else "—"
+        )
         if mult <= 0:
             status = "(insufficient history)"
         elif mult >= threshold:
@@ -433,7 +480,9 @@ def _warn_stale_goldens(config: BiEvalsConfig, filter_pattern: str | None) -> No
     stale.sort(key=lambda x: -x[2])
 
     if stale:
-        click.echo(f"\n⚠  {len(stale)} golden(s) stale (last verified > {threshold} days ago):")
+        click.echo(
+            f"\n⚠  {len(stale)} golden(s) stale (last verified > {threshold} days ago):"
+        )
         for path, last, days in stale[:10]:
             click.echo(f"   - {path}  verified {last} ({days} days ago)")
     if unverified:
@@ -463,7 +512,8 @@ def _warn_stale_knowledge(config: BiEvalsConfig) -> None:
             if latest is None:
                 return
             stale = store_queries.stale_knowledge_files(
-                conn, latest,
+                conn,
+                latest,
                 base_dir=config._base_dir,
                 stale_after_days=threshold,
             )
@@ -476,7 +526,9 @@ def _warn_stale_knowledge(config: BiEvalsConfig) -> None:
         f"(mtime > {threshold} days ago, read in last run):"
     )
     for f in stale[:10]:
-        click.echo(f"   - {f.path}  modified {f.mtime} ({f.days_since_modified} days ago)")
+        click.echo(
+            f"   - {f.path}  modified {f.mtime} ({f.days_since_modified} days ago)"
+        )
     click.echo("\nProceeding with eval (warning only).\n")
 
 
@@ -490,7 +542,9 @@ def _echo_cost_alert(alert: store_queries.CostAlert) -> None:
         click.echo("   Anomalous tests:")
         for tid, actual, median in alert.anomalous_tests[:5]:
             mult = (actual / median) if median else 0.0
-            click.echo(f"     - {tid}: ${actual:.4f} vs median ${median:.4f} ({mult:.1f}×)")
+            click.echo(
+                f"     - {tid}: ${actual:.4f} vs median ${median:.4f} ({mult:.1f}×)"
+            )
 
 
 def _scaffold_project(target: Path) -> None:

@@ -22,15 +22,24 @@ from bi_evals.store import queries as q
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 VERDICT_META = {
-    Verdict.GREEN: {"emoji": "🟢", "class": "green",
-                     "headline": "No regressions",
-                     "sub": "All tests that passed before still pass."},
-    Verdict.AMBER: {"emoji": "🟡", "class": "amber",
-                     "headline": "Mixed changes",
-                     "sub": "No regressions, but some scores, fixes, or test set drift to review."},
-    Verdict.RED:   {"emoji": "🔴", "class": "red",
-                     "headline": "Regressions detected",
-                     "sub": "One or more tests (or critical dimensions) regressed."},
+    Verdict.GREEN: {
+        "emoji": "🟢",
+        "class": "green",
+        "headline": "No regressions",
+        "sub": "All tests that passed before still pass.",
+    },
+    Verdict.AMBER: {
+        "emoji": "🟡",
+        "class": "amber",
+        "headline": "Mixed changes",
+        "sub": "No regressions, but some scores, fixes, or test set drift to review.",
+    },
+    Verdict.RED: {
+        "emoji": "🔴",
+        "class": "red",
+        "headline": "Regressions detected",
+        "sub": "One or more tests (or critical dimensions) regressed.",
+    },
 }
 
 
@@ -109,10 +118,7 @@ def compute_verdict_sentence(
 
     if fail_reason:
         return f"Failed: {fail_reason}"
-    return (
-        f"Failed: weighted score {score:.2f} below threshold "
-        f"{pass_threshold:.2f}"
-    )
+    return f"Failed: weighted score {score:.2f} below threshold {pass_threshold:.2f}"
 
 
 def build_report_html(
@@ -150,7 +156,8 @@ def build_report_html(
     filtered_tests = _apply_filters(all_tests, category=category, model=model)
     categories = (
         [c for c in categories_all if c.category == category]
-        if category else categories_all
+        if category
+        else categories_all
     )
 
     failed_tests = [t for t in filtered_tests if not t.passed]
@@ -163,7 +170,9 @@ def build_report_html(
 
     # Phase 6b: freshness + cost alert
     stale, unverified = q.stale_goldens(conn, run_id, stale_after_days=stale_after_days)
-    fresh_vs_stale = _fresh_vs_stale_pass_rates(conn, run_id, {g.test_id for g in stale})
+    fresh_vs_stale = _fresh_vs_stale_pass_rates(
+        conn, run_id, {g.test_id for g in stale}
+    )
     cost_alert = q.cost_alerts(
         conn, run_id, multiplier=cost_alert_multiplier, window=cost_alert_window
     )
@@ -172,7 +181,8 @@ def build_report_html(
     stale_knowledge: list = []
     if base_dir is not None and knowledge_stale_after_days > 0:
         stale_knowledge = q.stale_knowledge_files(
-            conn, run_id,
+            conn,
+            run_id,
             base_dir=base_dir,
             stale_after_days=knowledge_stale_after_days,
         )
@@ -255,14 +265,16 @@ def _build_failure_view(
         failed_dims = [d for d in dims if not d.passed]
         # Sort: critical failures first, then alphabetical
         failed_dims.sort(key=lambda d: (not d.is_critical, d.dimension))
-        out.append({
-            "test_id": t.test_id,
-            "category": t.category or "(uncategorized)",
-            "model": t.model or "",
-            "fail_reason": t.fail_reason or "",
-            "score": t.score,
-            "failed_dimensions": failed_dims,
-        })
+        out.append(
+            {
+                "test_id": t.test_id,
+                "category": t.category or "(uncategorized)",
+                "model": t.model or "",
+                "fail_reason": t.fail_reason or "",
+                "score": t.score,
+                "failed_dimensions": failed_dims,
+            }
+        )
     return out
 
 
@@ -335,9 +347,11 @@ def _quality_cost_scatter(summaries: list) -> str:
     width, height, pad = 560, 240, 40
     costs = [s.total_cost_usd for s in summaries]
     max_cost = max(costs) if max(costs) > 0 else 1.0
+
     # y-axis is 0..1 pass_rate
     def x(cost: float) -> float:
         return pad + (cost / max_cost) * (width - 2 * pad)
+
     def y(rate: float) -> float:
         return height - pad - rate * (height - 2 * pad)
 
@@ -345,7 +359,9 @@ def _quality_cost_scatter(summaries: list) -> str:
     labels = []
     for s in summaries:
         cx, cy = x(s.total_cost_usd), y(s.pass_rate)
-        points.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="5" class="scatter-dot" />')
+        points.append(
+            f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="5" class="scatter-dot" />'
+        )
         labels.append(
             f'<text x="{cx + 8:.1f}" y="{cy - 6:.1f}" class="scatter-label">{s.model}</text>'
         )
@@ -374,7 +390,9 @@ def build_compare_html(
 ) -> str:
     """Render the compare HTML for two runs."""
     diff = q.test_diff(conn, run_a_id, run_b_id)
-    critical = q.critical_dimensions(conn, run_b_id) or q.critical_dimensions(conn, run_a_id)
+    critical = q.critical_dimensions(conn, run_b_id) or q.critical_dimensions(
+        conn, run_a_id
+    )
 
     classified = classify_pairs(
         diff.pairs, critical, regression_threshold=regression_threshold
@@ -390,7 +408,11 @@ def build_compare_html(
     # annotation by intersecting each test's files_read (from run B) with the
     # set of modified/added/removed files between runs.
     prompt_changes = q.prompt_diff(conn, run_a_id, run_b_id)
-    changed_set = set(prompt_changes.added) | set(prompt_changes.removed) | set(prompt_changes.modified)
+    changed_set = (
+        set(prompt_changes.added)
+        | set(prompt_changes.removed)
+        | set(prompt_changes.modified)
+    )
     files_read_b = q.files_read_for_run(conn, run_b_id)
 
     # Show only tests whose state or score changed meaningfully.

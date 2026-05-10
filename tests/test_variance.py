@@ -31,7 +31,9 @@ def test_stddev_nonzero_for_mixed_values() -> None:
     assert result == pytest.approx(0.5)
 
 
-def _make_multi_trial_eval_json(base_json_path: Path, out_path: Path, repeats: int) -> Path:
+def _make_multi_trial_eval_json(
+    base_json_path: Path, out_path: Path, repeats: int
+) -> Path:
     """Synthesize a multi-trial eval JSON by duplicating each result entry.
 
     The first duplicate keeps the original success value; later duplicates
@@ -45,7 +47,7 @@ def _make_multi_trial_eval_json(base_json_path: Path, out_path: Path, repeats: i
             copy = json.loads(json.dumps(t))  # deep copy
             # Make trial 0 match original, later trials flip for first test only
             if idx == 0 and trial > 0:
-                copy["success"] = (trial % 2 == 0)
+                copy["success"] = trial % 2 == 0
                 copy["score"] = 1.0 if copy["success"] else 0.0
             new_results.append(copy)
     raw["results"]["results"] = new_results

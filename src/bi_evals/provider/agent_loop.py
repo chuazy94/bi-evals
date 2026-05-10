@@ -77,9 +77,7 @@ def extract_sql(text: str) -> str | None:
             return block
 
     # Strategy 3: bare SELECT statement
-    match = re.search(
-        r"(SELECT\b.+?)(?:;|\Z)", text, re.DOTALL | re.IGNORECASE
-    )
+    match = re.search(r"(SELECT\b.+?)(?:;|\Z)", text, re.DOTALL | re.IGNORECASE)
     if match:
         return match.group(1).strip()
 
@@ -182,13 +180,15 @@ def run_agent_loop(
                 result_text = tool.execute(block.input)
 
             # Track file reads
-            if block.name in tool_map and hasattr(tool, '_name'):
+            if block.name in tool_map and hasattr(tool, "_name"):
                 path_value = block.input.get("path", "")
                 if path_value:
                     files_read.append(path_value)
 
             # Truncate result for trace
-            preview = result_text[:500] + "..." if len(result_text) > 500 else result_text
+            preview = (
+                result_text[:500] + "..." if len(result_text) > 500 else result_text
+            )
 
             trace.append(
                 TraceStep(

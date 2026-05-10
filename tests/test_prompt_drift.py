@@ -73,9 +73,16 @@ def test_snapshot_resolves_files_via_file_reader_base_dir(tmp_path: Path) -> Non
     cfg._base_dir = tmp_path
     # Replace tools so only one file_reader exists, pointing at the skill dir.
     from bi_evals.config import ToolConfig
-    cfg.agent.tools = [ToolConfig(name="file_reader", type="file_reader", config={"base_dir": "skills/covid"})]
 
-    trials = [_trial_with_files(["SKILL.md"])]  # bare relative path, like the real agent
+    cfg.agent.tools = [
+        ToolConfig(
+            name="file_reader", type="file_reader", config={"base_dir": "skills/covid"}
+        )
+    ]
+
+    trials = [
+        _trial_with_files(["SKILL.md"])
+    ]  # bare relative path, like the real agent
     snap = json.loads(_build_prompt_snapshot(trials, cfg))
 
     # Hash should populate (not None), proving we found the file via the tool's base_dir.
@@ -117,6 +124,7 @@ def test_prompt_diff_empty_when_one_side_predates_6b() -> None:
 
     conn = duckdb.connect(":memory:")
     from bi_evals.store.schema import ensure_schema
+
     ensure_schema(conn)
 
     snap_b = json.dumps({"skills/SKILL.md": {"sha256": "aaa", "size": 10, "mtime": 1}})
@@ -148,18 +156,23 @@ def test_prompt_diff_buckets_changes_correctly() -> None:
 
     conn = duckdb.connect(":memory:")
     from bi_evals.store.schema import ensure_schema
+
     ensure_schema(conn)
 
-    snap_a = json.dumps({
-        "skills/SKILL.md": {"sha256": "aaa", "size": 10, "mtime": 1},
-        "skills/UNCHANGED.md": {"sha256": "ccc", "size": 5, "mtime": 1},
-        "skills/REMOVED.md": {"sha256": "ddd", "size": 7, "mtime": 1},
-    })
-    snap_b = json.dumps({
-        "skills/SKILL.md": {"sha256": "bbb", "size": 11, "mtime": 2},  # modified
-        "skills/UNCHANGED.md": {"sha256": "ccc", "size": 5, "mtime": 1},
-        "skills/ADDED.md": {"sha256": "eee", "size": 4, "mtime": 2},  # added
-    })
+    snap_a = json.dumps(
+        {
+            "skills/SKILL.md": {"sha256": "aaa", "size": 10, "mtime": 1},
+            "skills/UNCHANGED.md": {"sha256": "ccc", "size": 5, "mtime": 1},
+            "skills/REMOVED.md": {"sha256": "ddd", "size": 7, "mtime": 1},
+        }
+    )
+    snap_b = json.dumps(
+        {
+            "skills/SKILL.md": {"sha256": "bbb", "size": 11, "mtime": 2},  # modified
+            "skills/UNCHANGED.md": {"sha256": "ccc", "size": 5, "mtime": 1},
+            "skills/ADDED.md": {"sha256": "eee", "size": 4, "mtime": 2},  # added
+        }
+    )
 
     for rid, snap in (("run-a", snap_a), ("run-b", snap_b)):
         conn.execute(
