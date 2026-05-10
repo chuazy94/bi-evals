@@ -14,7 +14,9 @@ from bi_evals.store.ingest import ingest_run
 from tests.conftest import EVAL_SAMPLE_DIR, RUN_A_ID, RUN_A_JSON, RUN_B_ID, RUN_B_JSON
 
 
-def test_ingest_populates_three_tables(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
+def test_ingest_populates_three_tables(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
     db = tmp_path / "x.duckdb"
     with connect(db) as conn:
         run_id = ingest_run(conn, RUN_B_JSON, eval_sample_config)
@@ -29,7 +31,9 @@ def test_ingest_populates_three_tables(tmp_path: Path, eval_sample_config: BiEva
     assert dims == 45  # 9 dims × 5 tests
 
 
-def test_ingest_unwraps_nested_componentresults(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
+def test_ingest_unwraps_nested_componentresults(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
     """Promptfoo wraps our assertion into one outer componentResult whose nested
     componentResults list is the real 9 per-dimension entries. Confirm we extract
     exactly those 9 per test, not any siblings."""
@@ -41,9 +45,15 @@ def test_ingest_unwraps_nested_componentresults(tmp_path: Path, eval_sample_conf
         ).fetchall()
     # 9 expected dimensions
     expected = {
-        "column_alignment", "execution", "filter_correctness",
-        "no_hallucinated_columns", "row_completeness", "row_precision",
-        "skill_path_correctness", "table_alignment", "value_accuracy",
+        "column_alignment",
+        "execution",
+        "filter_correctness",
+        "no_hallucinated_columns",
+        "row_completeness",
+        "row_precision",
+        "skill_path_correctness",
+        "table_alignment",
+        "value_accuracy",
     }
     got = {r[0] for r in rows}
     assert got == expected
@@ -52,7 +62,9 @@ def test_ingest_unwraps_nested_componentresults(tmp_path: Path, eval_sample_conf
         assert count == 5
 
 
-def test_ingest_snapshots_golden_metadata(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
+def test_ingest_snapshots_golden_metadata(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
     db = tmp_path / "x.duckdb"
     with connect(db) as conn:
         ingest_run(conn, RUN_B_JSON, eval_sample_config)
@@ -64,7 +76,9 @@ def test_ingest_snapshots_golden_metadata(tmp_path: Path, eval_sample_config: Bi
         assert ref_sql, f"reference_sql missing for {test_id}"
 
 
-def test_ingest_is_idempotent(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
+def test_ingest_is_idempotent(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
     db = tmp_path / "x.duckdb"
     with connect(db) as conn:
         ingest_run(conn, RUN_B_JSON, eval_sample_config)
@@ -75,7 +89,9 @@ def test_ingest_is_idempotent(tmp_path: Path, eval_sample_config: BiEvalsConfig)
     assert runs == 1 and tests == 5 and dims == 45
 
 
-def test_ingest_two_runs_coexist(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
+def test_ingest_two_runs_coexist(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
     db = tmp_path / "x.duckdb"
     with connect(db) as conn:
         ingest_run(conn, RUN_A_JSON, eval_sample_config)
@@ -86,7 +102,9 @@ def test_ingest_two_runs_coexist(tmp_path: Path, eval_sample_config: BiEvalsConf
     assert tests == 10  # 5 + 5
 
 
-def test_ingest_marks_critical_dimensions(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
+def test_ingest_marks_critical_dimensions(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
     db = tmp_path / "x.duckdb"
     with connect(db) as conn:
         ingest_run(conn, RUN_B_JSON, eval_sample_config)

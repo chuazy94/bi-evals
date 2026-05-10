@@ -18,7 +18,9 @@ def _load_private_key(key_path: str, passphrase: str = "") -> bytes:
     key_bytes = Path(key_path).expanduser().resolve().read_bytes()
     pwd = passphrase.encode() if passphrase else None
     private_key = serialization.load_pem_private_key(
-        key_bytes, password=pwd, backend=default_backend(),
+        key_bytes,
+        password=pwd,
+        backend=default_backend(),
     )
     return private_key.private_bytes(
         encoding=serialization.Encoding.DER,
@@ -40,7 +42,8 @@ class SnowflakeClient:
                 "${SNOWFLAKE_PRIVATE_KEY_PATH} resolves after loading your .env."
             )
         private_key_der = _load_private_key(
-            key_path, conn.private_key_passphrase,
+            key_path,
+            conn.private_key_passphrase,
         )
         self._conn = snowflake.connector.connect(
             account=conn.account,

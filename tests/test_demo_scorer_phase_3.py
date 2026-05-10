@@ -118,8 +118,7 @@ GOLDEN_TEST = GoldenTest(
         allow_extra_skills=True,
     ),
     reference_sql=(
-        "SELECT COUNT(*) AS ORDER_COUNT "
-        "FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.ORDERS"
+        "SELECT COUNT(*) AS ORDER_COUNT FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.ORDERS"
     ),
     expected=ExpectedResults(
         min_rows=1,
@@ -146,6 +145,7 @@ MOCK_REFERENCE_RESULT = QueryResult(
 # ---------------------------------------------------------------------------
 # Test
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.integration
 class TestDemoScorerPhase3:
@@ -198,7 +198,8 @@ class TestDemoScorerPhase3:
 
         # ----- Step 1: Run the provider (real API call) -----
         tool = FileReaderTool(
-            tool_name="read_skill_file", base_dir=self.skill_dir,
+            tool_name="read_skill_file",
+            base_dir=self.skill_dir,
         )
 
         print("\n" + "=" * 70)
@@ -260,16 +261,26 @@ class TestDemoScorerPhase3:
             check_column_alignment(mock_generated_result, GOLDEN_TEST),
             check_filter_correctness(result.extracted_sql, GOLDEN_TEST.reference_sql),
             check_row_completeness(
-                mock_generated_result, MOCK_REFERENCE_RESULT, GOLDEN_TEST, scoring,
+                mock_generated_result,
+                MOCK_REFERENCE_RESULT,
+                GOLDEN_TEST,
+                scoring,
             ),
             check_row_precision(
-                mock_generated_result, MOCK_REFERENCE_RESULT, GOLDEN_TEST, scoring,
+                mock_generated_result,
+                MOCK_REFERENCE_RESULT,
+                GOLDEN_TEST,
+                scoring,
             ),
             check_value_accuracy(
-                mock_generated_result, MOCK_REFERENCE_RESULT, GOLDEN_TEST, scoring,
+                mock_generated_result,
+                MOCK_REFERENCE_RESULT,
+                GOLDEN_TEST,
+                scoring,
             ),
             check_no_hallucinated_columns(
-                mock_generated_result, MOCK_REFERENCE_RESULT,
+                mock_generated_result,
+                MOCK_REFERENCE_RESULT,
             ),
             check_skill_path_correctness(trace_dicts, GOLDEN_TEST),
         ]
@@ -288,7 +299,7 @@ class TestDemoScorerPhase3:
         total = len(dimensions)
         print("-" * 80)
         print(f"  {'TOTAL':<28} {passed_count}/{total}")
-        print(f"\n  Overall score: {passed_count/total:.0%}")
+        print(f"\n  Overall score: {passed_count / total:.0%}")
         print("=" * 70)
 
         # ----- Assertions -----

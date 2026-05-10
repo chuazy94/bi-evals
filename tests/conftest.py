@@ -13,7 +13,9 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 EVAL_SAMPLE_DIR = FIXTURES_DIR / "eval_sample"
 
 RUN_A_JSON = EVAL_SAMPLE_DIR / "results" / "eval_20260416_003723.json"  # earlier run
-RUN_B_JSON = EVAL_SAMPLE_DIR / "results" / "eval_20260419_231903.json"  # later run (one regression vs A)
+RUN_B_JSON = (
+    EVAL_SAMPLE_DIR / "results" / "eval_20260419_231903.json"
+)  # later run (one regression vs A)
 RUN_A_ID = "eval-Nbb-2026-04-15T23:37:25"
 RUN_B_ID = "eval-11c-2026-04-19T22:19:05"
 

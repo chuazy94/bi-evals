@@ -15,6 +15,7 @@ from tests.conftest import RUN_A_ID, RUN_A_JSON, RUN_B_ID, RUN_B_JSON
 
 class _FakeDim:
     """Minimal stand-in for ``DimRow`` used by verdict-sentence tests."""
+
     def __init__(self, dimension: str, passed: bool) -> None:
         self.dimension = dimension
         self.passed = passed
@@ -28,7 +29,9 @@ def _seed(tmp_path: Path, config: BiEvalsConfig) -> Path:
     return db
 
 
-def test_report_renders_with_key_content(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
+def test_report_renders_with_key_content(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
     db = _seed(tmp_path, eval_sample_config)
     with connect(db) as conn:
         html = build_report_html(conn, RUN_B_ID)
@@ -64,7 +67,9 @@ def test_compare_renders_red_verdict_for_known_regression(
     assert "Regressions detected" in html
 
 
-def test_compare_has_transitions_table(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
+def test_compare_has_transitions_table(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
     db = _seed(tmp_path, eval_sample_config)
     with connect(db) as conn:
         html = build_compare_html(conn, RUN_A_ID, RUN_B_ID)
@@ -73,7 +78,9 @@ def test_compare_has_transitions_table(tmp_path: Path, eval_sample_config: BiEva
     assert "row_completeness" in html or "value_accuracy" in html
 
 
-def test_compare_no_external_urls(tmp_path: Path, eval_sample_config: BiEvalsConfig) -> None:
+def test_compare_no_external_urls(
+    tmp_path: Path, eval_sample_config: BiEvalsConfig
+) -> None:
     db = _seed(tmp_path, eval_sample_config)
     with connect(db) as conn:
         html = build_compare_html(conn, RUN_A_ID, RUN_B_ID)
@@ -82,7 +89,10 @@ def test_compare_no_external_urls(tmp_path: Path, eval_sample_config: BiEvalsCon
 
 
 def test_sanitize_for_filename_handles_colons_and_slashes() -> None:
-    assert sanitize_for_filename("eval-11c-2026-04-19T22:19:05") == "eval-11c-2026-04-19T22-19-05"
+    assert (
+        sanitize_for_filename("eval-11c-2026-04-19T22:19:05")
+        == "eval-11c-2026-04-19T22-19-05"
+    )
     assert sanitize_for_filename("a/b:c") == "a_b-c"
 
 
@@ -104,7 +114,8 @@ def test_report_renders_scoring_rule_callout(
     db = _seed(tmp_path, eval_sample_config)
     with connect(db) as conn:
         html = build_report_html(
-            conn, RUN_B_ID,
+            conn,
+            RUN_B_ID,
             pass_threshold=0.75,
             critical_dimensions=["execution", "row_completeness", "value_accuracy"],
         )
@@ -122,7 +133,9 @@ def test_report_weighted_score_column_header_uses_threshold(
     with connect(db) as conn:
         html = build_report_html(conn, RUN_B_ID, pass_threshold=0.90)
     # The "All tests" + "Failures" tables both share the header text.
-    assert "Weighted score (&ge; 0.90)" in html or "Weighted score (\u2265 0.90)" in html
+    assert (
+        "Weighted score (&ge; 0.90)" in html or "Weighted score (\u2265 0.90)" in html
+    )
     # Bare "Score" header (without the qualifier) should be gone from the
     # tables we updated. Other "Score" labels (e.g. dimension table column
     # "Score") may still exist, but the precise standalone "<th class=\"num\">Score</th>"
@@ -137,7 +150,8 @@ def test_report_pass_threshold_threading(
     db = _seed(tmp_path, eval_sample_config)
     with connect(db) as conn:
         html = build_report_html(
-            conn, RUN_B_ID,
+            conn,
+            RUN_B_ID,
             pass_threshold=0.42,
             critical_dimensions=["execution"],
         )
@@ -208,6 +222,7 @@ def test_report_filter_by_category_excludes_other_categories(
     # of the strings "joins"/"us-states" globally. Instead, check that the per-test
     # rows (mono test_id cells with .yaml suffix) only mention `cases`.
     import re
+
     test_id_rows = re.findall(r'href="/runs/[^"]+/tests/([^"?]+)', html)
     assert test_id_rows, "expected at least one test row"
     for tid in test_id_rows:

@@ -103,7 +103,11 @@ def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
 
     golden_path = config.resolve_path(golden_file)
     if not golden_path.exists():
-        return {"pass": False, "score": 0.0, "reason": f"Golden test not found: {golden_file}"}
+        return {
+            "pass": False,
+            "score": 0.0,
+            "reason": f"Golden test not found: {golden_file}",
+        }
 
     golden = load_golden_test(golden_path)
 
@@ -121,7 +125,11 @@ def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
     trace_steps = trace_data.get("trace", [])
 
     if not generated_sql:
-        return {"pass": False, "score": 0.0, "reason": "No generated SQL found in trace"}
+        return {
+            "pass": False,
+            "score": 0.0,
+            "reason": "No generated SQL found in trace",
+        }
 
     reference_sql = golden.reference_sql
 
@@ -130,7 +138,8 @@ def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
     try:
         generated_result = db_client.execute(generated_sql)
         reference_result = (
-            db_client.execute(reference_sql) if reference_sql
+            db_client.execute(reference_sql)
+            if reference_sql
             else QueryResult(columns=[], rows=[], row_count=0, error="No reference SQL")
         )
     finally:
@@ -156,30 +165,54 @@ def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
 
     if "row_completeness" in enabled:
         if execution_passed:
-            results.append(check_row_completeness(generated_result, reference_result, golden, config.scoring))
+            results.append(
+                check_row_completeness(
+                    generated_result, reference_result, golden, config.scoring
+                )
+            )
         else:
-            results.append(DimensionResult(
-                name="row_completeness", passed=False, score=0.0,
-                reason="skipped: SQL execution failed",
-            ))
+            results.append(
+                DimensionResult(
+                    name="row_completeness",
+                    passed=False,
+                    score=0.0,
+                    reason="skipped: SQL execution failed",
+                )
+            )
 
     if "row_precision" in enabled:
         if execution_passed:
-            results.append(check_row_precision(generated_result, reference_result, golden, config.scoring))
+            results.append(
+                check_row_precision(
+                    generated_result, reference_result, golden, config.scoring
+                )
+            )
         else:
-            results.append(DimensionResult(
-                name="row_precision", passed=False, score=0.0,
-                reason="skipped: SQL execution failed",
-            ))
+            results.append(
+                DimensionResult(
+                    name="row_precision",
+                    passed=False,
+                    score=0.0,
+                    reason="skipped: SQL execution failed",
+                )
+            )
 
     if "value_accuracy" in enabled:
         if execution_passed:
-            results.append(check_value_accuracy(generated_result, reference_result, golden, config.scoring))
+            results.append(
+                check_value_accuracy(
+                    generated_result, reference_result, golden, config.scoring
+                )
+            )
         else:
-            results.append(DimensionResult(
-                name="value_accuracy", passed=False, score=0.0,
-                reason="skipped: SQL execution failed",
-            ))
+            results.append(
+                DimensionResult(
+                    name="value_accuracy",
+                    passed=False,
+                    score=0.0,
+                    reason="skipped: SQL execution failed",
+                )
+            )
 
     if "no_hallucinated_columns" in enabled and reference_sql:
         results.append(check_no_hallucinated_columns(generated_sql, reference_sql))
@@ -212,12 +245,11 @@ def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
     total_weight = sum(weights.get(r.name, 1.0) for r in results)
     weighted_score = (
         sum(weights.get(r.name, 1.0) * r.score for r in results) / total_weight
-        if total_weight else 0.0
+        if total_weight
+        else 0.0
     )
 
-    failed_critical = [
-        r.name for r in results if r.name in critical and not r.passed
-    ]
+    failed_critical = [r.name for r in results if r.name in critical and not r.passed]
     passed_dims = sum(1 for r in results if r.passed)
     total_dims = len(results)
 

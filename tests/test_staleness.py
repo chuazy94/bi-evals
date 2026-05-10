@@ -83,11 +83,15 @@ def test_stale_goldens_finds_old_dates() -> None:
     conn = duckdb.connect(":memory:")
     ensure_schema(conn)
     today = date(2026, 4, 25)
-    _seed_run_with_dates(conn, "r", [
-        ("t-fresh", today - timedelta(days=10)),
-        ("t-borderline", today - timedelta(days=180)),
-        ("t-stale", today - timedelta(days=365)),
-    ])
+    _seed_run_with_dates(
+        conn,
+        "r",
+        [
+            ("t-fresh", today - timedelta(days=10)),
+            ("t-borderline", today - timedelta(days=180)),
+            ("t-stale", today - timedelta(days=365)),
+        ],
+    )
     stale, unverified = q.stale_goldens(conn, "r", stale_after_days=180, today=today)
     assert {g.test_id for g in stale} == {"t-stale"}
     assert unverified == []
@@ -97,10 +101,14 @@ def test_stale_goldens_returns_unverified_separately() -> None:
     conn = duckdb.connect(":memory:")
     ensure_schema(conn)
     today = date(2026, 4, 25)
-    _seed_run_with_dates(conn, "r", [
-        ("t-no-date", None),
-        ("t-fresh", today - timedelta(days=5)),
-    ])
+    _seed_run_with_dates(
+        conn,
+        "r",
+        [
+            ("t-no-date", None),
+            ("t-fresh", today - timedelta(days=5)),
+        ],
+    )
     stale, unverified = q.stale_goldens(conn, "r", stale_after_days=180, today=today)
     assert stale == []
     assert [g.test_id for g in unverified] == ["t-no-date"]
@@ -111,11 +119,15 @@ def test_stale_goldens_sorted_oldest_first() -> None:
     conn = duckdb.connect(":memory:")
     ensure_schema(conn)
     today = date(2026, 4, 25)
-    _seed_run_with_dates(conn, "r", [
-        ("t-200d", today - timedelta(days=200)),
-        ("t-365d", today - timedelta(days=365)),
-        ("t-300d", today - timedelta(days=300)),
-    ])
+    _seed_run_with_dates(
+        conn,
+        "r",
+        [
+            ("t-200d", today - timedelta(days=200)),
+            ("t-365d", today - timedelta(days=365)),
+            ("t-300d", today - timedelta(days=300)),
+        ],
+    )
     stale, _ = q.stale_goldens(conn, "r", stale_after_days=180, today=today)
     # Oldest first.
     assert [g.test_id for g in stale] == ["t-365d", "t-300d", "t-200d"]
@@ -136,6 +148,7 @@ def test_ingest_snapshots_last_verified_at(
         target.write_text(original.rstrip() + "\nlast_verified_at: 2025-01-15\n")
 
         from bi_evals.store.ingest import ingest_run
+
         with connect(tmp_path / "x.duckdb") as conn:
             run_id = ingest_run(conn, RUN_B_JSON, eval_sample_config)
             row = conn.execute(
@@ -173,7 +186,7 @@ def _seed_run_with_snapshot(
 
 def _set_mtime(path: Path, days_ago: int) -> None:
     """Backdate a file's mtime by ``days_ago`` days."""
-    target_ts = (date.today() - timedelta(days=days_ago))
+    target_ts = date.today() - timedelta(days=days_ago)
     epoch = (target_ts - date(1970, 1, 1)).total_seconds()
     os.utime(path, (epoch, epoch))
 
@@ -185,9 +198,7 @@ def test_stale_knowledge_disabled_when_threshold_zero(tmp_path: Path) -> None:
     f.write_text("hi")
     _set_mtime(f, days_ago=365)
     _seed_run_with_snapshot(conn, "r", {"SKILL.md": {"sha256": "abc"}})
-    out = q.stale_knowledge_files(
-        conn, "r", base_dir=tmp_path, stale_after_days=0
-    )
+    out = q.stale_knowledge_files(conn, "r", base_dir=tmp_path, stale_after_days=0)
     assert out == []
 
 
@@ -202,9 +213,7 @@ def test_stale_knowledge_returns_empty_when_no_snapshot(tmp_path: Path) -> None:
         VALUES ('r', 'p', '2026-04-25', '{}', '/p', 0, 0, 0, 0)
         """
     )
-    out = q.stale_knowledge_files(
-        conn, "r", base_dir=tmp_path, stale_after_days=90
-    )
+    out = q.stale_knowledge_files(conn, "r", base_dir=tmp_path, stale_after_days=90)
     assert out == []
 
 
@@ -217,7 +226,10 @@ def test_stale_knowledge_flags_old_file(tmp_path: Path) -> None:
     _seed_run_with_snapshot(conn, "r", {"OLD.md": {"sha256": "abc"}})
 
     out = q.stale_knowledge_files(
-        conn, "r", base_dir=tmp_path, stale_after_days=90,
+        conn,
+        "r",
+        base_dir=tmp_path,
+        stale_after_days=90,
     )
     assert len(out) == 1
     assert out[0].path == "OLD.md"
@@ -233,7 +245,10 @@ def test_stale_knowledge_skips_fresh_file(tmp_path: Path) -> None:
     _seed_run_with_snapshot(conn, "r", {"FRESH.md": {"sha256": "abc"}})
 
     out = q.stale_knowledge_files(
-        conn, "r", base_dir=tmp_path, stale_after_days=90,
+        conn,
+        "r",
+        base_dir=tmp_path,
+        stale_after_days=90,
     )
     assert out == []
 
@@ -252,7 +267,10 @@ def test_stale_knowledge_only_includes_files_that_were_read(tmp_path: Path) -> N
     _seed_run_with_snapshot(conn, "r", {"READ.md": {"sha256": "abc"}})
 
     out = q.stale_knowledge_files(
-        conn, "r", base_dir=tmp_path, stale_after_days=90,
+        conn,
+        "r",
+        base_dir=tmp_path,
+        stale_after_days=90,
     )
     paths = {f.path for f in out}
     assert "READ.md" in paths
@@ -270,7 +288,10 @@ def test_stale_knowledge_skips_missing_file(tmp_path: Path) -> None:
     _seed_run_with_snapshot(conn, "r", {"GONE.md": {"sha256": "abc"}})
 
     out = q.stale_knowledge_files(
-        conn, "r", base_dir=tmp_path, stale_after_days=90,
+        conn,
+        "r",
+        base_dir=tmp_path,
+        stale_after_days=90,
     )
     assert out == []
 
@@ -284,13 +305,20 @@ def test_stale_knowledge_sorted_oldest_first(tmp_path: Path) -> None:
     old = tmp_path / "OLD.md"
     old.write_text("x")
     _set_mtime(old, days_ago=150)
-    _seed_run_with_snapshot(conn, "r", {
-        "OLD.md": {"sha256": "a"},
-        "OLDER.md": {"sha256": "b"},
-    })
+    _seed_run_with_snapshot(
+        conn,
+        "r",
+        {
+            "OLD.md": {"sha256": "a"},
+            "OLDER.md": {"sha256": "b"},
+        },
+    )
 
     out = q.stale_knowledge_files(
-        conn, "r", base_dir=tmp_path, stale_after_days=90,
+        conn,
+        "r",
+        base_dir=tmp_path,
+        stale_after_days=90,
     )
     # Both stale; OLDER.md must come first.
     assert [f.path for f in out] == ["OLDER.md", "OLD.md"]

@@ -32,6 +32,7 @@ from bi_evals.promptfoo.bridge import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_config(base_dir: Path, golden_dir: str = "golden") -> BiEvalsConfig:
     config = BiEvalsConfig(
         project=ProjectConfig(name="Test Project"),
@@ -44,7 +45,13 @@ def _make_config(base_dir: Path, golden_dir: str = "golden") -> BiEvalsConfig:
     return config
 
 
-def _write_golden(path: Path, id: str, question: str, category: str = "", tags: list[str] | None = None) -> None:
+def _write_golden(
+    path: Path,
+    id: str,
+    question: str,
+    category: str = "",
+    tags: list[str] | None = None,
+) -> None:
     data = {"id": id, "question": question, "reference_sql": "SELECT 1"}
     if category:
         data["category"] = category
@@ -62,6 +69,7 @@ def _setup_golden_dir(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 # Config Generation
 # ---------------------------------------------------------------------------
+
 
 class TestGeneratePromptfooConfig:
     def test_basic_structure(self, tmp_path: Path) -> None:
@@ -93,7 +101,9 @@ class TestGeneratePromptfooConfig:
         config = _make_config(tmp_path)
         result = generate_promptfoo_config(config, "/path/to/bi-evals.yaml")
 
-        assert result["providers"][0]["config"]["config_path"] == "/path/to/bi-evals.yaml"
+        assert (
+            result["providers"][0]["config"]["config_path"] == "/path/to/bi-evals.yaml"
+        )
 
     def test_golden_file_paths_relative(self, tmp_path: Path) -> None:
         golden = _setup_golden_dir(tmp_path)
@@ -159,12 +169,28 @@ class TestGeneratePromptfooConfig:
 # Filter
 # ---------------------------------------------------------------------------
 
+
 class TestFilterTests:
     def _make_tests(self) -> list[tuple[GoldenTest, str]]:
         return [
-            (GoldenTest(id="rev-001", question="Q", category="revenue", tags=["enterprise"]), "golden/rev-001.yaml"),
-            (GoldenTest(id="ord-001", question="Q", category="orders", tags=["basic"]), "golden/ord-001.yaml"),
-            (GoldenTest(id="rev-002", question="Q", category="revenue", tags=["smb"]), "golden/rev-002.yaml"),
+            (
+                GoldenTest(
+                    id="rev-001", question="Q", category="revenue", tags=["enterprise"]
+                ),
+                "golden/rev-001.yaml",
+            ),
+            (
+                GoldenTest(
+                    id="ord-001", question="Q", category="orders", tags=["basic"]
+                ),
+                "golden/ord-001.yaml",
+            ),
+            (
+                GoldenTest(
+                    id="rev-002", question="Q", category="revenue", tags=["smb"]
+                ),
+                "golden/rev-002.yaml",
+            ),
         ]
 
     def test_filter_by_id(self) -> None:
@@ -195,7 +221,9 @@ class TestFilterTests:
         _write_golden(golden / "ord.yaml", "ord-001", "Orders Q", category="orders")
 
         config = _make_config(tmp_path)
-        result = generate_promptfoo_config(config, "bi-evals.yaml", filter_pattern="revenue")
+        result = generate_promptfoo_config(
+            config, "bi-evals.yaml", filter_pattern="revenue"
+        )
 
         assert len(result["tests"]) == 1
         assert "rev-001" in result["tests"][0]["description"]
@@ -204,6 +232,7 @@ class TestFilterTests:
 # ---------------------------------------------------------------------------
 # Write Config
 # ---------------------------------------------------------------------------
+
 
 class TestWriteConfig:
     def test_creates_yaml_file(self, tmp_path: Path) -> None:
@@ -225,6 +254,7 @@ class TestWriteConfig:
 # ---------------------------------------------------------------------------
 # Promptfoo Runner
 # ---------------------------------------------------------------------------
+
 
 class TestRunPromptfoo:
     @patch("bi_evals.promptfoo.bridge.subprocess.Popen")
@@ -272,7 +302,9 @@ class TestRunPromptfoo:
 
     @patch("bi_evals.promptfoo.bridge.subprocess.Popen")
     @patch("bi_evals.promptfoo.bridge.shutil.which", return_value="/usr/bin/npx")
-    def test_no_verbose_by_default(self, mock_which: MagicMock, mock_popen: MagicMock) -> None:
+    def test_no_verbose_by_default(
+        self, mock_which: MagicMock, mock_popen: MagicMock
+    ) -> None:
         mock_process = MagicMock()
         mock_process.wait.return_value = 0
         mock_process.returncode = 0
@@ -295,6 +327,7 @@ class TestRunPromptfoo:
 # CLI Integration
 # ---------------------------------------------------------------------------
 
+
 class TestCLIRun:
     def _write_config_and_golden(self, tmp_path: Path) -> Path:
         config_content = dedent("""\
@@ -315,7 +348,9 @@ class TestCLIRun:
 
         golden = tmp_path / "golden"
         golden.mkdir()
-        _write_golden(golden / "t1.yaml", "t-001", "What is revenue?", category="revenue")
+        _write_golden(
+            golden / "t1.yaml", "t-001", "What is revenue?", category="revenue"
+        )
 
         return config_file
 
@@ -323,6 +358,7 @@ class TestCLIRun:
         config_file = self._write_config_and_golden(tmp_path)
 
         from bi_evals.cli import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["-c", str(config_file), "run", "--dry-run"])
 
@@ -347,6 +383,7 @@ class TestCLIRun:
         (tmp_path / "golden").mkdir()
 
         from bi_evals.cli import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["-c", str(config_file), "run"])
 
@@ -357,15 +394,20 @@ class TestCLIRun:
         config_file = self._write_config_and_golden(tmp_path)
 
         from bi_evals.cli import cli
+
         runner = CliRunner()
-        result = runner.invoke(cli, ["-c", str(config_file), "run", "-f", "nonexistent"])
+        result = runner.invoke(
+            cli, ["-c", str(config_file), "run", "-f", "nonexistent"]
+        )
 
         assert result.exit_code != 0
         assert "No tests match filter" in result.output
 
     @patch("bi_evals.promptfoo.bridge.subprocess.Popen")
     @patch("bi_evals.promptfoo.bridge.shutil.which", return_value="/usr/bin/npx")
-    def test_success_flow(self, mock_which: MagicMock, mock_popen: MagicMock, tmp_path: Path) -> None:
+    def test_success_flow(
+        self, mock_which: MagicMock, mock_popen: MagicMock, tmp_path: Path
+    ) -> None:
         mock_process = MagicMock()
         mock_process.wait.return_value = 0
         mock_process.returncode = 0
@@ -373,6 +415,7 @@ class TestCLIRun:
         config_file = self._write_config_and_golden(tmp_path)
 
         from bi_evals.cli import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["-c", str(config_file), "run"])
 
@@ -386,6 +429,7 @@ class TestCLIRun:
         config_file = self._write_config_and_golden(tmp_path)
 
         from bi_evals.cli import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["-c", str(config_file), "run"])
 
@@ -397,6 +441,7 @@ class TestCLIRun:
 # Golden loader with paths
 # ---------------------------------------------------------------------------
 
+
 class TestLoadGoldenTestsWithPaths:
     def test_returns_relative_paths(self, tmp_path: Path) -> None:
         golden = tmp_path / "golden"
@@ -406,6 +451,7 @@ class TestLoadGoldenTestsWithPaths:
 
         config = _make_config(tmp_path)
         from bi_evals.golden.loader import load_golden_tests_with_paths
+
         results = load_golden_tests_with_paths(config)
 
         assert len(results) == 2
@@ -420,6 +466,7 @@ class TestLoadGoldenTestsWithPaths:
 
         config = _make_config(tmp_path)
         from bi_evals.golden.loader import load_golden_tests_with_paths
+
         results = load_golden_tests_with_paths(config)
 
         assert len(results) == 1
@@ -429,4 +476,5 @@ class TestLoadGoldenTestsWithPaths:
         (tmp_path / "golden").mkdir()
         config = _make_config(tmp_path)
         from bi_evals.golden.loader import load_golden_tests_with_paths
+
         assert load_golden_tests_with_paths(config) == []

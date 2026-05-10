@@ -31,7 +31,12 @@ def test_ingest_report_compare_flow(tmp_path: Path) -> None:
         dest_rel = Path("results") / src.name
         result = runner.invoke(
             cli,
-            ["--config", str(workdir / "bi-evals.yaml"), "ingest", str(workdir / dest_rel)],
+            [
+                "--config",
+                str(workdir / "bi-evals.yaml"),
+                "ingest",
+                str(workdir / dest_rel),
+            ],
         )
         assert result.exit_code == 0, result.output
         assert "Ingested:" in result.output
@@ -73,12 +78,23 @@ def test_compare_rejects_unknown_run_id(tmp_path: Path) -> None:
     # Ingest only one run, then try to compare against a bogus id
     result = runner.invoke(
         cli,
-        ["--config", str(workdir / "bi-evals.yaml"), "ingest", str(workdir / "results" / RUN_B_JSON.name)],
+        [
+            "--config",
+            str(workdir / "bi-evals.yaml"),
+            "ingest",
+            str(workdir / "results" / RUN_B_JSON.name),
+        ],
     )
     assert result.exit_code == 0
 
     result = runner.invoke(
         cli,
-        ["--config", str(workdir / "bi-evals.yaml"), "compare", "nonexistent", "latest"],
+        [
+            "--config",
+            str(workdir / "bi-evals.yaml"),
+            "compare",
+            "nonexistent",
+            "latest",
+        ],
     )
     assert result.exit_code != 0

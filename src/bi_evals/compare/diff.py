@@ -31,7 +31,7 @@ class Verdict(str, Enum):
 @dataclass(frozen=True)
 class ClassifiedPair:
     pair: RunTestPair
-    bucket: str              # regressed | fixed | unchanged_pass | unchanged_fail | added | removed
+    bucket: str  # regressed | fixed | unchanged_pass | unchanged_fail | added | removed
     regressed_dims: list[str]  # critical dims whose pass_rate dropped by >= threshold
     score_delta: float | None  # b_score - a_score, None if either side missing
     pass_rate_delta: float | None  # b_pass_rate - a_pass_rate
@@ -84,9 +84,7 @@ def classify_pairs(
             else None
         )
         pass_rate_delta = (
-            (b_rate - a_rate)
-            if (a_rate is not None and b_rate is not None)
-            else None
+            (b_rate - a_rate) if (a_rate is not None and b_rate is not None) else None
         )
         out.append(
             ClassifiedPair(
@@ -157,7 +155,9 @@ def category_deltas(classified: list[ClassifiedPair]) -> list[CategoryDelta]:
     agg: dict[str, dict[str, float]] = {}
     for c in classified:
         cat = c.pair.category or "(uncategorized)"
-        d = agg.setdefault(cat, {"a_total": 0.0, "a_pass": 0.0, "b_total": 0.0, "b_pass": 0.0})
+        d = agg.setdefault(
+            cat, {"a_total": 0.0, "a_pass": 0.0, "b_total": 0.0, "b_pass": 0.0}
+        )
         if c.pair.a_pass_rate is not None:
             d["a_total"] += 1
             d["a_pass"] += c.pair.a_pass_rate
@@ -189,11 +189,15 @@ def dimension_deltas(classified: list[ClassifiedPair]) -> list[DimensionDelta]:
     agg: dict[str, dict[str, float]] = {}
     for c in classified:
         for dim, rate in c.pair.a_dims.items():
-            d = agg.setdefault(dim, {"a_total": 0.0, "a_pass": 0.0, "b_total": 0.0, "b_pass": 0.0})
+            d = agg.setdefault(
+                dim, {"a_total": 0.0, "a_pass": 0.0, "b_total": 0.0, "b_pass": 0.0}
+            )
             d["a_total"] += 1
             d["a_pass"] += rate
         for dim, rate in c.pair.b_dims.items():
-            d = agg.setdefault(dim, {"a_total": 0.0, "a_pass": 0.0, "b_total": 0.0, "b_pass": 0.0})
+            d = agg.setdefault(
+                dim, {"a_total": 0.0, "a_pass": 0.0, "b_total": 0.0, "b_pass": 0.0}
+            )
             d["b_total"] += 1
             d["b_pass"] += rate
 
@@ -219,7 +223,14 @@ def dimension_deltas(classified: list[ClassifiedPair]) -> list[DimensionDelta]:
 
 def bucket_counts(classified: list[ClassifiedPair]) -> dict[str, int]:
     """Summary counts by bucket, including zero-count buckets for stable templates."""
-    buckets = ["regressed", "fixed", "unchanged_pass", "unchanged_fail", "added", "removed"]
+    buckets = [
+        "regressed",
+        "fixed",
+        "unchanged_pass",
+        "unchanged_fail",
+        "added",
+        "removed",
+    ]
     counts = {b: 0 for b in buckets}
     for c in classified:
         counts[c.bucket] = counts.get(c.bucket, 0) + 1

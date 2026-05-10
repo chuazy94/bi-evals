@@ -164,7 +164,9 @@ def _migrate_legacy(conn: duckdb.DuckDBPyConnection) -> None:
     """
     for table, column, coltype in _LEGACY_MIGRATIONS:
         try:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {coltype}")
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {coltype}"
+            )
         except duckdb.CatalogException:
             pass
 

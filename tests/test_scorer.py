@@ -31,12 +31,17 @@ from bi_evals.scorer.dimensions import (
     check_table_alignment,
     check_value_accuracy,
 )
-from bi_evals.scorer.sql_utils import extract_filter_columns, extract_select_columns, extract_tables
+from bi_evals.scorer.sql_utils import (
+    extract_filter_columns,
+    extract_select_columns,
+    extract_tables,
+)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _golden(
     required_columns: list[str] | None = None,
@@ -59,11 +64,13 @@ def _scoring(
     precision: float = 0.95,
     tolerance: float = 0.0001,
 ) -> ScoringConfig:
-    return ScoringConfig(thresholds=ScoringThresholds(
-        completeness=completeness,
-        precision=precision,
-        value_tolerance=tolerance,
-    ))
+    return ScoringConfig(
+        thresholds=ScoringThresholds(
+            completeness=completeness,
+            precision=precision,
+            value_tolerance=tolerance,
+        )
+    )
 
 
 def _qr(
@@ -78,6 +85,7 @@ def _qr(
 # ---------------------------------------------------------------------------
 # SQL Utils
 # ---------------------------------------------------------------------------
+
 
 class TestExtractTables:
     def test_simple_select(self) -> None:
@@ -95,7 +103,9 @@ class TestExtractTables:
         assert "DB.SCHEMA.MY_TABLE" in tables
 
     def test_cte(self) -> None:
-        sql = "WITH cte AS (SELECT a FROM t1) SELECT * FROM cte JOIN t2 ON cte.id = t2.id"
+        sql = (
+            "WITH cte AS (SELECT a FROM t1) SELECT * FROM cte JOIN t2 ON cte.id = t2.id"
+        )
         tables = extract_tables(sql)
         assert "T1" in tables
         assert "T2" in tables
@@ -125,12 +135,16 @@ class TestExtractSelectColumns:
         assert cols == {"DIFFERENCE"}
 
     def test_multiple_with_alias(self) -> None:
-        cols = extract_select_columns("SELECT STATE, MAX(DEATHS) AS TOTAL_DEATHS FROM t GROUP BY STATE")
+        cols = extract_select_columns(
+            "SELECT STATE, MAX(DEATHS) AS TOTAL_DEATHS FROM t GROUP BY STATE"
+        )
         assert cols == {"STATE", "DEATHS"}
 
     def test_cte_intermediate_aliases_excluded(self) -> None:
         """Intermediate aliases (s) defined in inner SELECT should be excluded."""
-        sql = "WITH cte AS (SELECT a, SUM(b) AS s FROM t GROUP BY a) SELECT a, s FROM cte"
+        sql = (
+            "WITH cte AS (SELECT a, SUM(b) AS s FROM t GROUP BY a) SELECT a, s FROM cte"
+        )
         cols = extract_select_columns(sql)
         assert "A" in cols
         assert "B" in cols
@@ -149,7 +163,9 @@ class TestExtractFilterColumns:
         assert ("ID", "EQ") in filters
 
     def test_multiple_conditions(self) -> None:
-        sql = "SELECT a FROM t WHERE id = 1 AND status != 'active' AND dt >= '2024-01-01'"
+        sql = (
+            "SELECT a FROM t WHERE id = 1 AND status != 'active' AND dt >= '2024-01-01'"
+        )
         filters = extract_filter_columns(sql)
         assert ("ID", "EQ") in filters
         assert ("STATUS", "NEQ") in filters
@@ -164,6 +180,7 @@ class TestExtractFilterColumns:
 # ---------------------------------------------------------------------------
 # Dimension 1: Execution
 # ---------------------------------------------------------------------------
+
 
 class TestExecution:
     def test_pass(self) -> None:
@@ -180,6 +197,7 @@ class TestExecution:
 # ---------------------------------------------------------------------------
 # Dimension 2: Table Alignment
 # ---------------------------------------------------------------------------
+
 
 class TestTableAlignment:
     def test_pass(self) -> None:
@@ -201,6 +219,7 @@ class TestTableAlignment:
 # ---------------------------------------------------------------------------
 # Dimension 3: Column Alignment
 # ---------------------------------------------------------------------------
+
 
 class TestColumnAlignment:
     def test_pass_source_columns(self) -> None:
@@ -236,6 +255,7 @@ class TestColumnAlignment:
 # Dimension 4: Filter Correctness
 # ---------------------------------------------------------------------------
 
+
 class TestFilterCorrectness:
     def test_pass_matching_filters(self) -> None:
         r = check_filter_correctness(
@@ -261,6 +281,7 @@ class TestFilterCorrectness:
 # Dimension 5: Row Completeness
 # ---------------------------------------------------------------------------
 
+
 class TestRowCompleteness:
     def test_pass_all_rows_present(self) -> None:
         ref = _qr(["ID"], [{"ID": 1}, {"ID": 2}, {"ID": 3}])
@@ -272,7 +293,9 @@ class TestRowCompleteness:
     def test_fail_missing_rows(self) -> None:
         ref = _qr(["ID"], [{"ID": i} for i in range(20)])
         gen = _qr(["ID"], [{"ID": i} for i in range(10)])
-        rc = RowComparison(enabled=True, key_columns=["ID"], completeness_threshold=0.95)
+        rc = RowComparison(
+            enabled=True, key_columns=["ID"], completeness_threshold=0.95
+        )
         r = check_row_completeness(gen, ref, _golden(row_comparison=rc), _scoring())
         assert not r.passed
 
@@ -285,6 +308,7 @@ class TestRowCompleteness:
 # ---------------------------------------------------------------------------
 # Dimension 6: Row Precision
 # ---------------------------------------------------------------------------
+
 
 class TestRowPrecision:
     def test_pass_no_extra_rows(self) -> None:
@@ -311,6 +335,7 @@ class TestRowPrecision:
 # Dimension 7: Value Accuracy
 # ---------------------------------------------------------------------------
 
+
 class TestValueAccuracy:
     def test_pass_exact_match(self) -> None:
         ref = _qr(["ID", "VAL"], [{"ID": 1, "VAL": 100.0}])
@@ -330,7 +355,9 @@ class TestValueAccuracy:
         ref = _qr(["ID", "VAL"], [{"ID": 1, "VAL": 100.0}])
         gen = _qr(["ID", "VAL"], [{"ID": 1, "VAL": 100.005}])
         rc = RowComparison(
-            enabled=True, key_columns=["ID"], value_columns=["VAL"],
+            enabled=True,
+            key_columns=["ID"],
+            value_columns=["VAL"],
             value_tolerance=0.001,
         )
         r = check_value_accuracy(gen, ref, _golden(row_comparison=rc), _scoring())
@@ -374,6 +401,7 @@ class TestValueAccuracy:
 # Dimension 8: No Hallucinated Columns
 # ---------------------------------------------------------------------------
 
+
 class TestNoHallucinatedColumns:
     def test_pass_same_source_columns(self) -> None:
         r = check_no_hallucinated_columns(
@@ -410,11 +438,20 @@ class TestNoHallucinatedColumns:
 # Dimension 9: Skill Path Correctness
 # ---------------------------------------------------------------------------
 
+
 class TestSkillPathCorrectness:
     def test_pass_correct_sequence(self) -> None:
         trace = [
-            {"type": "tool_use", "tool_name": "read_skill_file", "tool_input": {"path": "SKILL.md"}},
-            {"type": "tool_use", "tool_name": "read_skill_file", "tool_input": {"path": "REVENUE.md"}},
+            {
+                "type": "tool_use",
+                "tool_name": "read_skill_file",
+                "tool_input": {"path": "SKILL.md"},
+            },
+            {
+                "type": "tool_use",
+                "tool_name": "read_skill_file",
+                "tool_input": {"path": "REVENUE.md"},
+            },
         ]
         esp = ExpectedSkillPath(
             required_skills=[
@@ -428,7 +465,11 @@ class TestSkillPathCorrectness:
 
     def test_fail_missing_skill(self) -> None:
         trace = [
-            {"type": "tool_use", "tool_name": "read_skill_file", "tool_input": {"path": "SKILL.md"}},
+            {
+                "type": "tool_use",
+                "tool_name": "read_skill_file",
+                "tool_input": {"path": "SKILL.md"},
+            },
         ]
         esp = ExpectedSkillPath(
             required_skills=[
@@ -442,8 +483,16 @@ class TestSkillPathCorrectness:
 
     def test_fail_wrong_order(self) -> None:
         trace = [
-            {"type": "tool_use", "tool_name": "read_skill_file", "tool_input": {"path": "REVENUE.md"}},
-            {"type": "tool_use", "tool_name": "read_skill_file", "tool_input": {"path": "SKILL.md"}},
+            {
+                "type": "tool_use",
+                "tool_name": "read_skill_file",
+                "tool_input": {"path": "REVENUE.md"},
+            },
+            {
+                "type": "tool_use",
+                "tool_name": "read_skill_file",
+                "tool_input": {"path": "SKILL.md"},
+            },
         ]
         esp = ExpectedSkillPath(
             required_skills=[
@@ -465,6 +514,7 @@ class TestSkillPathCorrectness:
 # ---------------------------------------------------------------------------
 # Scorer entry point: get_assert
 # ---------------------------------------------------------------------------
+
 
 class TestGetAssert:
     @pytest.fixture()
@@ -509,7 +559,11 @@ class TestGetAssert:
             "test_id": "golden/test-001.yaml",
             "generated_sql": "SELECT SUM(val) FROM revenue",
             "trace": [
-                {"type": "tool_use", "tool_name": "read_skill_file", "tool_input": {"path": "SKILL.md"}},
+                {
+                    "type": "tool_use",
+                    "tool_name": "read_skill_file",
+                    "tool_input": {"path": "SKILL.md"},
+                },
             ],
             "files_read": ["SKILL.md"],
         }
@@ -520,23 +574,30 @@ class TestGetAssert:
 
     @patch("bi_evals.scorer.entry.create_db_client")
     def test_returns_per_dimension_results(
-        self, mock_create: MagicMock, setup_env: tuple[Path, Path, Path],
+        self,
+        mock_create: MagicMock,
+        setup_env: tuple[Path, Path, Path],
     ) -> None:
         config_file, golden_file, _ = setup_env
 
         mock_client = MagicMock()
         mock_client.execute.return_value = QueryResult(
-            columns=["TOTAL"], rows=[{"TOTAL": 100}], row_count=1,
+            columns=["TOTAL"],
+            rows=[{"TOTAL": 100}],
+            row_count=1,
         )
         mock_create.return_value = mock_client
 
         from bi_evals.scorer.entry import get_assert
 
-        results = get_assert("output text", {
-            "config": {"config_path": str(config_file)},
-            "vars": {"golden_file": "golden/test-001.yaml"},
-            "prompt": "What is total revenue?",
-        })
+        results = get_assert(
+            "output text",
+            {
+                "config": {"config_path": str(config_file)},
+                "vars": {"golden_file": "golden/test-001.yaml"},
+                "prompt": "What is total revenue?",
+            },
+        )
 
         assert isinstance(results, dict)
         assert "componentResults" in results
@@ -547,27 +608,36 @@ class TestGetAssert:
 
     @patch("bi_evals.scorer.entry.create_db_client")
     def test_execution_failure_cascades(
-        self, mock_create: MagicMock, setup_env: tuple[Path, Path, Path],
+        self,
+        mock_create: MagicMock,
+        setup_env: tuple[Path, Path, Path],
     ) -> None:
         config_file, _, _ = setup_env
 
         mock_client = MagicMock()
         mock_client.execute.return_value = QueryResult(
-            columns=[], rows=[], row_count=0, error="SQL error",
+            columns=[],
+            rows=[],
+            row_count=0,
+            error="SQL error",
         )
         mock_create.return_value = mock_client
 
         # Use all dimensions to test cascading
         from bi_evals.config import BiEvalsConfig
+
         config = BiEvalsConfig.load(config_file)
 
         from bi_evals.scorer.entry import get_assert
 
-        results = get_assert("output", {
-            "config": {"config_path": str(config_file)},
-            "vars": {"golden_file": "golden/test-001.yaml"},
-            "prompt": "Q",
-        })
+        results = get_assert(
+            "output",
+            {
+                "config": {"config_path": str(config_file)},
+                "vars": {"golden_file": "golden/test-001.yaml"},
+                "prompt": "Q",
+            },
+        )
 
         assert isinstance(results, dict)
         assert results["pass"] is False
@@ -589,17 +659,22 @@ class TestGetAssert:
 
         from bi_evals.scorer.entry import get_assert
 
-        results = get_assert("output", {
-            "config": {"config_path": str(config_file)},
-            "vars": {"golden_file": "nonexistent.yaml"},
-        })
+        results = get_assert(
+            "output",
+            {
+                "config": {"config_path": str(config_file)},
+                "vars": {"golden_file": "nonexistent.yaml"},
+            },
+        )
         assert isinstance(results, dict)
         assert results["pass"] is False
         assert "not found" in results["reason"]
 
     @patch("bi_evals.scorer.entry.create_db_client")
     def test_grades_per_model_trace_in_multi_model_run(
-        self, mock_create: MagicMock, tmp_path: Path,
+        self,
+        mock_create: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """Regression: with two traces present at the same test slug for
         different models (the multi-model layout the provider writes), the
@@ -630,44 +705,59 @@ class TestGetAssert:
 
         golden_dir = tmp_path / "golden"
         golden_dir.mkdir()
-        (golden_dir / "test-001.yaml").write_text(dedent("""\
+        (golden_dir / "test-001.yaml").write_text(
+            dedent("""\
             id: test-001
             question: "Q"
             reference_sql: "SELECT a FROM RIGHT_TABLE"
-        """))
+        """)
+        )
 
         trace_dir = tmp_path / "results" / "traces"
         trace_dir.mkdir(parents=True)
         # Stale single-model trace at the legacy path. Pre-fix this is
         # what the scorer always read regardless of which model ran.
-        (trace_dir / "golden_test-001_yaml.json").write_text(json.dumps({
-            "test_id": "golden/test-001.yaml",
-            "model": "claude-sonnet-4-5-20250929",
-            "generated_sql": "SELECT a FROM RIGHT_TABLE",
-            "trace": [],
-        }))
+        (trace_dir / "golden_test-001_yaml.json").write_text(
+            json.dumps(
+                {
+                    "test_id": "golden/test-001.yaml",
+                    "model": "claude-sonnet-4-5-20250929",
+                    "generated_sql": "SELECT a FROM RIGHT_TABLE",
+                    "trace": [],
+                }
+            )
+        )
         # The two correct, per-(test, model) traces the provider would
         # actually have written for this run.
-        (trace_dir
-         / "golden_test-001_yaml__claude-sonnet-4-5-20250929__abc123.json"
-         ).write_text(json.dumps({
-            "test_id": "golden/test-001.yaml",
-            "model": "claude-sonnet-4-5-20250929",
-            "generated_sql": "SELECT a FROM RIGHT_TABLE",
-            "trace": [],
-        }))
-        (trace_dir
-         / "golden_test-001_yaml__claude-haiku-4-5-20251001__def456.json"
-         ).write_text(json.dumps({
-            "test_id": "golden/test-001.yaml",
-            "model": "claude-haiku-4-5-20251001",
-            "generated_sql": "SELECT a FROM WRONG_TABLE",
-            "trace": [],
-        }))
+        (
+            trace_dir / "golden_test-001_yaml__claude-sonnet-4-5-20250929__abc123.json"
+        ).write_text(
+            json.dumps(
+                {
+                    "test_id": "golden/test-001.yaml",
+                    "model": "claude-sonnet-4-5-20250929",
+                    "generated_sql": "SELECT a FROM RIGHT_TABLE",
+                    "trace": [],
+                }
+            )
+        )
+        (
+            trace_dir / "golden_test-001_yaml__claude-haiku-4-5-20251001__def456.json"
+        ).write_text(
+            json.dumps(
+                {
+                    "test_id": "golden/test-001.yaml",
+                    "model": "claude-haiku-4-5-20251001",
+                    "generated_sql": "SELECT a FROM WRONG_TABLE",
+                    "trace": [],
+                }
+            )
+        )
 
         # Mock execute so each SQL string returns a result we can identify.
         def fake_execute(sql: str) -> QueryResult:
             return QueryResult(columns=["A"], rows=[{"A": sql}], row_count=1)
+
         mock_client = MagicMock()
         mock_client.execute.side_effect = fake_execute
         mock_create.return_value = mock_client
@@ -676,14 +766,17 @@ class TestGetAssert:
 
         # Scorer call for the haiku run — must grade haiku's trace
         # (WRONG_TABLE), so table_alignment fails.
-        results = get_assert("output", {
-            "config": {
-                "config_path": str(config_file),
-                "model": "claude-haiku-4-5-20251001",
+        results = get_assert(
+            "output",
+            {
+                "config": {
+                    "config_path": str(config_file),
+                    "model": "claude-haiku-4-5-20251001",
+                },
+                "vars": {"golden_file": "golden/test-001.yaml"},
+                "prompt": "Q",
             },
-            "vars": {"golden_file": "golden/test-001.yaml"},
-            "prompt": "Q",
-        })
+        )
         component_by_name = {
             list(c["namedScores"].keys())[0]: c
             for c in results["componentResults"]
@@ -696,14 +789,17 @@ class TestGetAssert:
 
         # Scorer call for the sonnet run — must grade sonnet's trace
         # (RIGHT_TABLE), table_alignment passes.
-        results = get_assert("output", {
-            "config": {
-                "config_path": str(config_file),
-                "model": "claude-sonnet-4-5-20250929",
+        results = get_assert(
+            "output",
+            {
+                "config": {
+                    "config_path": str(config_file),
+                    "model": "claude-sonnet-4-5-20250929",
+                },
+                "vars": {"golden_file": "golden/test-001.yaml"},
+                "prompt": "Q",
             },
-            "vars": {"golden_file": "golden/test-001.yaml"},
-            "prompt": "Q",
-        })
+        )
         component_by_name = {
             list(c["namedScores"].keys())[0]: c
             for c in results["componentResults"]
@@ -713,7 +809,9 @@ class TestGetAssert:
 
     @patch("bi_evals.scorer.entry.create_db_client")
     def test_picks_most_recent_trace_for_repeats(
-        self, mock_create: MagicMock, tmp_path: Path,
+        self,
+        mock_create: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """With repeat-N each repeat writes a fresh ``{slug}__{model}__{suffix}.json``.
         The scorer for each invocation should grade the most recent trace
@@ -738,44 +836,61 @@ class TestGetAssert:
 
         golden_dir = tmp_path / "golden"
         golden_dir.mkdir()
-        (golden_dir / "test-001.yaml").write_text(dedent("""\
+        (golden_dir / "test-001.yaml").write_text(
+            dedent("""\
             id: test-001
             question: "Q"
             reference_sql: "SELECT a FROM NEW_TABLE"
-        """))
+        """)
+        )
 
         trace_dir = tmp_path / "results" / "traces"
         trace_dir.mkdir(parents=True)
-        old_trace = (trace_dir
-                     / "golden_test-001_yaml__claude-sonnet-4-5-20250929__old111.json")
-        old_trace.write_text(json.dumps({
-            "test_id": "golden/test-001.yaml",
-            "generated_sql": "SELECT a FROM OLD_TABLE",
-            "trace": [],
-        }))
+        old_trace = (
+            trace_dir / "golden_test-001_yaml__claude-sonnet-4-5-20250929__old111.json"
+        )
+        old_trace.write_text(
+            json.dumps(
+                {
+                    "test_id": "golden/test-001.yaml",
+                    "generated_sql": "SELECT a FROM OLD_TABLE",
+                    "trace": [],
+                }
+            )
+        )
         # Force a measurably-older mtime so the sort is unambiguous.
         time.sleep(0.01)
-        new_trace = (trace_dir
-                     / "golden_test-001_yaml__claude-sonnet-4-5-20250929__new222.json")
-        new_trace.write_text(json.dumps({
-            "test_id": "golden/test-001.yaml",
-            "generated_sql": "SELECT a FROM NEW_TABLE",
-            "trace": [],
-        }))
+        new_trace = (
+            trace_dir / "golden_test-001_yaml__claude-sonnet-4-5-20250929__new222.json"
+        )
+        new_trace.write_text(
+            json.dumps(
+                {
+                    "test_id": "golden/test-001.yaml",
+                    "generated_sql": "SELECT a FROM NEW_TABLE",
+                    "trace": [],
+                }
+            )
+        )
 
         mock_client = MagicMock()
         mock_client.execute.return_value = QueryResult(
-            columns=["A"], rows=[{"A": 1}], row_count=1,
+            columns=["A"],
+            rows=[{"A": 1}],
+            row_count=1,
         )
         mock_create.return_value = mock_client
 
         from bi_evals.scorer.entry import get_assert
 
-        results = get_assert("output", {
-            "config": {"config_path": str(config_file)},
-            "vars": {"golden_file": "golden/test-001.yaml"},
-            "prompt": "Q",
-        })
+        results = get_assert(
+            "output",
+            {
+                "config": {"config_path": str(config_file)},
+                "vars": {"golden_file": "golden/test-001.yaml"},
+                "prompt": "Q",
+            },
+        )
         component_by_name = {
             list(c["namedScores"].keys())[0]: c
             for c in results["componentResults"]
@@ -800,10 +915,13 @@ class TestGetAssert:
 
         from bi_evals.scorer.entry import get_assert
 
-        results = get_assert("output", {
-            "config": {"config_path": str(config_file)},
-            "vars": {},
-        })
+        results = get_assert(
+            "output",
+            {
+                "config": {"config_path": str(config_file)},
+                "vars": {},
+            },
+        )
         assert isinstance(results, dict)
         assert results["pass"] is False
         assert "golden_file" in results["reason"]
@@ -812,7 +930,9 @@ class TestGetAssert:
 class TestTieredScoring:
     """Verify the tiered/weighted pass logic."""
 
-    def _setup(self, tmp_path: Path, dimensions: list[str], extra_scoring: str = "") -> Path:
+    def _setup(
+        self, tmp_path: Path, dimensions: list[str], extra_scoring: str = ""
+    ) -> Path:
         config_content = dedent(f"""\
             project:
               name: "Test"
@@ -823,7 +943,7 @@ class TestTieredScoring:
               type: snowflake
             scoring:
               dimensions:
-{chr(10).join(f'                - {d}' for d in dimensions)}
+{chr(10).join(f"                - {d}" for d in dimensions)}
 {extra_scoring}
         """)
         config_file = tmp_path / "bi-evals.yaml"
@@ -831,7 +951,8 @@ class TestTieredScoring:
 
         golden_dir = tmp_path / "golden"
         golden_dir.mkdir()
-        (golden_dir / "test-001.yaml").write_text(dedent("""\
+        (golden_dir / "test-001.yaml").write_text(
+            dedent("""\
             id: test-001
             question: "Q"
             reference_sql: "SELECT a FROM t"
@@ -841,20 +962,27 @@ class TestTieredScoring:
                 key_columns: [A]
                 completeness_threshold: 0.95
                 precision_threshold: 0.95
-        """))
+        """)
+        )
 
         trace_dir = tmp_path / "results" / "traces"
         trace_dir.mkdir(parents=True)
-        (trace_dir / "golden_test-001_yaml.json").write_text(json.dumps({
-            "test_id": "golden/test-001.yaml",
-            "generated_sql": "SELECT a FROM t",
-            "trace": [],
-        }))
+        (trace_dir / "golden_test-001_yaml.json").write_text(
+            json.dumps(
+                {
+                    "test_id": "golden/test-001.yaml",
+                    "generated_sql": "SELECT a FROM t",
+                    "trace": [],
+                }
+            )
+        )
         return config_file
 
     @patch("bi_evals.scorer.entry.create_db_client")
     def test_diagnostic_failure_does_not_fail_test(
-        self, mock_create: MagicMock, tmp_path: Path,
+        self,
+        mock_create: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """A diagnostic-only failure (table_alignment) should not fail the test
         if all critical dimensions pass and weighted score >= threshold."""
@@ -865,7 +993,9 @@ class TestTieredScoring:
 
         mock_client = MagicMock()
         mock_client.execute.return_value = QueryResult(
-            columns=["A"], rows=[{"A": 1}], row_count=1,
+            columns=["A"],
+            rows=[{"A": 1}],
+            row_count=1,
         )
         mock_create.return_value = mock_client
 
@@ -873,11 +1003,14 @@ class TestTieredScoring:
 
         # Generated SQL references a different table (table_alignment fails),
         # but executes successfully and returns matching rows/values.
-        results = get_assert("output", {
-            "config": {"config_path": str(config_file)},
-            "vars": {"golden_file": "golden/test-001.yaml"},
-            "prompt": "Q",
-        })
+        results = get_assert(
+            "output",
+            {
+                "config": {"config_path": str(config_file)},
+                "vars": {"golden_file": "golden/test-001.yaml"},
+                "prompt": "Q",
+            },
+        )
 
         # 3/4 pass; weighted score is high since the failed one (table_alignment)
         # has weight 1.0 vs the 3 critical dimensions at weight 3.0 each.
@@ -886,7 +1019,9 @@ class TestTieredScoring:
 
     @patch("bi_evals.scorer.entry.create_db_client")
     def test_critical_failure_fails_test(
-        self, mock_create: MagicMock, tmp_path: Path,
+        self,
+        mock_create: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """A critical-dimension failure (execution) fails the test even if score is high."""
         config_file = self._setup(
@@ -896,55 +1031,78 @@ class TestTieredScoring:
 
         mock_client = MagicMock()
         mock_client.execute.return_value = QueryResult(
-            columns=[], rows=[], row_count=0, error="syntax error",
+            columns=[],
+            rows=[],
+            row_count=0,
+            error="syntax error",
         )
         mock_create.return_value = mock_client
 
         from bi_evals.scorer.entry import get_assert
 
-        results = get_assert("output", {
-            "config": {"config_path": str(config_file)},
-            "vars": {"golden_file": "golden/test-001.yaml"},
-            "prompt": "Q",
-        })
+        results = get_assert(
+            "output",
+            {
+                "config": {"config_path": str(config_file)},
+                "vars": {"golden_file": "golden/test-001.yaml"},
+                "prompt": "Q",
+            },
+        )
 
         assert results["pass"] is False
         assert "critical" in results["reason"].lower()
 
     @patch("bi_evals.scorer.entry.create_db_client")
     def test_below_threshold_fails(
-        self, mock_create: MagicMock, tmp_path: Path,
+        self,
+        mock_create: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """Even with all critical dimensions passing, low weighted score fails the test."""
         # Bump pass_threshold high so non-critical failures sink the score.
         config_file = self._setup(
             tmp_path,
-            ["execution", "row_completeness", "value_accuracy",
-             "table_alignment", "filter_correctness", "no_hallucinated_columns"],
+            [
+                "execution",
+                "row_completeness",
+                "value_accuracy",
+                "table_alignment",
+                "filter_correctness",
+                "no_hallucinated_columns",
+            ],
             extra_scoring="              pass_threshold: 0.95",
         )
 
         mock_client = MagicMock()
         mock_client.execute.return_value = QueryResult(
-            columns=["A"], rows=[{"A": 1}], row_count=1,
+            columns=["A"],
+            rows=[{"A": 1}],
+            row_count=1,
         )
         mock_create.return_value = mock_client
 
         # Generated SQL very different from reference so diagnostic dims fail.
         trace_file = tmp_path / "results" / "traces" / "golden_test-001_yaml.json"
-        trace_file.write_text(json.dumps({
-            "test_id": "golden/test-001.yaml",
-            "generated_sql": "SELECT a, b, c FROM other_table WHERE x = 1",
-            "trace": [],
-        }))
+        trace_file.write_text(
+            json.dumps(
+                {
+                    "test_id": "golden/test-001.yaml",
+                    "generated_sql": "SELECT a, b, c FROM other_table WHERE x = 1",
+                    "trace": [],
+                }
+            )
+        )
 
         from bi_evals.scorer.entry import get_assert
 
-        results = get_assert("output", {
-            "config": {"config_path": str(config_file)},
-            "vars": {"golden_file": "golden/test-001.yaml"},
-            "prompt": "Q",
-        })
+        results = get_assert(
+            "output",
+            {
+                "config": {"config_path": str(config_file)},
+                "vars": {"golden_file": "golden/test-001.yaml"},
+                "prompt": "Q",
+            },
+        )
 
         assert results["pass"] is False
         assert "threshold" in results["reason"].lower()

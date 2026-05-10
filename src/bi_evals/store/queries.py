@@ -94,6 +94,7 @@ class RunTestPair:
     ``b_pass_rate`` so rate-based compare can threshold on distribution shifts,
     not just boolean flips.
     """
+
     test_id: str
     category: str | None
     model: str | None
@@ -122,10 +123,10 @@ class ModelSummary:
 class TestStability:
     test_id: str
     runs_observed: int
-    flip_count: int           # number of pass → fail or fail → pass transitions
+    flip_count: int  # number of pass → fail or fail → pass transitions
     longest_pass_streak: int
     longest_fail_streak: int
-    current_streak: int       # positive = pass, negative = fail (magnitude = length)
+    current_streak: int  # positive = pass, negative = fail (magnitude = length)
     pass_rate_overall: float
 
 
@@ -139,6 +140,7 @@ class RunDiff:
 @dataclass(frozen=True)
 class PromptDiff:
     """Files the agent read in run_a vs run_b, classified by drift bucket."""
+
     added: list[str]
     removed: list[str]
     modified: list[str]
@@ -159,6 +161,7 @@ class CostAlert:
 class StaleGolden:
     """One row for the staleness warning. Either ``last_verified_at`` is None
     (unverified) or it predates the threshold (stale)."""
+
     test_id: str
     last_verified_at: date | None
     days_since_verified: int | None  # None if never verified
@@ -172,6 +175,7 @@ class StaleKnowledgeFile:
     Missing files are filtered out before construction (the prompt_diff already
     surfaces deletions), so these fields are always populated.
     """
+
     path: str  # relative-to-project path as stored in prompt_snapshot
     mtime: date
     days_since_modified: int
@@ -288,9 +292,7 @@ def aggregate_by_category(
     ]
 
 
-def dimension_pass_rates(
-    conn: duckdb.DuckDBPyConnection, run_id: str
-) -> list[DimAgg]:
+def dimension_pass_rates(conn: duckdb.DuckDBPyConnection, run_id: str) -> list[DimAgg]:
     rows = conn.execute(
         """
         SELECT dimension,
@@ -317,9 +319,7 @@ def dimension_pass_rates(
     ]
 
 
-def cost_by_model(
-    conn: duckdb.DuckDBPyConnection, run_id: str
-) -> list[ModelCostAgg]:
+def cost_by_model(conn: duckdb.DuckDBPyConnection, run_id: str) -> list[ModelCostAgg]:
     rows = conn.execute(
         """
         SELECT COALESCE(NULLIF(model, ''), '(unknown)') AS m,
@@ -344,9 +344,7 @@ def cost_by_model(
     ]
 
 
-def test_diff(
-    conn: duckdb.DuckDBPyConnection, run_a_id: str, run_b_id: str
-) -> RunDiff:
+def test_diff(conn: duckdb.DuckDBPyConnection, run_a_id: str, run_b_id: str) -> RunDiff:
     """Build the full cross-run test comparison, keyed by (test_id, model)."""
     run_a = get_run(conn, run_a_id)
     run_b = get_run(conn, run_b_id)
@@ -534,7 +532,9 @@ def get_test(
     sql += " ORDER BY model LIMIT 1"
     row = conn.execute(sql, params).fetchone()
     if row is None:
-        raise KeyError(f"Test not found: run_id={run_id} test_id={test_id} model={model!r}")
+        raise KeyError(
+            f"Test not found: run_id={run_id} test_id={test_id} model={model!r}"
+        )
     return TestRow(*row)
 
 
@@ -560,13 +560,22 @@ def get_test_extras(
     sql += " ORDER BY model LIMIT 1"
     row = conn.execute(sql, params).fetchone()
     if row is None:
-        return {"generated_sql": "", "reference_sql": "", "files_read": [], "trace_json": ""}
+        return {
+            "generated_sql": "",
+            "reference_sql": "",
+            "files_read": [],
+            "trace_json": "",
+        }
     generated_sql, reference_sql, files_read, trace_json = row
 
     files: list[str] = []
     if files_read:
         try:
-            files = json.loads(files_read) if isinstance(files_read, str) else list(files_read)
+            files = (
+                json.loads(files_read)
+                if isinstance(files_read, str)
+                else list(files_read)
+            )
         except json.JSONDecodeError:
             files = []
 
@@ -708,9 +717,7 @@ def flakiest_tests(
             """
         ).fetchall()
     ]
-    all_stab = [
-        test_stability(conn, tid, last_n_runs=last_n_runs) for tid in test_ids
-    ]
+    all_stab = [test_stability(conn, tid, last_n_runs=last_n_runs) for tid in test_ids]
     # Only surface tests we've actually observed more than once.
     all_stab = [s for s in all_stab if s.runs_observed > 1]
     all_stab.sort(key=lambda s: (-s.flip_count, s.pass_rate_overall, s.test_id))
@@ -820,7 +827,9 @@ def prompt_diff(
         else:
             unchanged.append(key)
 
-    return PromptDiff(added=added, removed=removed, modified=modified, unchanged=unchanged)
+    return PromptDiff(
+        added=added, removed=removed, modified=modified, unchanged=unchanged
+    )
 
 
 def files_read_for_run(
@@ -845,7 +854,9 @@ def files_read_for_run(
             out[(test_id, model)] = []
             continue
         try:
-            files = json.loads(files_json) if isinstance(files_json, str) else files_json
+            files = (
+                json.loads(files_json) if isinstance(files_json, str) else files_json
+            )
         except json.JSONDecodeError:
             files = []
         out[(test_id, model)] = list(files or [])
@@ -881,11 +892,19 @@ def stale_goldens(
     unverified: list[StaleGolden] = []
     for test_id, last in rows:
         if last is None:
-            unverified.append(StaleGolden(test_id=test_id, last_verified_at=None, days_since_verified=None))
+            unverified.append(
+                StaleGolden(
+                    test_id=test_id, last_verified_at=None, days_since_verified=None
+                )
+            )
             continue
         days = (today - last).days
         if days > stale_after_days:
-            stale.append(StaleGolden(test_id=test_id, last_verified_at=last, days_since_verified=days))
+            stale.append(
+                StaleGolden(
+                    test_id=test_id, last_verified_at=last, days_since_verified=days
+                )
+            )
     stale.sort(key=lambda g: -(g.days_since_verified or 0))
     unverified.sort(key=lambda g: g.test_id)
     return stale, unverified
@@ -929,11 +948,13 @@ def stale_knowledge_files(
         mtime_date = date.fromtimestamp(mtime_ts)
         days = (today - mtime_date).days
         if days > stale_after_days:
-            out.append(StaleKnowledgeFile(
-                path=rel_path,
-                mtime=mtime_date,
-                days_since_modified=days,
-            ))
+            out.append(
+                StaleKnowledgeFile(
+                    path=rel_path,
+                    mtime=mtime_date,
+                    days_since_modified=days,
+                )
+            )
     out.sort(key=lambda f: -f.days_since_modified)
     return out
 

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // empty' | { read -r f; case \"$f\" in *results/*|*.duckdb) echo \"{\\\"decision\\\":\\\"block\\\",\\\"reason\\\":\\\"Refusing to edit $f directly. Files under results/ and *.duckdb are produced by 'bi-evals run' and 'bi-evals ingest'. If a test is failing, fix the underlying code or golden — do not hand-edit the artifact.\\\"}\"; exit 0 ;; esac; }"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in *.py) cd \"$(git rev-parse --show-toplevel)\" && uv run ruff format \"$f\" ;; esac; } 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in */src/bi_evals/config.py|*/src/bi_evals/cli.py|*/src/bi_evals/scorer/dimensions.py|*/src/bi_evals/scorer/entry.py|*/golden/*.yaml) echo \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PostToolUse\\\",\\\"additionalContext\\\":\\\"You edited $f, which is user-facing. Per CLAUDE.md, also update tmp/my-evals/ if this change affects config schema, CLI surface, scoring behavior, or golden-test format. If unsure, ask the user.\\\"}}\" ;; esac; } 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

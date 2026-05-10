@@ -127,9 +127,10 @@ def test_run_view_filter_by_category(client: TestClient) -> None:
     assert res.status_code == 200
     body = res.text
     # Active filter is reflected in the dropdown
-    assert 'value="cases" selected' in body or "cases\" selected" in body
+    assert 'value="cases" selected' in body or 'cases" selected' in body
     # Drilldown links only refer to /cases/ tests in the body (filtered table)
     import re
+
     test_id_rows = re.findall(r'href="/runs/[^"]+/tests/([^"?]+)', body)
     assert test_id_rows
     for tid in test_id_rows:
@@ -138,6 +139,7 @@ def test_run_view_filter_by_category(client: TestClient) -> None:
 
 def test_test_drilldown_renders(client: TestClient) -> None:
     from urllib.parse import quote
+
     res = client.get(f"/runs/{RUN_B_ID}/tests/{quote(PASSING_TEST_ID, safe='')}")
     assert res.status_code == 200
     body = res.text
@@ -148,6 +150,7 @@ def test_test_drilldown_renders(client: TestClient) -> None:
 
 def test_test_drilldown_shows_fail_reason(client: TestClient) -> None:
     from urllib.parse import quote
+
     res = client.get(f"/runs/{RUN_B_ID}/tests/{quote(FAILING_TEST_ID, safe='')}")
     assert res.status_code == 200
     body = res.text
@@ -161,7 +164,9 @@ def test_test_drilldown_unknown_returns_404(client: TestClient) -> None:
     assert res.status_code == 404
 
 
-def test_runs_list_project_filter(client: TestClient, eval_sample_config: BiEvalsConfig) -> None:
+def test_runs_list_project_filter(
+    client: TestClient, eval_sample_config: BiEvalsConfig
+) -> None:
     res = client.get(f"/?project={eval_sample_config.project.name}")
     assert res.status_code == 200
     assert RUN_B_ID in res.text
@@ -187,6 +192,7 @@ def test_run_view_renders_scoring_rule_callout(client: TestClient) -> None:
 
 def test_test_drilldown_pass_verdict(client: TestClient) -> None:
     from urllib.parse import quote
+
     res = client.get(f"/runs/{RUN_B_ID}/tests/{quote(PASSING_TEST_ID, safe='')}")
     assert res.status_code == 200
     body = res.text
@@ -199,6 +205,7 @@ def test_test_drilldown_pass_verdict(client: TestClient) -> None:
 
 def test_test_drilldown_fail_verdict(client: TestClient) -> None:
     from urllib.parse import quote
+
     res = client.get(f"/runs/{RUN_B_ID}/tests/{quote(FAILING_TEST_ID, safe='')}")
     assert res.status_code == 200
     body = res.text
@@ -272,7 +279,9 @@ def test_runs_list_band_invalid_value_falls_back(client: TestClient) -> None:
     assert "Ignored invalid `band`" in body
 
 
-def test_runs_list_regression_pill_renders_for_regressed_run(client: TestClient) -> None:
+def test_runs_list_regression_pill_renders_for_regressed_run(
+    client: TestClient,
+) -> None:
     """RUN_B is the documented regression vs RUN_A; the badge should render on its row."""
     res = client.get("/")
     assert res.status_code == 200
@@ -280,6 +289,7 @@ def test_runs_list_regression_pill_renders_for_regressed_run(client: TestClient)
     # Locate the row for RUN_B and assert the regressed pill is present in it.
     # Rows are <tr> ... </tr>; cheap structural check is enough here.
     import re
+
     rows = re.findall(r"<tr>.*?</tr>", body, flags=re.DOTALL)
     matching_rows = [r for r in rows if RUN_B_ID in r]
     assert matching_rows, "RUN_B row not found in rendered HTML"

@@ -113,8 +113,11 @@ class TestCallApiEndpoint:
             "sql": "SELECT * FROM revenue",
             "files_read": ["SKILL.md", "REVENUE.md"],
             "trace": [
-                {"type": "tool_use", "tool_name": "read_skill_file",
-                 "tool_input": {"path": "SKILL.md"}},
+                {
+                    "type": "tool_use",
+                    "tool_name": "read_skill_file",
+                    "tool_input": {"path": "SKILL.md"},
+                },
             ],
         }
 

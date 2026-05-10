@@ -102,7 +102,9 @@ def test_alert_only_uses_same_project_history() -> None:
     base = datetime(2026, 4, 25, 12, 0, 0)
     # Other project: high costs.
     for i in range(5):
-        _seed_run(conn, f"other{i}", base - timedelta(hours=i + 1), 100.0, project="other")
+        _seed_run(
+            conn, f"other{i}", base - timedelta(hours=i + 1), 100.0, project="other"
+        )
     # Our project: 3 cheap priors, then a 2.5x spike.
     for i in range(3):
         _seed_run(conn, f"r{i}", base - timedelta(hours=i + 1), 1.0)
@@ -137,12 +139,18 @@ def test_per_test_anomaly_flagged() -> None:
     # 5 priors with test "t1" costing $0.10, run-level total dominated by t1.
     for i in range(5):
         _seed_run(
-            conn, f"r{i}", base - timedelta(hours=i + 1),
-            total_cost=0.10, test_costs={"t1": 0.10},
+            conn,
+            f"r{i}",
+            base - timedelta(hours=i + 1),
+            total_cost=0.10,
+            test_costs={"t1": 0.10},
         )
     _seed_run(
-        conn, "current", base,
-        total_cost=0.50, test_costs={"t1": 0.50},  # 5x median
+        conn,
+        "current",
+        base,
+        total_cost=0.50,
+        test_costs={"t1": 0.50},  # 5x median
     )
     alert = q.cost_alerts(conn, "current", multiplier=2.0)
     assert alert is not None

@@ -55,7 +55,8 @@ def test_golden_loads_anti_patterns(tmp_path: Path) -> None:
     assert g.anti_patterns is not None
     assert g.anti_patterns.forbidden_tables == ["RAW_ORDERS", "LEGACY_REVENUE"]
     assert g.anti_patterns.forbidden_columns == [
-        "ACCOUNT_INVOICES.amount", "gross_revenue",
+        "ACCOUNT_INVOICES.amount",
+        "gross_revenue",
     ]
 
 
@@ -77,17 +78,13 @@ def test_extract_columns_resolves_alias_to_physical_table() -> None:
 
 def test_extract_columns_unresolved_when_multiple_tables_unqualified() -> None:
     """Bare ``amount`` in a multi-table query → owner unknown (None)."""
-    pairs = extract_columns_with_tables(
-        "SELECT amount FROM orders, customers"
-    )
+    pairs = extract_columns_with_tables("SELECT amount FROM orders, customers")
     # Owner cannot be resolved without a qualifier; should be None.
     assert (None, "AMOUNT") in pairs
 
 
 def test_extract_columns_resolves_when_single_table() -> None:
-    pairs = extract_columns_with_tables(
-        "SELECT amount FROM raw_orders"
-    )
+    pairs = extract_columns_with_tables("SELECT amount FROM raw_orders")
     assert ("RAW_ORDERS", "AMOUNT") in pairs
 
 
@@ -116,34 +113,26 @@ def test_no_violations_when_sql_is_clean() -> None:
 
 def test_forbidden_table_flagged() -> None:
     patterns = AntiPatterns(forbidden_tables=["RAW_ORDERS"])
-    violations = _check_anti_patterns(
-        "SELECT amount FROM raw_orders", patterns
-    )
+    violations = _check_anti_patterns("SELECT amount FROM raw_orders", patterns)
     assert len(violations) == 1
     assert "RAW_ORDERS" in violations[0]
 
 
 def test_forbidden_table_flagged_via_alias() -> None:
     patterns = AntiPatterns(forbidden_tables=["RAW_ORDERS"])
-    violations = _check_anti_patterns(
-        "SELECT o.amount FROM raw_orders AS o", patterns
-    )
+    violations = _check_anti_patterns("SELECT o.amount FROM raw_orders AS o", patterns)
     assert len(violations) == 1
 
 
 def test_bare_forbidden_table_matches_schema_qualified() -> None:
     """A bare ``RAW_ORDERS`` entry should match ``FINANCE.RAW_ORDERS``."""
     patterns = AntiPatterns(forbidden_tables=["RAW_ORDERS"])
-    violations = _check_anti_patterns(
-        "SELECT * FROM FINANCE.RAW_ORDERS", patterns
-    )
+    violations = _check_anti_patterns("SELECT * FROM FINANCE.RAW_ORDERS", patterns)
     assert len(violations) == 1
 
 
 def test_qualified_forbidden_column() -> None:
-    patterns = AntiPatterns(
-        forbidden_columns=["ACCOUNT_INVOICES.amount"]
-    )
+    patterns = AntiPatterns(forbidden_columns=["ACCOUNT_INVOICES.amount"])
     violations = _check_anti_patterns(
         "SELECT a.amount FROM ACCOUNT_INVOICES a", patterns
     )
@@ -154,9 +143,7 @@ def test_qualified_forbidden_column() -> None:
 def test_qualified_forbidden_column_misses_other_table() -> None:
     """forbidden_columns: ['FOO.bar'] must NOT flag 'OTHER.bar'."""
     patterns = AntiPatterns(forbidden_columns=["RAW_ORDERS.amount"])
-    violations = _check_anti_patterns(
-        "SELECT amount FROM V_UNIFIED_REVENUE", patterns
-    )
+    violations = _check_anti_patterns("SELECT amount FROM V_UNIFIED_REVENUE", patterns)
     assert violations == []
 
 
@@ -192,7 +179,8 @@ def test_dim_vacuous_pass_when_no_anti_patterns() -> None:
 
 def test_dim_vacuous_pass_when_lists_empty() -> None:
     g = GoldenTest(
-        id="x", question="q?",
+        id="x",
+        question="q?",
         anti_patterns=AntiPatterns(forbidden_tables=[], forbidden_columns=[]),
     )
     r = check_anti_pattern_compliance("SELECT * FROM raw_orders", g)
@@ -202,7 +190,8 @@ def test_dim_vacuous_pass_when_lists_empty() -> None:
 
 def test_dim_fails_with_clear_reason() -> None:
     g = GoldenTest(
-        id="x", question="q?",
+        id="x",
+        question="q?",
         anti_patterns=AntiPatterns(forbidden_tables=["RAW_ORDERS"]),
     )
     r = check_anti_pattern_compliance("SELECT amount FROM raw_orders", g)
@@ -213,12 +202,11 @@ def test_dim_fails_with_clear_reason() -> None:
 
 def test_dim_passes_when_sql_is_clean() -> None:
     g = GoldenTest(
-        id="x", question="q?",
+        id="x",
+        question="q?",
         anti_patterns=AntiPatterns(forbidden_tables=["RAW_ORDERS"]),
     )
-    r = check_anti_pattern_compliance(
-        "SELECT amount FROM V_UNIFIED_REVENUE", g
-    )
+    r = check_anti_pattern_compliance("SELECT amount FROM V_UNIFIED_REVENUE", g)
     assert r.passed is True
 
 
@@ -256,12 +244,20 @@ def test_report_drops_anti_pattern_dim_when_all_skipped() -> None:
     # Two tests, both vacuous on anti_pattern_compliance.
     for tid in ("t1", "t2"):
         _seed_dim_row(
-            conn, "r", tid, "anti_pattern_compliance",
-            passed=True, reason="skipped: no anti-patterns defined",
+            conn,
+            "r",
+            tid,
+            "anti_pattern_compliance",
+            passed=True,
+            reason="skipped: no anti-patterns defined",
         )
         _seed_dim_row(
-            conn, "r", tid, "execution",
-            passed=True, reason="ok",
+            conn,
+            "r",
+            tid,
+            "execution",
+            passed=True,
+            reason="ok",
         )
     dims = q.dimension_pass_rates(conn, "r")
     assert {d.dimension for d in dims} == {"anti_pattern_compliance", "execution"}
@@ -279,12 +275,20 @@ def test_report_keeps_anti_pattern_dim_when_any_real_run() -> None:
         "VALUES ('r', 'p', '2026-04-25', '{}', '/p', 0, 0, 0, 0)"
     )
     _seed_dim_row(
-        conn, "r", "t1", "anti_pattern_compliance",
-        passed=True, reason="skipped: no anti-patterns defined",
+        conn,
+        "r",
+        "t1",
+        "anti_pattern_compliance",
+        passed=True,
+        reason="skipped: no anti-patterns defined",
     )
     _seed_dim_row(
-        conn, "r", "t2", "anti_pattern_compliance",
-        passed=True, reason="no forbidden tables/columns used",
+        conn,
+        "r",
+        "t2",
+        "anti_pattern_compliance",
+        passed=True,
+        reason="no forbidden tables/columns used",
     )
     dims = q.dimension_pass_rates(conn, "r")
     filtered = _drop_vacuous_dimensions(conn, "r", dims)
@@ -301,8 +305,12 @@ def test_report_keeps_dimension_with_failures_even_if_pass_rate_full() -> None:
         "VALUES ('r', 'p', '2026-04-25', '{}', '/p', 0, 0, 0, 0)"
     )
     _seed_dim_row(
-        conn, "r", "t1", "anti_pattern_compliance",
-        passed=False, reason="forbidden table used: RAW_ORDERS",
+        conn,
+        "r",
+        "t1",
+        "anti_pattern_compliance",
+        passed=False,
+        reason="forbidden table used: RAW_ORDERS",
     )
     dims = q.dimension_pass_rates(conn, "r")
     filtered = _drop_vacuous_dimensions(conn, "r", dims)

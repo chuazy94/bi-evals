@@ -44,7 +44,11 @@ class TestGoldenTest:
                 "min_rows": 1,
                 "required_columns": ["ID", "AMOUNT"],
                 "checks": [
-                    {"column": "AMOUNT", "condition": "type", "value": "positive_number"},
+                    {
+                        "column": "AMOUNT",
+                        "condition": "type",
+                        "value": "positive_number",
+                    },
                     {"column": "ID", "condition": "equals", "value": 123},
                 ],
                 "row_comparison": {
