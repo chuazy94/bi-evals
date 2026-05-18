@@ -30,8 +30,13 @@ def filter_tests(
 
 
 def _get_package_root() -> Path:
-    """Return the root of the bi_evals package source tree."""
-    return Path(__file__).resolve().parent.parent.parent.parent
+    """Return the installed bi_evals package directory.
+
+    Resolves the same way under both editable (src-layout repo) and
+    wheel (site-packages) installs, since `provider/` and `scorer/` live
+    directly under the `bi_evals/` package in both layouts.
+    """
+    return Path(__file__).resolve().parent.parent
 
 
 def generate_promptfoo_config(
@@ -55,8 +60,8 @@ def generate_promptfoo_config(
         tests_with_paths = filter_tests(tests_with_paths, filter_pattern)
 
     pkg_root = _get_package_root()
-    provider_path = pkg_root / "src" / "bi_evals" / "provider" / "entry.py"
-    scorer_path = pkg_root / "src" / "bi_evals" / "scorer" / "entry.py"
+    provider_path = pkg_root / "provider" / "entry.py"
+    scorer_path = pkg_root / "scorer" / "entry.py"
 
     abs_config_path = str(Path(config_path).resolve())
 
