@@ -139,6 +139,46 @@ class TestGeneratePromptfooConfig:
         assert assertion["value"].startswith("file://")
         assert assertion["value"].endswith("/src/bi_evals/scorer/entry.py:get_assert")
 
+    @pytest.mark.parametrize(
+        "bridge_file, expected_provider, expected_scorer",
+        [
+            # Wheel install: bridge.py lives under site-packages/bi_evals/promptfoo/
+            (
+                "/fake/.venv/lib/python3.14/site-packages/bi_evals/promptfoo/bridge.py",
+                "/fake/.venv/lib/python3.14/site-packages/bi_evals/provider/entry.py",
+                "/fake/.venv/lib/python3.14/site-packages/bi_evals/scorer/entry.py",
+            ),
+            # Editable install (src layout): bridge.py lives under repo/src/bi_evals/promptfoo/
+            (
+                "/fake/repo/src/bi_evals/promptfoo/bridge.py",
+                "/fake/repo/src/bi_evals/provider/entry.py",
+                "/fake/repo/src/bi_evals/scorer/entry.py",
+            ),
+        ],
+        ids=["wheel_install", "editable_install"],
+    )
+    def test_provider_scorer_paths_resolve_under_both_layouts(
+        self,
+        tmp_path: Path,
+        bridge_file: str,
+        expected_provider: str,
+        expected_scorer: str,
+    ) -> None:
+        """Regression for #18: resolved provider/scorer paths must NOT inject
+        a spurious `src/bi_evals/` prefix under wheel installs (where bridge.py
+        lives in site-packages and there is no `src/` directory)."""
+        golden = _setup_golden_dir(tmp_path)
+        _write_golden(golden / "t1.yaml", "t-001", "Q")
+        config = _make_config(tmp_path)
+
+        with patch("bi_evals.promptfoo.bridge.__file__", bridge_file):
+            result = generate_promptfoo_config(config, "bi-evals.yaml")
+
+        provider_id = result["providers"][0]["id"]
+        scorer_value = result["tests"][0]["assert"][0]["value"]
+        assert provider_id == f"file://{expected_provider}:call_api"
+        assert scorer_value == f"file://{expected_scorer}:get_assert"
+
     def test_empty_golden_dir(self, tmp_path: Path) -> None:
         _setup_golden_dir(tmp_path)
         config = _make_config(tmp_path)
