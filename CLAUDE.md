@@ -18,6 +18,8 @@ If a proposed change doesn't make first-run setup faster, clearer, or more forgi
 
 bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Users provide their own skill/knowledge files, golden tests, and database credentials — the framework handles the LLM provider loop, 10-dimension accuracy scoring, HTML reporting, and regression detection. Promptfoo (Node.js) is used as the test runner engine; all custom logic is Python.
 
+**Two run modes** (covered in README "Two modes"): **Built-in** = bi-evals runs Claude itself with skill files (`agent.type: anthropic_tool_loop`); **Bring-your-own (BYO)** = bi-evals calls the user's existing BI agent over HTTP (`agent.type: api_endpoint`). The scoring engine is shared; the agent-side config differs. When adding features, ask whether they apply to both modes — most user-facing changes need to be considered in both.
+
 ## Commands
 
 ```bash
