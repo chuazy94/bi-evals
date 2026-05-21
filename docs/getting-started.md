@@ -128,21 +128,38 @@ This is fine for one-off testing. Option A is nicer because you can `cd` into yo
 
 ---
 
-## Step 2 — Scaffold the project (both modes)
+## Step 2 — Scaffold the project
+
+Pick the command that matches your mode. Running `bi-evals init` on its own (without a mode) intentionally errors — the scaffold output differs between modes, so you have to pick.
+
+### Built-in mode
 
 ```bash
 cd ~/work/my-test-evals
-uv run bi-evals init
+uv run bi-evals init built-in
 ```
 
 This drops:
 
-- `bi-evals.yaml` — config with placeholders you'll edit
-- `.env` and `.env.example` — for credentials
-- `golden/example-query.yaml` — a stub golden test
+- `bi-evals.yaml` — pre-configured for `anthropic_tool_loop` with placeholder paths for your system prompt and skill files
+- `.env` and `.env.example` — keyed on `ANTHROPIC_API_KEY` + Snowflake creds
+- `golden/example-query.yaml` — a stub golden test (mode-agnostic)
 - `results/` and `reports/` — empty dirs for outputs
 
-> **Heads up on the scaffold.** The current `bi-evals init` is mode-agnostic — it produces a Built-in-shaped scaffold and you adapt it for BYO by editing `bi-evals.yaml`. A future release will split this into `bi-evals init built-in` and `bi-evals init byo` subcommands so the scaffolded files match the mode you picked. Until then, BYO users should expect to delete the skills/system-prompt scaffolding and replace the `agent` section per Step 3 below.
+### BYO mode
+
+```bash
+cd ~/work/my-test-evals
+uv run bi-evals init byo
+```
+
+This drops:
+
+- `bi-evals.yaml` — pre-configured for `api_endpoint` with `${BI_AGENT_URL}` and `${BI_AGENT_TOKEN}` placeholders; **no** `system_prompt:` or `tools:` fields (unused in BYO)
+- `.env` and `.env.example` — keyed on `BI_AGENT_URL`, `BI_AGENT_TOKEN`, and Snowflake creds (no `ANTHROPIC_API_KEY`)
+- `adapter_example.py` — a ~70-line FastAPI reference shim showing the response shape bi-evals expects from your endpoint
+- `golden/example-query.yaml` — a stub golden test (mode-agnostic)
+- `results/` and `reports/` — empty dirs for outputs
 
 ---
 
@@ -516,7 +533,6 @@ The viewer's compare view is especially useful in BYO mode for catching regressi
 Known onboarding gaps not yet fixed:
 
 - **Install path** — eventually `pip install bi-evals` from PyPI; for now you install from the local repo.
-- **Mode-aware `bi-evals init`** — `bi-evals init built-in` and `bi-evals init byo` subcommands so the scaffold matches your mode (today the scaffold is mode-agnostic and BYO users adapt it manually).
 - **`api_endpoint` response contract reference doc** — explicit schema for `trace` / `files_read` / etc. that unlocks the full scoring dimensions in BYO mode.
 - **Sample DuckDB dataset in the scaffold** — so you can run a real eval before setting up Snowflake; not built yet.
 - **`bi-evals doctor`** — a one-shot validation command (will also check that a BYO endpoint returns a parseable response shape); not built yet.

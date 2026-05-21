@@ -38,7 +38,18 @@ def cli(ctx: click.Context, config_path: str) -> None:
     ctx.obj["config_path"] = config_path
 
 
-@cli.command()
+@cli.group(invoke_without_command=True)
+@click.pass_context
+def init(ctx: click.Context) -> None:
+    """Scaffold a new bi-evals project. Pick a mode: built-in or byo."""
+    if ctx.invoked_subcommand is None:
+        raise click.UsageError(
+            "must specify a mode: 'built-in' or 'byo'. "
+            "Run 'bi-evals init --help' for details, or see the README's 'Two modes' section."
+        )
+
+
+@init.command("built-in")
 @click.option(
     "--dir",
     "-d",
@@ -46,24 +57,58 @@ def cli(ctx: click.Context, config_path: str) -> None:
     default=".",
     help="Directory to scaffold the project in.",
 )
-def init(target_dir: str) -> None:
-    """Scaffold a new bi-evals project."""
+def init_builtin(target_dir: str) -> None:
+    """Scaffold a Built-in mode project (bi-evals runs Claude + your skill files)."""
     target = Path(target_dir).resolve()
     target.mkdir(parents=True, exist_ok=True)
 
-    _scaffold_project(target)
-    click.echo(f"Scaffolded bi-evals project in {target}")
+    _scaffold_project(target, mode="built-in")
+    click.echo(f"Scaffolded Built-in mode bi-evals project in {target}")
     click.echo()
     click.echo("Next steps:")
     click.echo(
-        "  1. Edit bi-evals.yaml — point agent.tools[].config.base_dir to your skill/knowledge files"
+        "  1. Create your system-prompt.md and skill files (e.g. skills/SKILL.md, skills/knowledge/*.md)"
+    )
+    click.echo(
+        "  2. Edit bi-evals.yaml — point agent.tools[].config.base_dir to your skill/knowledge files"
+    )
+    click.echo("  3. Edit bi-evals.yaml — configure your database connection")
+    click.echo("  4. Create golden tests in golden/")
+    click.echo(
+        "  5. Edit .env with ANTHROPIC_API_KEY and Snowflake credentials (next to bi-evals.yaml; loaded automatically)"
+    )
+    click.echo("  6. Run: bi-evals run")
+
+
+@init.command("byo")
+@click.option(
+    "--dir",
+    "-d",
+    "target_dir",
+    default=".",
+    help="Directory to scaffold the project in.",
+)
+def init_byo(target_dir: str) -> None:
+    """Scaffold a BYO mode project (bi-evals calls your existing agent over HTTP)."""
+    target = Path(target_dir).resolve()
+    target.mkdir(parents=True, exist_ok=True)
+
+    _scaffold_project(target, mode="byo")
+    click.echo(f"Scaffolded BYO mode bi-evals project in {target}")
+    click.echo()
+    click.echo("Next steps:")
+    click.echo(
+        "  1. Edit bi-evals.yaml — set agent.endpoint.url (and headers if needed) to point at your agent"
     )
     click.echo("  2. Edit bi-evals.yaml — configure your database connection")
     click.echo("  3. Create golden tests in golden/")
     click.echo(
-        "  4. Edit .env with your API keys and Snowflake credentials (next to bi-evals.yaml; loaded automatically)"
+        "  4. Edit .env with BI_AGENT_URL, BI_AGENT_TOKEN (if applicable), and Snowflake credentials"
     )
-    click.echo("  5. Run: bi-evals run")
+    click.echo(
+        "  5. See adapter_example.py for a reference FastAPI shim if your agent isn't HTTP-reachable yet"
+    )
+    click.echo("  6. Run: bi-evals run")
 
 
 @cli.command()
@@ -547,31 +592,57 @@ def _echo_cost_alert(alert: store_queries.CostAlert) -> None:
             )
 
 
-def _scaffold_project(target: Path) -> None:
-    """Create eval infrastructure files only. No skill/knowledge files."""
+def _scaffold_project(target: Path, *, mode: str) -> None:
+    """Create eval infrastructure files. Mode-aware: 'built-in' or 'byo'.
+
+    Built-in mode writes a Claude-harness config and .env keyed on
+    ANTHROPIC_API_KEY. BYO mode writes an api_endpoint config, .env
+    keyed on BI_AGENT_URL/BI_AGENT_TOKEN, and an adapter_example.py
+    FastAPI shim demonstrating the response shape bi-evals expects.
+
+    Neither mode scaffolds skill/knowledge files — in Built-in mode the
+    user provides those; in BYO mode they live with the user's agent.
+    """
+    if mode == "built-in":
+        config_template = _TEMPLATE_CONFIG_BUILTIN
+        env_template = _TEMPLATE_ENV_BUILTIN
+        sample_env = _SAMPLE_DOT_ENV_BUILTIN
+    elif mode == "byo":
+        config_template = _TEMPLATE_CONFIG_BYO
+        env_template = _TEMPLATE_ENV_BYO
+        sample_env = _SAMPLE_DOT_ENV_BYO
+    else:
+        raise ValueError(f"unknown mode: {mode!r}")
+
     # bi-evals.yaml
     config_file = target / "bi-evals.yaml"
     if not config_file.exists():
-        config_file.write_text(_TEMPLATE_CONFIG)
+        config_file.write_text(config_template)
 
     # .env.example (reference; safe to commit if you version this folder)
     env_example = target / ".env.example"
     if not env_example.exists():
-        env_example.write_text(_TEMPLATE_ENV)
+        env_example.write_text(env_template)
 
     # .env (sample placeholders; fill with real values — do not commit secrets)
     dot_env = target / ".env"
     if not dot_env.exists():
-        dot_env.write_text(_SAMPLE_DOT_ENV)
+        dot_env.write_text(sample_env)
 
     # Directory structure — eval infrastructure only
     for d in ["golden", "results", "reports"]:
         (target / d).mkdir(parents=True, exist_ok=True)
 
-    # Example golden test
+    # Example golden test (mode-agnostic — schema is identical)
     golden_file = target / "golden" / "example-query.yaml"
     if not golden_file.exists():
         golden_file.write_text(_TEMPLATE_GOLDEN)
+
+    # BYO-only: reference FastAPI shim showing the response contract
+    if mode == "byo":
+        adapter_file = target / "adapter_example.py"
+        if not adapter_file.exists():
+            adapter_file.write_text(_TEMPLATE_BYO_ADAPTER)
 
     # .gitkeep files
     for d in ["results", "reports"]:
@@ -580,17 +651,20 @@ def _scaffold_project(target: Path) -> None:
             gitkeep.write_text("")
 
 
-_TEMPLATE_CONFIG = """\
+# ────────────────────────────────────────────────────────────────────────────
+# Built-in mode templates — bi-evals runs Claude with your skill files
+# ────────────────────────────────────────────────────────────────────────────
+
+_TEMPLATE_CONFIG_BUILTIN = """\
+# Built-in mode: bi-evals runs Claude with your skill/knowledge files.
+# See docs/getting-started.md for the BYO alternative.
+
 project:
   name: "My BI Agent Evals"
 
 agent:
-  # Option 1: "anthropic_tool_loop" — eval runs Claude with your skill files
-  # Option 2: "api_endpoint" — eval calls your existing agent API
   type: "anthropic_tool_loop"
-
-  # --- Settings for anthropic_tool_loop ---
-  model: "claude-sonnet-4-5-20250929"
+  model: "claude-sonnet-4-6"                          # example; any valid Anthropic model ID works
   system_prompt: "path/to/your/system-prompt.md"     # Path to your system prompt
   tools:
     - name: read_skill_file                           # Tool name the agent uses
@@ -598,16 +672,6 @@ agent:
       config:
         base_dir: "path/to/your/skill/"               # Path to your existing skill/knowledge files
   max_rounds: 10
-
-  # --- Settings for api_endpoint ---
-  # endpoint:
-  #   url: "https://your-agent-api.com/ask"
-  #   method: POST
-  #   headers:
-  #     Authorization: "Bearer ${API_TOKEN}"
-  #   response_sql_key: "sql"           # JSONPath to SQL in the response
-  #   response_text_key: "text"         # JSONPath to text answer in the response
-  #   timeout: 60
 
 database:
   type: snowflake
@@ -649,7 +713,7 @@ storage:
   auto_ingest: true
 """
 
-_TEMPLATE_ENV = """\
+_TEMPLATE_ENV_BUILTIN = """\
 ANTHROPIC_API_KEY=sk-ant-...
 SNOWFLAKE_ACCOUNT=
 SNOWFLAKE_USER=
@@ -660,8 +724,8 @@ SNOWFLAKE_DATABASE=
 SNOWFLAKE_SCHEMA=
 """
 
-_SAMPLE_DOT_ENV = """\
-# Local credentials for this eval project (gitignored in bi-evals repo root).
+_SAMPLE_DOT_ENV_BUILTIN = """\
+# Local credentials for this Built-in mode eval project (gitignored).
 # Replace placeholder values before running bi-evals run.
 
 ANTHROPIC_API_KEY=sk-ant-...
@@ -673,6 +737,164 @@ SNOWFLAKE_WAREHOUSE=
 SNOWFLAKE_DATABASE=
 SNOWFLAKE_SCHEMA=
 """
+
+# ────────────────────────────────────────────────────────────────────────────
+# BYO mode templates — bi-evals calls your existing agent over HTTP
+# ────────────────────────────────────────────────────────────────────────────
+
+_TEMPLATE_CONFIG_BYO = """\
+# BYO mode: bi-evals POSTs each question to your existing agent endpoint
+# and scores what it returns. Your agent owns its own skills/prompt/routing.
+# See docs/getting-started.md for the Built-in alternative.
+
+project:
+  name: "My BI Agent Evals"
+
+agent:
+  type: "api_endpoint"
+  endpoint:
+    url: "${BI_AGENT_URL}"                              # e.g. http://localhost:8000/ask
+    method: "POST"                                      # default; omit if unchanged
+    timeout: 60                                         # seconds; default
+    headers:
+      Authorization: "Bearer ${BI_AGENT_TOKEN}"         # optional; omit if your endpoint doesn't need auth
+    # response_text_key defaults to "text", response_sql_key defaults to "sql".
+    # Set them explicitly if your endpoint uses different field names or nests its response
+    # (dot-notation supported, e.g. "response.sql").
+
+database:
+  type: snowflake
+  connection:
+    account: "${SNOWFLAKE_ACCOUNT}"
+    user: "${SNOWFLAKE_USER}"
+    private_key_path: "${SNOWFLAKE_PRIVATE_KEY_PATH}"
+    private_key_passphrase: "${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}"  # optional, if key is encrypted
+    warehouse: "${SNOWFLAKE_WAREHOUSE}"
+    database: "${SNOWFLAKE_DATABASE}"
+    schema: "${SNOWFLAKE_SCHEMA}"
+  query_timeout: 30
+
+golden_tests:
+  dir: "golden/"
+
+scoring:
+  dimensions:
+    - execution
+    - table_alignment
+    - column_alignment
+    - filter_correctness
+    - row_completeness
+    - row_precision
+    - value_accuracy
+    - no_hallucinated_columns
+    # skill_path_correctness only works if your endpoint returns `files_read`
+    # or `trace` data. Re-enable once your endpoint emits it.
+    # - skill_path_correctness
+  thresholds:
+    completeness: 0.95
+    precision: 0.95
+    value_tolerance: 0.0001
+
+reporting:
+  output_dir: "reports/"
+  results_dir: "results/"
+
+storage:
+  db_path: "results/bi-evals.duckdb"
+  auto_ingest: true
+"""
+
+_TEMPLATE_ENV_BYO = """\
+BI_AGENT_URL=http://localhost:8000/ask
+BI_AGENT_TOKEN=
+SNOWFLAKE_ACCOUNT=
+SNOWFLAKE_USER=
+SNOWFLAKE_PRIVATE_KEY_PATH=~/.ssh/snowflake_rsa_key.p8
+SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
+SNOWFLAKE_WAREHOUSE=
+SNOWFLAKE_DATABASE=
+SNOWFLAKE_SCHEMA=
+"""
+
+_SAMPLE_DOT_ENV_BYO = """\
+# Local credentials for this BYO mode eval project (gitignored).
+# Replace placeholder values before running bi-evals run.
+# BI_AGENT_URL is where bi-evals will POST each test question.
+
+BI_AGENT_URL=http://localhost:8000/ask
+BI_AGENT_TOKEN=
+SNOWFLAKE_ACCOUNT=
+SNOWFLAKE_USER=
+SNOWFLAKE_PRIVATE_KEY_PATH=~/.ssh/snowflake_rsa_key.p8
+SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
+SNOWFLAKE_WAREHOUSE=
+SNOWFLAKE_DATABASE=
+SNOWFLAKE_SCHEMA=
+"""
+
+_TEMPLATE_BYO_ADAPTER = '''\
+"""Reference FastAPI adapter for BYO mode.
+
+bi-evals expects to POST {"question": "..."} to your endpoint and receive
+JSON back. This file shows the minimum shape that lets the scorer work,
+plus the optional fields that unlock the full set of scoring dimensions.
+
+You do not have to run this exact file. Treat it as a template for wrapping
+your existing production agent in a thin HTTP layer for evaluation:
+import your agent here, call it in /ask, format the response.
+
+Run locally:
+    pip install fastapi uvicorn
+    uvicorn adapter_example:app --port 8000
+
+Then point bi-evals at it:
+    BI_AGENT_URL=http://localhost:8000/ask
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI()
+
+
+class AskRequest(BaseModel):
+    question: str
+
+
+class AskResponse(BaseModel):
+    # Minimum useful response — scores SQL+results dimensions:
+    text: str  # Natural-language answer
+    sql: str   # SQL the agent generated
+
+    # Optional — unlocks knowledge-file scoring (skill_path_correctness):
+    # files_read: list of knowledge files your agent's retrieval surfaced.
+    # trace: per-step record of tool calls / reasoning steps (shape mirrors
+    # bi_evals.provider.agent_loop.TraceStep — see api_endpoint.py for the
+    # exact fields bi-evals reads).
+    files_read: list[str] | None = None
+    trace: list[dict[str, Any]] | None = None
+
+
+@app.post("/ask", response_model=AskResponse)
+def ask(req: AskRequest) -> AskResponse:
+    # Replace this stub with a call to your real agent.
+    # Example:
+    #     result = my_agent.run(req.question)
+    #     return AskResponse(
+    #         text=result.answer,
+    #         sql=result.sql,
+    #         files_read=result.retrieved_files,
+    #     )
+    return AskResponse(
+        text=f"(stub) You asked: {req.question}",
+        sql="SELECT 1",
+        files_read=[],
+    )
+'''
 
 _TEMPLATE_GOLDEN = """\
 id: example-001
