@@ -4,10 +4,36 @@ A configurable Python framework for evaluating SQL-generating BI agents. You pro
 
 [Promptfoo](https://promptfoo.dev/) (Node.js) is used as the test runner engine; all custom logic is Python.
 
+## Two modes
+
+bi-evals runs in one of two modes. Pick the one that matches your situation **before** you scaffold a project — they share the same scoring engine but expect different config.
+
+### Built-in mode
+
+bi-evals runs the agent itself: Claude + your skill/knowledge files + tools it provides. You bring an Anthropic API key, system prompt, and skill files; bi-evals handles the tool-calling loop.
+
+**Use this when** you don't yet have a production BI agent and want to evaluate (or build) one with bi-evals' built-in Claude harness — or when you want to compare models on a controlled harness.
+
+Config: `agent.type: anthropic_tool_loop`.
+
+### Bring-your-own mode (BYO)
+
+bi-evals calls your existing BI agent over HTTP and scores what it returns. You bring an endpoint URL (and any auth headers); your agent does the routing, retrieval, and SQL generation as it does in production. The skills/knowledge config is unused — your agent owns those.
+
+**Use this when** you already have a production BI agent (any model, any stack) and want to evaluate what actually ships.
+
+Config: `agent.type: api_endpoint`.
+
+### Which to pick
+
+If you have a production BI agent reachable over HTTP → **BYO**. Otherwise → **Built-in**.
+
+See [`docs/getting-started.md`](docs/getting-started.md) for a per-mode walkthrough.
+
 ## How it works
 
 1. **You define golden tests** in YAML -- each contains a natural-language question, reference SQL, expected skill path, and scoring criteria.
-2. **The framework sends each question to your agent** (either via a built-in Claude tool-calling loop or an HTTP endpoint).
+2. **The framework sends each question to your agent** — either Built-in (Claude tool-loop run by bi-evals) or BYO (HTTP call to your agent).
 3. **The agent generates SQL** using tools you configure (file reader for skill/knowledge files, `describe_table` for schema discovery).
 4. **The scorer runs both the generated and reference SQL** against your database and compares results across 9 dimensions. See [Scoring](#scoring) for details.
 
