@@ -23,7 +23,7 @@ For golden-test authoring, see [golden-tests-guide.md](./golden-tests-guide.md).
 
 | Command | Purpose |
 |---|---|
-| `bi-evals init` | Scaffold a new eval project |
+| `bi-evals init built-in` / `bi-evals init byo` | Scaffold a new eval project. Mode is required — see [getting-started](getting-started.md#step-2--scaffold-the-project) |
 | `bi-evals run` | Run the eval suite (Promptfoo + auto-ingest) |
 | `bi-evals view` | Open the Promptfoo web UI for per-test deep-dive |
 | `bi-evals ingest <eval.json>` | Backfill an old `eval_*.json` into DuckDB |
@@ -40,10 +40,19 @@ All commands accept `-c <config>` to point at a non-default `bi-evals.yaml`.
 
 ### Scaffold a new project
 
+`bi-evals init` is split by mode. Pick one:
+
 ```bash
-uv run bi-evals init --dir /tmp/my-evals
+# Built-in mode — bi-evals runs Claude + your skill files
+uv run bi-evals init built-in --dir /tmp/my-evals
+
+# OR — BYO mode — bi-evals calls your existing agent over HTTP
+uv run bi-evals init byo --dir /tmp/my-evals
+
 cd /tmp/my-evals
 ```
+
+Running bare `bi-evals init` (no mode) errors with a hint. The two scaffolds differ in their `bi-evals.yaml` shape, their `.env` variables, and whether `adapter_example.py` is written (BYO only).
 
 This creates `bi-evals.yaml`, `.env`, `.env.example`, `golden/`, `results/`, `reports/`, and an example golden test.
 
