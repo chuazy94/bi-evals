@@ -223,7 +223,7 @@ project:
 
 agent:
   type: "anthropic_tool_loop"
-  model: "claude-sonnet-4-5-20250929"
+  model: "claude-sonnet-4-6"               # example; any valid Anthropic model ID works
   system_prompt: "system-prompt.md"
   tools:
     - name: read_skill_file
@@ -262,12 +262,13 @@ agent:
   type: "api_endpoint"
   endpoint:
     url: "${BI_AGENT_URL}"                   # e.g. http://localhost:8000/ask
-    method: "POST"
-    timeout: 60
+    method: "POST"                           # default; omit if unchanged
+    timeout: 60                              # seconds; default
     headers:
       Authorization: "Bearer ${BI_AGENT_TOKEN}"   # optional; omit if your endpoint doesn't need auth
-    # response_text_key and response_sql_key default to sensible values;
-    # set them explicitly only if your endpoint nests its response.
+    # response_text_key defaults to "text", response_sql_key defaults to "sql".
+    # Set them explicitly if your endpoint uses different field names or nests its response
+    # (dot-notation supported, e.g. "response.sql").
 
 database:
   type: snowflake
@@ -295,10 +296,12 @@ Your endpoint should return JSON. The minimum useful shape is:
 
 ```json
 {
-  "answer": "Revenue was $4.2M",
+  "text": "Revenue was $4.2M",
   "sql": "SELECT SUM(TOTAL_AMOUNT) FROM RAW.ORDERS WHERE STATUS = 'shipped' ..."
 }
 ```
+
+(The field names `text` and `sql` match the defaults for `response_text_key` and `response_sql_key`. If your endpoint already returns different field names, override them in `endpoint:` config rather than changing your endpoint.)
 
 That's enough to score the SQL+results dimensions. To unlock the full scoring (including "did the agent read the right knowledge files?"), your endpoint can also return `trace` and `files_read` fields. The detailed response-contract reference is on the roadmap; for now, look at `src/bi_evals/provider/api_endpoint.py` for the exact shape bi-evals will read.
 
@@ -402,7 +405,7 @@ What happens:
 3. For each test:
    - **Built-in:** the Claude tool-loop sends the question, executes tool calls (file reads), and produces SQL.
    - **BYO:** bi-evals POSTs the question to your endpoint and captures the response.
-4. The scorer runs both the generated and reference SQL against Snowflake and compares results across the 9 dimensions.
+4. The scorer runs both the generated and reference SQL against Snowflake and compares results across the 10 dimensions.
 5. Results are written to `results/eval_<timestamp>.json` and ingested into `results/bi-evals.duckdb`.
 
 You'll see a Promptfoo progress bar, a per-test results table, and finally `Ingested: <run-id>`.
