@@ -81,7 +81,7 @@ If neither produces SQL, **every scoring dimension fails** — bi-evals has noth
 }
 ```
 
-Scores: 8/9 dimensions. `skill_path_correctness` skips (no trace).
+Scores: 9 of 10 dimensions enabled by the response shape — every SQL/result dim runs (plus `anti_pattern_compliance` when the golden declares `anti_patterns`). `skill_path_correctness` skips because there's no `trace` / `files_read` for it to evaluate.
 
 ### Medium — adds `text` and `files_read`
 
@@ -93,7 +93,7 @@ Scores: 8/9 dimensions. `skill_path_correctness` skips (no trace).
 }
 ```
 
-Scores: 9/9 dimensions when `expected_skill_path` exists in the golden (file-attribution check works; sequence check skips without trace).
+Scores: all 10 dimensions enabled by the response shape when the golden's `expected_skill_path` is file-based (file-attribution check uses `files_read`). If the golden specifies an ordered sequence (`sequence_matters: true`), `skill_path_correctness` still skips because there's no `trace`.
 
 ### Full — adds the full `trace`
 
@@ -111,7 +111,7 @@ Scores: 9/9 dimensions when `expected_skill_path` exists in the golden (file-att
 }
 ```
 
-Scores: 9/9 dimensions, including full sequence-sensitive `skill_path_correctness`.
+Scores: all 10 dimensions enabled by the response shape, including full sequence-sensitive `skill_path_correctness`.
 
 ---
 
@@ -132,6 +132,8 @@ agent:
 
 **Note:** the `trace` and `files_read` paths are *not* configurable. If you want skill-path scoring, your endpoint must place those arrays at the top level of the response under those exact names.
 
+**Schema validation caveat:** the bundled JSON Schema validates only the canonical `sql` / `text` keys (it can't know about per-project overrides). If you've remapped via `response_sql_key` / `response_text_key`, `bi-evals doctor` will flag your endpoint as missing `sql` or `text` — but the actual provider runtime will still parse it correctly. Treat the schema validation as a strict check against the *default* shape.
+
 ---
 
 ## Scoring coverage
@@ -147,6 +149,7 @@ agent:
 | `filter_correctness` | `sql` | no |
 | `no_hallucinated_columns` | `sql` | no |
 | `skill_path_correctness` | `trace` (or `files_read`, depending on the golden's `expected_skill_path` shape) | no |
+| `anti_pattern_compliance` | `sql` (skips when the golden has no `anti_patterns` declared) | no |
 
 If your golden's `expected_skill_path` only specifies `required_skills` by file name, `files_read` alone is sufficient. If it specifies an ordered sequence (`sequence_matters: true`), you need the full `trace`.
 
@@ -154,11 +157,11 @@ If your golden's `expected_skill_path` only specifies `required_skills` by file 
 
 ## Common mistakes
 
-- **Wrong field name for SQL or text.** Defaults are `"sql"` and `"text"`. If you return `{"answer": "...", "query": "..."}`, override via `response_sql_key` / `response_text_key` — don't expect bi-evals to guess. The PR #21 review caught a doc example using `"answer"` against the default `"text"`; the same bug in production silently empties the text field in the viewer.
+- **Wrong field name for SQL or text.** Defaults are `"sql"` and `"text"`. If you return `{"answer": "...", "query": "..."}`, override via `response_sql_key` / `response_text_key` — don't expect bi-evals to guess. A misconfigured field name silently empties the text field in the viewer; the SQL extraction will then also fail unless your text field happens to contain a fenced block.
 
 - **Returning HTML on errors.** A 500 page from your reverse proxy is not JSON. `bi-evals run` will fail every test with a JSON parse error. Return 200 with an `{"error": "..."}` body if your agent fails internally, or let the HTTP error surface and rely on the eval to flag the run.
 
-- **No SQL anywhere in the response.** Even with `text` populated, if there's no fenced ```sql block bi-evals can't extract anything. Every dimension fails. Run `bi-evals doctor` to catch this before a paid eval run.
+- **No SQL anywhere in the response.** Even with `text` populated, if there's no fenced `` ```sql `` block bi-evals can't extract anything. Every dimension fails. Run `bi-evals doctor` to catch this before a paid eval run.
 
 - **`trace` items missing `type`.** The schema requires it. Steps without `type` are ignored silently, which often makes a skill-path test fail when you thought you'd provided the trace.
 

@@ -534,6 +534,5 @@ Known onboarding gaps not yet fixed:
 
 - **Install path** — eventually `pip install bi-evals` from PyPI; for now you install from the local repo.
 - **Sample DuckDB dataset in the scaffold** — so you can run a real eval before setting up Snowflake; not built yet.
-- **`bi-evals doctor`** — a one-shot validation command (will also check that a BYO endpoint returns a parseable response shape); not built yet.
 
 When these land, the relevant steps in this guide get shorter. For now, expect ~30–60 minutes of setup with Snowflake creds in hand.

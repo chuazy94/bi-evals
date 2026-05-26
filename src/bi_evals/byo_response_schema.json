@@ -34,11 +34,11 @@
           "enum": ["tool_use", "text"]
         },
         "tool_name": {
-          "description": "Tool the agent called. Required when type='tool_use'.",
+          "description": "Tool the agent called. Required (non-null) when type='tool_use'.",
           "type": ["string", "null"]
         },
         "tool_input": {
-          "description": "Arguments the agent passed to the tool. For file-reading tools, include a `path` field — bi-evals harvests it into `files_read` automatically.",
+          "description": "Arguments the agent passed to the tool. For file-reading tools, include a `path` field — bi-evals harvests it into `files_read` automatically. Required (non-null) when type='tool_use'.",
           "type": ["object", "null"]
         },
         "tool_result_preview": {
@@ -50,7 +50,18 @@
           "type": ["string", "null"]
         }
       },
-      "required": ["type"]
+      "required": ["type"],
+      "if": {
+        "properties": { "type": { "const": "tool_use" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": {
+          "tool_name": { "type": "string", "minLength": 1 },
+          "tool_input": { "type": "object" }
+        },
+        "required": ["tool_name", "tool_input"]
+      }
     }
   },
   "anyOf": [
