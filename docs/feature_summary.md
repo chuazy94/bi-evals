@@ -375,6 +375,8 @@ For the schema reference, see [duckdb-schema.md](./duckdb-schema.md).
 
 ## See also
 
+- [getting-started.md](./getting-started.md) — per-mode walkthrough (Built-in / BYO)
+- [byo-response-contract.md](./byo-response-contract.md) — JSON shape a BYO endpoint must return (validate with `bi-evals doctor`)
 - [golden-tests-guide.md](./golden-tests-guide.md) — authoring golden tests
 - [duckdb-schema.md](./duckdb-schema.md) — storage schema reference
 - [mvp-eval-platform.md](./mvp-eval-platform.md) — original design doc and roadmap

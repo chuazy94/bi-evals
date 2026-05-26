@@ -22,7 +22,7 @@ bi-evals calls your existing BI agent over HTTP and scores what it returns. You 
 
 **Use this when** you already have a production BI agent (any model, any stack) and want to evaluate what actually ships.
 
-Config: `agent.type: api_endpoint`.
+Config: `agent.type: api_endpoint`. The response shape your endpoint must return is specified in [`docs/byo-response-contract.md`](docs/byo-response-contract.md); validate against it with `bi-evals doctor`.
 
 ### Which to pick
 

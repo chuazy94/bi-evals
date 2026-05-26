@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bi-evals.local/byo-response-schema.json",
+  "title": "bi-evals BYO endpoint response",
+  "description": "Response shape an api_endpoint must return for bi-evals BYO mode. Fields not listed here are ignored. Two keys (text/SQL) can be relocated via `response_text_key` / `response_sql_key` in bi-evals.yaml; the trace/files_read paths are fixed.",
+  "type": "object",
+  "properties": {
+    "sql": {
+      "description": "SQL the agent generated. Either this OR a fenced ```sql block inside `text` is required — bi-evals falls back to fence extraction when `sql` is absent. Key is configurable via `response_sql_key`.",
+      "type": "string"
+    },
+    "text": {
+      "description": "Natural-language answer from the agent. Optional; if absent, bi-evals uses the raw response body as the text. Key is configurable via `response_text_key`.",
+      "type": "string"
+    },
+    "files_read": {
+      "description": "List of knowledge/skill files the agent consulted. Enables file-attribution checks in `skill_path_correctness` scoring. If absent, bi-evals derives the list from `trace[].tool_input.path`.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "trace": {
+      "description": "Per-step record of the agent's reasoning. Enables `skill_path_correctness` scoring. Each step is one tool call or one text emission. Order matters for sequence-sensitive goldens.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/TraceStep" }
+    }
+  },
+  "$defs": {
+    "TraceStep": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "Step kind. 'tool_use' for tool calls, 'text' for free-text reasoning emitted by the agent.",
+          "type": "string",
+          "enum": ["tool_use", "text"]
+        },
+        "tool_name": {
+          "description": "Tool the agent called. Required when type='tool_use'.",
+          "type": ["string", "null"]
+        },
+        "tool_input": {
+          "description": "Arguments the agent passed to the tool. For file-reading tools, include a `path` field — bi-evals harvests it into `files_read` automatically.",
+          "type": ["object", "null"]
+        },
+        "tool_result_preview": {
+          "description": "Optional preview of what the tool returned. Surfaced in the bi-evals viewer; ignored by scoring.",
+          "type": ["string", "null"]
+        },
+        "text": {
+          "description": "Free-text reasoning. Used when type='text'.",
+          "type": ["string", "null"]
+        }
+      },
+      "required": ["type"]
+    }
+  },
+  "anyOf": [
+    { "required": ["sql"] },
+    { "required": ["text"] }
+  ]
+}
