@@ -112,6 +112,50 @@ def init_byo(target_dir: str) -> None:
 
 
 @cli.command()
+@click.pass_context
+def doctor(ctx: click.Context) -> None:
+    """Validate the project's runtime setup before running an eval.
+
+    For BYO mode: POSTs a synthetic question to the configured endpoint,
+    validates the response against the bundled JSON Schema, and reports
+    which optional fields are present (and which scoring dimensions they
+    unlock).
+
+    For Built-in mode: checks the Anthropic API key, system prompt,
+    file_reader base_dirs, Snowflake reachability (real SELECT 1), and
+    Promptfoo (npx) availability.
+
+    Exits 0 only when no required checks fail. Warnings indicate degraded
+    scoring coverage but do not block.
+    """
+    from bi_evals.doctor import (
+        check_builtin_setup,
+        check_byo_endpoint,
+        format_report,
+        is_failing,
+    )
+
+    config_path = ctx.obj["config_path"]
+    config = BiEvalsConfig.load(config_path)
+
+    if config.agent.type == "api_endpoint":
+        results = check_byo_endpoint(config)
+        mode = "BYO (api_endpoint)"
+    elif config.agent.type == "anthropic_tool_loop":
+        results = check_builtin_setup(config)
+        mode = "Built-in (anthropic_tool_loop)"
+    else:
+        raise click.ClickException(
+            f"Unknown agent.type {config.agent.type!r}. "
+            "Expected 'api_endpoint' or 'anthropic_tool_loop'."
+        )
+
+    click.echo(format_report(results, mode=mode))
+    if is_failing(results):
+        ctx.exit(1)
+
+
+@cli.command()
 @click.option(
     "--filter", "-f", "filter_pattern", help="Run only tests matching pattern."
 )
