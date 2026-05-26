@@ -24,6 +24,7 @@ For golden-test authoring, see [golden-tests-guide.md](./golden-tests-guide.md).
 | Command | Purpose |
 |---|---|
 | `bi-evals init built-in` / `bi-evals init byo` | Scaffold a new eval project. Mode is required — see [getting-started](getting-started.md#step-2--scaffold-the-project) |
+| `bi-evals doctor` | Validate runtime setup (endpoint shape, Snowflake reachability, deps) before running an eval |
 | `bi-evals run` | Run the eval suite (Promptfoo + auto-ingest) |
 | `bi-evals view` | Open the Promptfoo web UI for per-test deep-dive |
 | `bi-evals ingest <eval.json>` | Backfill an old `eval_*.json` into DuckDB |
@@ -64,6 +65,19 @@ Edit `bi-evals.yaml` — see [golden-tests-guide.md](./golden-tests-guide.md) fo
 - `database.connection.*` — Snowflake credentials (via `${ENV_VAR}` substitution)
 
 Set credentials in `.env` next to `bi-evals.yaml` — they're loaded automatically (`override=False`, so shell vars win).
+
+### Validate the setup before your first run
+
+```bash
+uv run bi-evals doctor
+```
+
+Checks change by mode:
+
+- **Built-in** — Anthropic API key reachable, system prompt file exists, every `file_reader` tool's `base_dir` exists, Snowflake `SELECT 1` succeeds, `npx` (Promptfoo) on PATH.
+- **BYO** — POSTs a synthetic question to `agent.endpoint.url`, validates the response against the bundled JSON Schema, reports which optional fields are present (and which scoring dimensions they unlock), then Snowflake + Promptfoo checks.
+
+Exit code is 0 only when no required checks fail. Warnings indicate degraded scoring coverage but don't block. Run this before every fresh eval against a new endpoint shape or environment.
 
 ---
 
