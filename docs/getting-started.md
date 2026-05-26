@@ -320,7 +320,7 @@ Your endpoint should return JSON. The minimum useful shape is:
 
 (The field names `text` and `sql` match the defaults for `response_text_key` and `response_sql_key`. If your endpoint already returns different field names, override them in `endpoint:` config rather than changing your endpoint.)
 
-That's enough to score the SQL+results dimensions. To unlock the full scoring (including "did the agent read the right knowledge files?"), your endpoint can also return `trace` and `files_read` fields. The detailed response-contract reference is on the roadmap; for now, look at `src/bi_evals/provider/api_endpoint.py` for the exact shape bi-evals will read.
+That's enough to score the SQL+results dimensions. To unlock the full scoring (including "did the agent read the right knowledge files?"), your endpoint can also return `trace` and `files_read` fields. The full schema with three canonical examples lives in [`docs/byo-response-contract.md`](byo-response-contract.md); validate your endpoint against it with `bi-evals doctor`.
 
 **Don't have an HTTP endpoint yet?** Wrap your existing agent in a thin FastAPI shim (~30 lines) that imports it and exposes a `POST /ask` route. Run it locally during evals and point bi-evals at `http://localhost:8000/ask`. The wrapper isn't a production service — just a test harness.
 
@@ -533,8 +533,6 @@ The viewer's compare view is especially useful in BYO mode for catching regressi
 Known onboarding gaps not yet fixed:
 
 - **Install path** — eventually `pip install bi-evals` from PyPI; for now you install from the local repo.
-- **`api_endpoint` response contract reference doc** — explicit schema for `trace` / `files_read` / etc. that unlocks the full scoring dimensions in BYO mode.
 - **Sample DuckDB dataset in the scaffold** — so you can run a real eval before setting up Snowflake; not built yet.
-- **`bi-evals doctor`** — a one-shot validation command (will also check that a BYO endpoint returns a parseable response shape); not built yet.
 
 When these land, the relevant steps in this guide get shorter. For now, expect ~30–60 minutes of setup with Snowflake creds in hand.
