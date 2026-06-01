@@ -175,4 +175,6 @@ If your golden's `expected_skill_path` only specifies `required_skills` by file 
 bi-evals doctor
 ```
 
-POSTs a synthetic question to your configured endpoint and reports which required and optional fields are present, plus the resulting scoring coverage. Run it before every fresh eval against a new endpoint shape.
+POSTs a synthetic health-check question that explicitly asks for `SELECT 1 AS health_check` in a fenced SQL block, then reports which required and optional fields are present, plus the resulting scoring coverage. Because the question elicits SQL by design, a missing-SQL failure means your endpoint is actually broken — not that the question was unanswerable. Run it before every fresh eval against a new endpoint shape.
+
+Cost note: the synthetic question runs through your agent's full tool loop. For a typical tool-using BI agent that's one model invocation plus any tool calls — usually under one cent per `bi-evals doctor` run, but it's not free.
