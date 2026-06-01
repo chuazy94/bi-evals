@@ -211,7 +211,11 @@ def check_builtin_setup(config: BiEvalsConfig) -> list[CheckResult]:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-_SYNTHETIC_QUESTION = "ping — bi-evals doctor"
+_SYNTHETIC_QUESTION = (
+    "Health check: please respond with the SQL query "
+    "`SELECT 1 AS health_check` inside a fenced ```sql block. "
+    "Do not include any other SQL."
+)
 
 
 def _post_synthetic(
