@@ -23,6 +23,10 @@
           {
             "type": "command",
             "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in */src/bi_evals/config.py|*/src/bi_evals/cli.py|*/src/bi_evals/scorer/dimensions.py|*/src/bi_evals/scorer/entry.py|*/golden/*.yaml) echo \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PostToolUse\\\",\\\"additionalContext\\\":\\\"You edited $f, which is user-facing. Per CLAUDE.md, also update tmp/my-evals/ if this change affects config schema, CLI surface, scoring behavior, or golden-test format. If unsure, ask the user.\\\"}}\" ;; esac; } 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in */src/bi_evals/cli.py|*/src/bi_evals/provider/api_endpoint.py|*/src/bi_evals/provider/entry.py|*/src/bi_evals/scorer/entry.py|*/src/bi_evals/trace_paths.py|*/src/bi_evals/promptfoo/bridge.py|*/src/bi_evals/store/ingest.py) echo \"{\\\"hookSpecificOutput\\\":{\\\"hookEventName\\\":\\\"PostToolUse\\\",\\\"additionalContext\\\":\\\"You edited $f, which is described in docs/request-flow.md (the end-to-end walkthrough of what happens during 'bi-evals run' — provider call, trace-write, scorer fork, trace-read, ingest). If this change altered the documented request flow, also update request-flow.md so the walkthrough stays accurate; otherwise no action needed.\\\"}}\" ;; esac; } 2>/dev/null || true"
           }
         ]
       }
