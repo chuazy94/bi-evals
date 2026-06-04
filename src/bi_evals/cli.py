@@ -218,10 +218,13 @@ def run(
     _warn_stale_goldens(config, filter_pattern)
     _warn_stale_knowledge(config)
 
+    # Multi-model fan-out is a property of the driving adapter only; other
+    # adapters run one trial per (test, repeat). Be explicit rather than relying
+    # on the back-compat .models accessor coincidentally returning [] elsewhere.
     models = (
-        list(config.agent.models)
-        if config.agent.models
-        else ([config.agent.model] if config.agent.model else [])
+        list(config.agent.anthropic_tool_loop.models)
+        if config.agent.adapter == "anthropic_tool_loop"
+        else []
     )
     total_trials = test_count * max(1, len(models)) * max(1, config.scoring.repeats)
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from dotenv import load_dotenv
@@ -191,9 +191,10 @@ class AgentConfig(BaseModel):
     nested blocks so readers can stay adapter-agnostic.
     """
 
-    adapter: str = (
-        "api_endpoint"  # "api_endpoint" (default on-ramp) or "anthropic_tool_loop"
-    )
+    # api_endpoint = default on-ramp; anthropic_tool_loop = dev-only driving adapter.
+    # Typed as a Literal so a typo'd adapter fails at config-load with a clear
+    # pydantic error, rather than only blowing up later at dispatch time.
+    adapter: Literal["api_endpoint", "anthropic_tool_loop"] = "api_endpoint"
     api_endpoint: ApiEndpointConfig = ApiEndpointConfig()
     anthropic_tool_loop: AnthropicToolLoopConfig = AnthropicToolLoopConfig()
 
@@ -213,6 +214,23 @@ class AgentConfig(BaseModel):
                     "See docs/migration-adapter-schema.md."
                 )
         return data
+
+    @model_validator(mode="after")
+    def _require_model_for_driving_adapter(self) -> AgentConfig:
+        # The dev-only driving adapter can't run without a model and has no
+        # runtime-env escape hatch (unlike api_endpoint.url, which legitimately
+        # resolves from ${BI_AGENT_URL} and may be deferred), so catch the empty
+        # case at load time rather than as a runtime error in produce().
+        if self.adapter == "anthropic_tool_loop":
+            if (
+                not self.anthropic_tool_loop.model
+                and not self.anthropic_tool_loop.models
+            ):
+                raise ValueError(
+                    "adapter 'anthropic_tool_loop' requires anthropic_tool_loop.model "
+                    "or anthropic_tool_loop.models to be set."
+                )
+        return self
 
     # ── Back-compat accessors so readers stay adapter-agnostic ──────────────
     @property
