@@ -1,65 +1,24 @@
 """Promptfoo Python provider entry point.
 
 Promptfoo calls `call_api(prompt, options, context)` for each test case.
-This module loads the bi-evals config, dispatches to the configured provider
-type (anthropic_tool_loop or api_endpoint), captures the trace, and returns
-results in Promptfoo's expected format.
+This module loads the bi-evals config, resolves the adapter for the configured
+``agent.type`` via the adapter registry, captures the canonical trace it
+produces, and returns results in Promptfoo's expected format.
+
+It does not branch on agent type itself — that lives in ``registry.py``. One
+contract, many adapters.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import secrets
 from pathlib import Path
 from typing import Any
 
 from bi_evals.config import BiEvalsConfig
-from bi_evals.provider.agent_loop import AgentResult, run_agent_loop
-from bi_evals.provider.api_endpoint import call_api_endpoint
-from bi_evals.tools.registry import build_tools
+from bi_evals.provider.registry import build_adapter
 from bi_evals.trace_paths import make_test_id_slug, slugify_model
-
-
-def _run_anthropic_tool_loop(
-    prompt: str, config: BiEvalsConfig, model_override: str | None = None
-) -> AgentResult | str:
-    """Run the Anthropic tool-calling loop. Returns AgentResult or error string."""
-    system_prompt_path = config.resolve_path(config.agent.system_prompt)
-    if not system_prompt_path.exists():
-        return f"System prompt not found: {config.agent.system_prompt}"
-
-    system_prompt = system_prompt_path.read_text()
-
-    tools = build_tools(config.agent.tools, config)
-    tool_definitions = [t.definition() for t in tools]
-
-    api_key = os.environ.get(config.agent.api_key_env, "")
-    if not api_key:
-        return f"Environment variable {config.agent.api_key_env} is not set."
-
-    model = model_override or config.agent.model
-    if not model:
-        return "No model configured. Set agent.model or agent.models."
-
-    return run_agent_loop(
-        question=prompt,
-        system_prompt=system_prompt,
-        model=model,
-        tools=tools,
-        tool_definitions=tool_definitions,
-        max_rounds=config.agent.max_rounds,
-        api_key=api_key,
-    )
-
-
-def _run_api_endpoint(prompt: str, config: BiEvalsConfig) -> AgentResult | str:
-    """Call an external API endpoint. Returns AgentResult or error string."""
-    endpoint = config.agent.endpoint
-    if not endpoint.url:
-        return "agent.endpoint.url is not configured."
-
-    return call_api_endpoint(question=prompt, endpoint_config=endpoint)
 
 
 def call_api(
@@ -67,9 +26,9 @@ def call_api(
 ) -> dict[str, Any]:
     """Promptfoo Python provider entry point.
 
-    Dispatches to the configured agent type:
-    - anthropic_tool_loop: Runs Claude with tool-calling against skill files
-    - api_endpoint: Sends question to an external API and captures the response
+    Resolves the adapter for the configured ``agent.type`` and runs it. Every
+    adapter returns the same canonical :class:`AgentResult`, which is written to
+    a trace file and surfaced in Promptfoo's expected result shape.
 
     Args:
         prompt: The user question (rendered from template).
@@ -88,14 +47,13 @@ def call_api(
     # cartesian product of (test × model × repeat) runs correctly under Promptfoo.
     model_override = provider_config.get("model")
 
-    if agent_type == "anthropic_tool_loop":
-        result = _run_anthropic_tool_loop(prompt, config, model_override)
-    elif agent_type == "api_endpoint":
-        result = _run_api_endpoint(prompt, config)
-    else:
-        return {
-            "error": f"Unknown agent type: '{agent_type}'. Use 'anthropic_tool_loop' or 'api_endpoint'."
-        }
+    try:
+        adapter = build_adapter(config)
+    except ValueError as e:
+        return {"error": str(e)}
+
+    vars_for_adapter = context.get("vars", {})
+    result = adapter.produce(prompt, vars_for_adapter, config, model_override)
 
     # Handle error strings
     if isinstance(result, str):

@@ -10,7 +10,7 @@ from urllib.error import URLError, HTTPError
 import json
 
 from bi_evals.config import ApiEndpointConfig
-from bi_evals.provider.agent_loop import AgentResult, TraceStep, extract_sql
+from bi_evals.provider.contract import AgentResult, TraceStep, extract_sql
 
 
 def _get_nested(data: Any, key: str) -> Any:
