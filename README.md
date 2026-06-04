@@ -6,9 +6,10 @@ A configurable Python framework for evaluating SQL-generating BI agents. You pro
 
 ## Where bi-evals fits in your eval process
 
-> **The goal:** bi-evals is a framework for the offline evaluation suite behind self-service
-> analytics. The **push on-ramp** (`submit()` SDK / `score --input`) described below is the
-> intended default; what ships today is under [Two modes](#two-modes).
+> **The goal.** bi-evals is a framework for the offline evaluation suite behind self-service
+> analytics. The **push on-ramp** (`submit()` SDK / `score --input`) described below is *planned,
+> not yet shipped* — it's the direction we're building toward. For how to run an eval **today**,
+> see [Two modes](#two-modes) and [Quick start](#quick-start).
 
 **bi-evals doesn't run your agent — you run your agent, and bi-evals grades its homework.** The
 offline evaluation suite is the golden questions you run your agent against before launch, gate

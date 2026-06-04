@@ -52,8 +52,8 @@ def call_api(
     except ValueError as e:
         return {"error": str(e)}
 
-    vars_for_adapter = context.get("vars", {})
-    result = adapter.produce(prompt, vars_for_adapter, config, model_override)
+    vars_ = context.get("vars", {})
+    result = adapter.produce(prompt, vars_, config, model_override)
 
     # Handle error strings
     if isinstance(result, str):
@@ -63,7 +63,6 @@ def call_api(
     trace_dir = config.resolve_path(config.reporting.results_dir) / "traces"
     trace_dir.mkdir(parents=True, exist_ok=True)
 
-    vars_ = context.get("vars", {})
     test_id_slug = make_test_id_slug(prompt, vars_)
     test_id = vars_.get("golden_file") or test_id_slug
     effective_model = model_override or config.agent.model

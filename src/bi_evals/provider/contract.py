@@ -115,7 +115,7 @@ class Adapter(Protocol):
     def produce(
         self,
         question: str,
-        vars: dict[str, Any],
+        prompt_vars: dict[str, Any],
         config: Any,
         model: str | None,
     ) -> AgentResult | str: ...
