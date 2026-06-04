@@ -41,15 +41,20 @@ def cli(ctx: click.Context, config_path: str) -> None:
 @cli.group(invoke_without_command=True)
 @click.pass_context
 def init(ctx: click.Context) -> None:
-    """Scaffold a new bi-evals project. Pick a mode: built-in or byo."""
+    """Scaffold a new bi-evals project.
+
+    Default on-ramp is `api_endpoint` (bi-evals calls your existing agent over
+    HTTP and scores what it returns). `dev` scaffolds the dev-only driving
+    adapter for authoring goldens before a real agent exists.
+    """
     if ctx.invoked_subcommand is None:
         raise click.UsageError(
-            "must specify a mode: 'built-in' or 'byo'. "
-            "Run 'bi-evals init --help' for details, or see the README's 'Two modes' section."
+            "must specify a scaffold: 'api_endpoint' (default on-ramp) or 'dev'. "
+            "Run 'bi-evals init --help' for details."
         )
 
 
-@init.command("built-in")
+@init.command("api_endpoint")
 @click.option(
     "--dir",
     "-d",
@@ -57,48 +62,17 @@ def init(ctx: click.Context) -> None:
     default=".",
     help="Directory to scaffold the project in.",
 )
-def init_builtin(target_dir: str) -> None:
-    """Scaffold a Built-in mode project (bi-evals runs Claude + your skill files)."""
+def init_api_endpoint(target_dir: str) -> None:
+    """Scaffold an api_endpoint project (bi-evals calls your agent over HTTP)."""
     target = Path(target_dir).resolve()
     target.mkdir(parents=True, exist_ok=True)
 
-    _scaffold_project(target, mode="built-in")
-    click.echo(f"Scaffolded Built-in mode bi-evals project in {target}")
+    _scaffold_project(target, mode="api_endpoint")
+    click.echo(f"Scaffolded api_endpoint bi-evals project in {target}")
     click.echo()
     click.echo("Next steps:")
     click.echo(
-        "  1. Create your system-prompt.md and skill files (e.g. skills/SKILL.md, skills/knowledge/*.md)"
-    )
-    click.echo(
-        "  2. Edit bi-evals.yaml — point agent.tools[].config.base_dir to your skill/knowledge files"
-    )
-    click.echo("  3. Edit bi-evals.yaml — configure your database connection")
-    click.echo("  4. Create golden tests in golden/")
-    click.echo(
-        "  5. Edit .env with ANTHROPIC_API_KEY and Snowflake credentials (next to bi-evals.yaml; loaded automatically)"
-    )
-    click.echo("  6. Run: bi-evals run")
-
-
-@init.command("byo")
-@click.option(
-    "--dir",
-    "-d",
-    "target_dir",
-    default=".",
-    help="Directory to scaffold the project in.",
-)
-def init_byo(target_dir: str) -> None:
-    """Scaffold a BYO mode project (bi-evals calls your existing agent over HTTP)."""
-    target = Path(target_dir).resolve()
-    target.mkdir(parents=True, exist_ok=True)
-
-    _scaffold_project(target, mode="byo")
-    click.echo(f"Scaffolded BYO mode bi-evals project in {target}")
-    click.echo()
-    click.echo("Next steps:")
-    click.echo(
-        "  1. Edit bi-evals.yaml — set agent.endpoint.url (and headers if needed) to point at your agent"
+        "  1. Edit bi-evals.yaml — set agent.api_endpoint.url (and headers if needed) to point at your agent"
     )
     click.echo("  2. Edit bi-evals.yaml — configure your database connection")
     click.echo("  3. Create golden tests in golden/")
@@ -107,6 +81,41 @@ def init_byo(target_dir: str) -> None:
     )
     click.echo(
         "  5. See adapter_example.py for a reference FastAPI shim if your agent isn't HTTP-reachable yet"
+    )
+    click.echo("  6. Run: bi-evals run")
+
+
+@init.command("dev")
+@click.option(
+    "--dir",
+    "-d",
+    "target_dir",
+    default=".",
+    help="Directory to scaffold the project in.",
+)
+def init_dev(target_dir: str) -> None:
+    """Scaffold the dev-only driving adapter (bi-evals runs Claude + skill files).
+
+    Not a production-fidelity setup — it evaluates a local rebuild of an agent.
+    Useful for authoring goldens before a real agent exists.
+    """
+    target = Path(target_dir).resolve()
+    target.mkdir(parents=True, exist_ok=True)
+
+    _scaffold_project(target, mode="dev")
+    click.echo(f"Scaffolded dev (anthropic_tool_loop) bi-evals project in {target}")
+    click.echo()
+    click.echo("Next steps:")
+    click.echo(
+        "  1. Create your system-prompt.md and skill files (e.g. skills/SKILL.md, skills/knowledge/*.md)"
+    )
+    click.echo(
+        "  2. Edit bi-evals.yaml — point agent.anthropic_tool_loop.tools[].config.base_dir to your skill/knowledge files"
+    )
+    click.echo("  3. Edit bi-evals.yaml — configure your database connection")
+    click.echo("  4. Create golden tests in golden/")
+    click.echo(
+        "  5. Edit .env with ANTHROPIC_API_KEY and Snowflake credentials (next to bi-evals.yaml; loaded automatically)"
     )
     click.echo("  6. Run: bi-evals run")
 
@@ -138,15 +147,15 @@ def doctor(ctx: click.Context) -> None:
     config_path = ctx.obj["config_path"]
     config = BiEvalsConfig.load(config_path)
 
-    if config.agent.type == "api_endpoint":
+    if config.agent.adapter == "api_endpoint":
         results = check_byo_endpoint(config)
-        mode = "BYO (api_endpoint)"
-    elif config.agent.type == "anthropic_tool_loop":
+        mode = "api_endpoint"
+    elif config.agent.adapter == "anthropic_tool_loop":
         results = check_builtin_setup(config)
-        mode = "Built-in (anthropic_tool_loop)"
+        mode = "anthropic_tool_loop (dev-only)"
     else:
         raise click.ClickException(
-            f"Unknown agent.type {config.agent.type!r}. "
+            f"Unknown agent.adapter {config.agent.adapter!r}. "
             "Expected 'api_endpoint' or 'anthropic_tool_loop'."
         )
 
@@ -637,21 +646,22 @@ def _echo_cost_alert(alert: store_queries.CostAlert) -> None:
 
 
 def _scaffold_project(target: Path, *, mode: str) -> None:
-    """Create eval infrastructure files. Mode-aware: 'built-in' or 'byo'.
+    """Create eval infrastructure files. Mode-aware: 'dev' or 'api_endpoint'.
 
-    Built-in mode writes a Claude-harness config and .env keyed on
-    ANTHROPIC_API_KEY. BYO mode writes an api_endpoint config, .env
-    keyed on BI_AGENT_URL/BI_AGENT_TOKEN, and an adapter_example.py
-    FastAPI shim demonstrating the response shape bi-evals expects.
+    The 'dev' mode (dev-only driving adapter) writes a Claude-harness config
+    and .env keyed on ANTHROPIC_API_KEY. The 'api_endpoint' mode (default
+    on-ramp) writes an api_endpoint config, .env keyed on
+    BI_AGENT_URL/BI_AGENT_TOKEN, and an adapter_example.py FastAPI shim
+    demonstrating the response shape bi-evals expects.
 
-    Neither mode scaffolds skill/knowledge files — in Built-in mode the
-    user provides those; in BYO mode they live with the user's agent.
+    Neither mode scaffolds skill/knowledge files — in 'dev' mode the user
+    provides those; in 'api_endpoint' mode they live with the user's agent.
     """
-    if mode == "built-in":
+    if mode == "dev":
         config_template = _TEMPLATE_CONFIG_BUILTIN
         env_template = _TEMPLATE_ENV_BUILTIN
         sample_env = _SAMPLE_DOT_ENV_BUILTIN
-    elif mode == "byo":
+    elif mode == "api_endpoint":
         config_template = _TEMPLATE_CONFIG_BYO
         env_template = _TEMPLATE_ENV_BYO
         sample_env = _SAMPLE_DOT_ENV_BYO
@@ -682,8 +692,8 @@ def _scaffold_project(target: Path, *, mode: str) -> None:
     if not golden_file.exists():
         golden_file.write_text(_TEMPLATE_GOLDEN)
 
-    # BYO-only: reference FastAPI shim showing the response contract
-    if mode == "byo":
+    # api_endpoint-only: reference FastAPI shim showing the response contract
+    if mode == "api_endpoint":
         adapter_file = target / "adapter_example.py"
         if not adapter_file.exists():
             adapter_file.write_text(_TEMPLATE_BYO_ADAPTER)
@@ -700,22 +710,25 @@ def _scaffold_project(target: Path, *, mode: str) -> None:
 # ────────────────────────────────────────────────────────────────────────────
 
 _TEMPLATE_CONFIG_BUILTIN = """\
-# Built-in mode: bi-evals runs Claude with your skill/knowledge files.
-# See docs/getting-started.md for the BYO alternative.
+# Dev-only adapter: bi-evals runs Claude with your skill/knowledge files.
+# This evaluates a LOCAL REBUILD of an agent — not a production-fidelity setup.
+# It's for authoring goldens before a real agent exists. The default on-ramp is
+# api_endpoint (bi-evals init api_endpoint).
 
 project:
   name: "My BI Agent Evals"
 
 agent:
-  type: "anthropic_tool_loop"
-  model: "claude-sonnet-4-6"                          # example; any valid Anthropic model ID works
-  system_prompt: "path/to/your/system-prompt.md"     # Path to your system prompt
-  tools:
-    - name: read_skill_file                           # Tool name the agent uses
-      type: file_reader
-      config:
-        base_dir: "path/to/your/skill/"               # Path to your existing skill/knowledge files
-  max_rounds: 10
+  adapter: "anthropic_tool_loop"
+  anthropic_tool_loop:
+    model: "claude-sonnet-4-6"                          # example; any valid Anthropic model ID works
+    system_prompt: "path/to/your/system-prompt.md"      # Path to your system prompt
+    tools:
+      - name: read_skill_file                           # Tool name the agent uses
+        type: file_reader
+        config:
+          base_dir: "path/to/your/skill/"               # Path to your existing skill/knowledge files
+    max_rounds: 10
 
 database:
   type: snowflake
@@ -787,16 +800,17 @@ SNOWFLAKE_SCHEMA=
 # ────────────────────────────────────────────────────────────────────────────
 
 _TEMPLATE_CONFIG_BYO = """\
-# BYO mode: bi-evals POSTs each question to your existing agent endpoint
-# and scores what it returns. Your agent owns its own skills/prompt/routing.
-# See docs/getting-started.md for the Built-in alternative.
+# api_endpoint adapter (default on-ramp): bi-evals POSTs each question to your
+# existing agent endpoint and scores what it returns. Your agent owns its own
+# skills/prompt/routing. For authoring goldens without a live agent, see
+# `bi-evals init dev`.
 
 project:
   name: "My BI Agent Evals"
 
 agent:
-  type: "api_endpoint"
-  endpoint:
+  adapter: "api_endpoint"
+  api_endpoint:
     url: "${BI_AGENT_URL}"                              # e.g. http://localhost:8000/ask
     method: "POST"                                      # default; omit if unchanged
     timeout: 60                                         # seconds; default

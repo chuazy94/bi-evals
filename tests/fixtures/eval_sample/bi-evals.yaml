@@ -2,11 +2,12 @@ project:
   name: "Test Fixture Evals"
 
 agent:
-  type: "anthropic_tool_loop"
-  model: "claude-sonnet-4-5-20250929"
-  system_prompt: "system-prompt.md"
-  tools: []
-  max_rounds: 10
+  adapter: "anthropic_tool_loop"
+  anthropic_tool_loop:
+    model: "claude-sonnet-4-5-20250929"
+    system_prompt: "system-prompt.md"
+    tools: []
+    max_rounds: 10
 
 database:
   type: snowflake

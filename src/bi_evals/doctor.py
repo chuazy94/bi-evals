@@ -270,12 +270,12 @@ def _get_nested(data: Any, key: str) -> Any:
 def check_byo_endpoint(config: BiEvalsConfig) -> list[CheckResult]:
     results: list[CheckResult] = []
 
-    if config.agent.type != "api_endpoint":
+    if config.agent.adapter != "api_endpoint":
         results.append(
             CheckResult(
-                "BYO mode",
+                "api_endpoint adapter",
                 "fail",
-                f"agent.type is {config.agent.type!r}, expected 'api_endpoint'",
+                f"agent.adapter is {config.agent.adapter!r}, expected 'api_endpoint'",
             )
         )
         return results

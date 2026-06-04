@@ -36,7 +36,10 @@ from bi_evals.promptfoo.bridge import (
 def _make_config(base_dir: Path, golden_dir: str = "golden") -> BiEvalsConfig:
     config = BiEvalsConfig(
         project=ProjectConfig(name="Test Project"),
-        agent=AgentConfig(model="claude-sonnet-4-5-20250929"),
+        agent=AgentConfig(
+            adapter="anthropic_tool_loop",
+            anthropic_tool_loop={"model": "claude-sonnet-4-5-20250929"},
+        ),
         database=DatabaseConfig(type="snowflake"),
         golden_tests=GoldenTestsConfig(dir=golden_dir),
         reporting=ReportingConfig(results_dir="results/"),
@@ -374,8 +377,10 @@ class TestCLIRun:
             project:
               name: "CLI Test"
             agent:
-              model: "claude-sonnet-4-5-20250929"
-              system_prompt: "p.md"
+              adapter: anthropic_tool_loop
+              anthropic_tool_loop:
+                model: "claude-sonnet-4-5-20250929"
+                system_prompt: "p.md"
             database:
               type: snowflake
             golden_tests:
@@ -411,8 +416,10 @@ class TestCLIRun:
             project:
               name: "Empty"
             agent:
-              model: "test"
-              system_prompt: "p.md"
+              adapter: anthropic_tool_loop
+              anthropic_tool_loop:
+                model: "test"
+                system_prompt: "p.md"
             database:
               type: snowflake
             golden_tests:
