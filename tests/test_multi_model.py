@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from bi_evals.config import AgentConfig, BiEvalsConfig
+from bi_evals.config import AnthropicToolLoopConfig, BiEvalsConfig
 from bi_evals.promptfoo.bridge import generate_promptfoo_config
 from bi_evals.store import connect
 from bi_evals.store import queries as q
@@ -21,25 +21,25 @@ from tests.conftest import EVAL_SAMPLE_DIR, RUN_B_JSON
 
 
 def test_singular_model_normalizes_to_models_list() -> None:
-    agent = AgentConfig(model="claude-sonnet-4-5")
-    assert agent.models == ["claude-sonnet-4-5"]
+    cfg = AnthropicToolLoopConfig(model="claude-sonnet-4-5")
+    assert cfg.models == ["claude-sonnet-4-5"]
 
 
 def test_plural_models_populates_singular_model() -> None:
-    agent = AgentConfig(models=["sonnet-4-5", "haiku-4-5"])
-    assert agent.model == "sonnet-4-5"
-    assert agent.models == ["sonnet-4-5", "haiku-4-5"]
+    cfg = AnthropicToolLoopConfig(models=["sonnet-4-5", "haiku-4-5"])
+    assert cfg.model == "sonnet-4-5"
+    assert cfg.models == ["sonnet-4-5", "haiku-4-5"]
 
 
 def test_both_model_and_models_with_different_values_fails() -> None:
     with pytest.raises(ValidationError):
-        AgentConfig(model="sonnet-4-5", models=["haiku-4-5"])
+        AnthropicToolLoopConfig(model="sonnet-4-5", models=["haiku-4-5"])
 
 
 def test_both_set_but_consistent_is_idempotent() -> None:
     """Pydantic re-validates nested models; {model='x', models=['x']} is normalized state."""
-    agent = AgentConfig(model="x", models=["x"])
-    assert agent.model == "x" and agent.models == ["x"]
+    cfg = AnthropicToolLoopConfig(model="x", models=["x"])
+    assert cfg.model == "x" and cfg.models == ["x"]
 
 
 # --- Promptfoo bridge ----------------------------------------------------
@@ -48,8 +48,8 @@ def test_both_set_but_consistent_is_idempotent() -> None:
 def test_bridge_emits_one_provider_per_model(tmp_path: Path) -> None:
     """Generating promptfoo config with two models yields two provider blocks."""
     cfg = BiEvalsConfig.load(EVAL_SAMPLE_DIR / "bi-evals.yaml")
-    cfg.agent.model = ""
-    cfg.agent.models = ["sonnet-4-5", "haiku-4-5"]
+    cfg.agent.anthropic_tool_loop.model = ""
+    cfg.agent.anthropic_tool_loop.models = ["sonnet-4-5", "haiku-4-5"]
 
     pf = generate_promptfoo_config(cfg, str(EVAL_SAMPLE_DIR / "bi-evals.yaml"))
     providers = pf["providers"]

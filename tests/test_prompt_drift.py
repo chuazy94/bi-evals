@@ -74,7 +74,7 @@ def test_snapshot_resolves_files_via_file_reader_base_dir(tmp_path: Path) -> Non
     # Replace tools so only one file_reader exists, pointing at the skill dir.
     from bi_evals.config import ToolConfig
 
-    cfg.agent.tools = [
+    cfg.agent.anthropic_tool_loop.tools = [
         ToolConfig(
             name="file_reader", type="file_reader", config={"base_dir": "skills/covid"}
         )

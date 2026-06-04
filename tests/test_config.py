@@ -19,14 +19,16 @@ def config_dir(tmp_path: Path) -> Path:
           name: "Test Project"
 
         agent:
-          model: "claude-sonnet-4-5-20250929"
-          system_prompt: "prompts/system.md"
-          tools:
-            - name: read_skill_file
-              type: file_reader
-              config:
-                base_dir: "skill/"
-          max_rounds: 5
+          adapter: anthropic_tool_loop
+          anthropic_tool_loop:
+            model: "claude-sonnet-4-5-20250929"
+            system_prompt: "prompts/system.md"
+            tools:
+              - name: read_skill_file
+                type: file_reader
+                config:
+                  base_dir: "skill/"
+            max_rounds: 5
 
         database:
           type: snowflake
@@ -112,8 +114,10 @@ class TestStrictDuplicateKeyLoading:
             project:
               name: "Dup Test"
             agent:
-              model: "claude-sonnet-4-5-20250929"
-              system_prompt: "p.md"
+              adapter: anthropic_tool_loop
+              anthropic_tool_loop:
+                model: "claude-sonnet-4-5-20250929"
+                system_prompt: "p.md"
             database:
               type: snowflake
             scoring:
@@ -131,8 +135,10 @@ class TestStrictDuplicateKeyLoading:
             project:
               name: "Dup Test"
             agent:
-              model: "claude-sonnet-4-5-20250929"
-              system_prompt: "p.md"
+              adapter: anthropic_tool_loop
+              anthropic_tool_loop:
+                model: "claude-sonnet-4-5-20250929"
+                system_prompt: "p.md"
             database:
               type: snowflake
             scoring:
@@ -149,8 +155,10 @@ class TestStrictDuplicateKeyLoading:
             project:
               name: "Clean"
             agent:
-              model: "claude-sonnet-4-5-20250929"
-              system_prompt: "p.md"
+              adapter: anthropic_tool_loop
+              anthropic_tool_loop:
+                model: "claude-sonnet-4-5-20250929"
+                system_prompt: "p.md"
             database:
               type: snowflake
             scoring:
@@ -203,8 +211,10 @@ class TestBiEvalsConfig:
             project:
               name: "Dotenv Test"
             agent:
-              model: "claude-sonnet-4-5-20250929"
-              system_prompt: "prompts/system.md"
+              adapter: anthropic_tool_loop
+              anthropic_tool_loop:
+                model: "claude-sonnet-4-5-20250929"
+                system_prompt: "prompts/system.md"
             database:
               type: snowflake
               connection:
@@ -225,8 +235,10 @@ class TestBiEvalsConfig:
             project:
               name: "Priority Test"
             agent:
-              model: "claude-sonnet-4-5-20250929"
-              system_prompt: "prompts/system.md"
+              adapter: anthropic_tool_loop
+              anthropic_tool_loop:
+                model: "claude-sonnet-4-5-20250929"
+                system_prompt: "prompts/system.md"
             database:
               type: snowflake
               connection:
@@ -246,8 +258,10 @@ class TestBiEvalsConfig:
             project:
               name: "Env Test"
             agent:
-              model: "claude-sonnet-4-5-20250929"
-              system_prompt: "prompts/system.md"
+              adapter: anthropic_tool_loop
+              anthropic_tool_loop:
+                model: "claude-sonnet-4-5-20250929"
+                system_prompt: "prompts/system.md"
             database:
               type: snowflake
               connection:
@@ -265,8 +279,10 @@ class TestBiEvalsConfig:
             project:
               name: "Minimal"
             agent:
-              model: "claude-sonnet-4-5-20250929"
-              system_prompt: "prompts/system.md"
+              adapter: anthropic_tool_loop
+              anthropic_tool_loop:
+                model: "claude-sonnet-4-5-20250929"
+                system_prompt: "prompts/system.md"
             database:
               type: snowflake
         """)
@@ -283,3 +299,34 @@ class TestBiEvalsConfig:
     def test_file_not_found(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
             BiEvalsConfig.load(tmp_path / "nonexistent.yaml")
+
+
+class TestLegacyFlatSchemaRejected:
+    """The old flat agent schema (type/model/endpoint as top-level peers) is a
+    clean break — it must fail loudly with a migration hint, not silently
+    mis-parse into adapter defaults."""
+
+    @pytest.mark.parametrize(
+        "agent_block",
+        [
+            'agent:\n  type: "api_endpoint"\n  endpoint:\n    url: "http://x"',
+            'agent:\n  model: "claude-sonnet-4-5"\n  system_prompt: "p.md"',
+            'agent:\n  adapter: "anthropic_tool_loop"\n  model: "x"',
+        ],
+    )
+    def test_flat_schema_raises_with_migration_hint(
+        self, tmp_path: Path, agent_block: str
+    ) -> None:
+        config_content = dedent(
+            """\
+            project:
+              name: "Legacy"
+            {agent}
+            database:
+              type: snowflake
+            """
+        ).format(agent=agent_block)
+        config_file = tmp_path / "bi-evals.yaml"
+        config_file.write_text(config_content)
+        with pytest.raises(ValueError, match="adapter-nested"):
+            BiEvalsConfig.load(config_file)

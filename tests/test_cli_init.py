@@ -1,10 +1,10 @@
-"""Tests for `bi-evals init` subcommand split — built-in vs byo.
+"""Tests for `bi-evals init` subcommand split — api_endpoint (default) vs dev.
 
 Covers:
-- bare `init` errors with the mode-required message
-- `init built-in` writes the right files, no adapter, valid config
-- `init byo` writes the right files including adapter_example.py, valid config
-- generated YAML loads cleanly under BiEvalsConfig in both modes
+- bare `init` errors with the scaffold-required message
+- `init dev` writes the right files, no adapter shim, valid config
+- `init api_endpoint` writes the right files including adapter_example.py, valid config
+- generated YAML loads cleanly under BiEvalsConfig (adapter-nested schema) in both
 - adapter_example.py is syntactically valid Python
 """
 
@@ -25,14 +25,14 @@ class TestInitBareErrors:
         runner = CliRunner()
         result = runner.invoke(cli, ["init"])
         assert result.exit_code != 0
-        assert "must specify a mode" in result.output
-        assert "built-in" in result.output and "byo" in result.output
+        assert "must specify a scaffold" in result.output
+        assert "api_endpoint" in result.output and "dev" in result.output
 
 
-class TestInitBuiltIn:
+class TestInitDev:
     def _scaffold(self, tmp_path: Path) -> Path:
         runner = CliRunner()
-        result = runner.invoke(cli, ["init", "built-in", "--dir", str(tmp_path)])
+        result = runner.invoke(cli, ["init", "dev", "--dir", str(tmp_path)])
         assert result.exit_code == 0, result.output
         return tmp_path
 
@@ -45,7 +45,7 @@ class TestInitBuiltIn:
         assert (target / "results").is_dir()
         assert (target / "reports").is_dir()
 
-    def test_does_not_write_byo_adapter(self, tmp_path: Path) -> None:
+    def test_does_not_write_api_endpoint_adapter(self, tmp_path: Path) -> None:
         target = self._scaffold(tmp_path)
         assert not (target / "adapter_example.py").exists()
 
@@ -58,21 +58,21 @@ class TestInitBuiltIn:
     def test_generated_config_loads(self, tmp_path: Path) -> None:
         target = self._scaffold(tmp_path)
         config = BiEvalsConfig.load(target / "bi-evals.yaml")
-        assert config.agent.type == "anthropic_tool_loop"
+        assert config.agent.adapter == "anthropic_tool_loop"
         assert config.agent.model.startswith("claude-")
         assert len(config.agent.tools) >= 1
 
     def test_next_steps_mention_skills(self, tmp_path: Path) -> None:
         runner = CliRunner()
-        result = runner.invoke(cli, ["init", "built-in", "--dir", str(tmp_path)])
+        result = runner.invoke(cli, ["init", "dev", "--dir", str(tmp_path)])
         assert "system-prompt.md" in result.output
         assert "skill" in result.output.lower()
 
 
-class TestInitByo:
+class TestInitApiEndpoint:
     def _scaffold(self, tmp_path: Path) -> Path:
         runner = CliRunner()
-        result = runner.invoke(cli, ["init", "byo", "--dir", str(tmp_path)])
+        result = runner.invoke(cli, ["init", "api_endpoint", "--dir", str(tmp_path)])
         assert result.exit_code == 0, result.output
         return tmp_path
 
@@ -96,7 +96,7 @@ class TestInitByo:
     def test_generated_config_loads(self, tmp_path: Path) -> None:
         target = self._scaffold(tmp_path)
         config = BiEvalsConfig.load(target / "bi-evals.yaml")
-        assert config.agent.type == "api_endpoint"
+        assert config.agent.adapter == "api_endpoint"
         assert config.agent.endpoint is not None
         assert config.agent.endpoint.url  # substituted from .env
 
@@ -107,7 +107,7 @@ class TestInitByo:
 
     def test_next_steps_mention_endpoint_and_adapter(self, tmp_path: Path) -> None:
         runner = CliRunner()
-        result = runner.invoke(cli, ["init", "byo", "--dir", str(tmp_path)])
+        result = runner.invoke(cli, ["init", "api_endpoint", "--dir", str(tmp_path)])
         assert "endpoint" in result.output.lower()
         assert "adapter_example.py" in result.output
 
@@ -115,13 +115,13 @@ class TestInitByo:
 class TestInitIdempotent:
     """Re-running init should not clobber existing files."""
 
-    @pytest.mark.parametrize("mode", ["built-in", "byo"])
-    def test_existing_config_preserved(self, tmp_path: Path, mode: str) -> None:
+    @pytest.mark.parametrize("scaffold", ["dev", "api_endpoint"])
+    def test_existing_config_preserved(self, tmp_path: Path, scaffold: str) -> None:
         runner = CliRunner()
-        runner.invoke(cli, ["init", mode, "--dir", str(tmp_path)])
+        runner.invoke(cli, ["init", scaffold, "--dir", str(tmp_path)])
         config_path = tmp_path / "bi-evals.yaml"
         marker = "# USER EDIT MARKER — DO NOT OVERWRITE\n"
         config_path.write_text(marker + config_path.read_text())
         # Re-run init — existing file should be left alone
-        runner.invoke(cli, ["init", mode, "--dir", str(tmp_path)])
+        runner.invoke(cli, ["init", scaffold, "--dir", str(tmp_path)])
         assert config_path.read_text().startswith(marker)

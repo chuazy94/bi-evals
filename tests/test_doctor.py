@@ -90,8 +90,8 @@ def _byo_config(url: str, tmp_path: Path) -> BiEvalsConfig:
     config = BiEvalsConfig(
         project=ProjectConfig(name="t"),
         agent=AgentConfig(
-            type="api_endpoint",
-            endpoint=ApiEndpointConfig(url=url),
+            adapter="api_endpoint",
+            api_endpoint=ApiEndpointConfig(url=url),
         ),
         database=DatabaseConfig(type="snowflake"),
         reporting=ReportingConfig(results_dir="results/"),
@@ -124,10 +124,12 @@ def _builtin_config(
     config = BiEvalsConfig(
         project=ProjectConfig(name="t"),
         agent=AgentConfig(
-            type="anthropic_tool_loop",
-            model="claude-sonnet-4-6",
-            system_prompt=system_prompt_path,
-            tools=tools,
+            adapter="anthropic_tool_loop",
+            anthropic_tool_loop={
+                "model": "claude-sonnet-4-6",
+                "system_prompt": system_prompt_path,
+                "tools": tools,
+            },
         ),
         database=DatabaseConfig(type="snowflake"),
         reporting=ReportingConfig(results_dir="results/"),
@@ -259,7 +261,7 @@ class TestCheckByoEndpoint:
         config = _builtin_config(tmp_path)  # anthropic_tool_loop
         results = check_byo_endpoint(config)
         assert is_failing(results)
-        assert any("BYO mode" in r.name for r in results)
+        assert any("api_endpoint adapter" in r.name for r in results)
 
     def test_files_read_derivable_from_trace(
         self, mock_endpoint, tmp_path: Path
@@ -338,7 +340,9 @@ class TestCheckBuiltinSetup:
 
     def test_missing_system_prompt_file_fails(self, tmp_path: Path) -> None:
         config = _builtin_config(tmp_path, with_system_prompt=False)
-        config.agent.system_prompt = "missing.md"  # claim a file that doesn't exist
+        config.agent.anthropic_tool_loop.system_prompt = (
+            "missing.md"  # claim a file that doesn't exist
+        )
         with (
             patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-test"}, clear=False),
             _mock_anthropic_ok(),
@@ -351,7 +355,7 @@ class TestCheckBuiltinSetup:
 
     def test_missing_tool_base_dir_fails(self, tmp_path: Path) -> None:
         config = _builtin_config(tmp_path, with_tools=False)
-        config.agent.tools = [
+        config.agent.anthropic_tool_loop.tools = [
             ToolConfig(
                 name="read_skill_file",
                 type="file_reader",
@@ -431,8 +435,8 @@ def _write_byo_config_file(tmp_path: Path, url: str) -> Path:
         f"""project:
   name: "doctor test"
 agent:
-  type: "api_endpoint"
-  endpoint:
+  adapter: "api_endpoint"
+  api_endpoint:
     url: "{url}"
 database:
   type: snowflake
@@ -455,7 +459,7 @@ class TestCliDoctor:
         with _mock_snowflake_ok(), _mock_promptfoo_ok():
             result = runner.invoke(cli, ["-c", str(config_file), "doctor"])
         assert result.exit_code == 0, result.output
-        assert "BYO" in result.output
+        assert "api_endpoint" in result.output
         assert "0 fail" in result.output
         assert "All required checks passed" in result.output
 
@@ -468,13 +472,13 @@ class TestCliDoctor:
         assert result.exit_code == 1
         assert "fail" in result.output.lower()
 
-    def test_unknown_agent_type_errors(self, tmp_path: Path) -> None:
+    def test_unknown_adapter_errors(self, tmp_path: Path) -> None:
         config_file = tmp_path / "bi-evals.yaml"
         config_file.write_text(
             """project:
   name: "x"
 agent:
-  type: "weird_thing"
+  adapter: "weird_thing"
 database:
   type: snowflake
 golden_tests:
@@ -486,4 +490,24 @@ reporting:
         runner = CliRunner()
         result = runner.invoke(cli, ["-c", str(config_file), "doctor"])
         assert result.exit_code != 0
-        assert "Unknown agent.type" in result.output
+        assert "Unknown agent.adapter" in result.output
+
+    def test_legacy_flat_schema_errors(self, tmp_path: Path) -> None:
+        """Old flat `type:` config is rejected at load with a migration hint."""
+        config_file = tmp_path / "bi-evals.yaml"
+        config_file.write_text(
+            """project:
+  name: "x"
+agent:
+  type: "api_endpoint"
+  endpoint:
+    url: "http://x"
+database:
+  type: snowflake
+"""
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli, ["-c", str(config_file), "doctor"])
+        assert result.exit_code != 0
+        # The clean-break ValueError surfaces via the raised exception.
+        assert "adapter-nested" in str(result.exception)

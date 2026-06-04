@@ -143,7 +143,10 @@ class TestLoader:
 
         config = BiEvalsConfig(
             project=ProjectConfig(name="test"),
-            agent=AgentConfig(model="test"),
+            agent=AgentConfig(
+                adapter="anthropic_tool_loop",
+                anthropic_tool_loop={"model": "test"},
+            ),
             database=DatabaseConfig(type="snowflake"),
             golden_tests=GoldenTestsConfig(dir=golden_dir),
         )

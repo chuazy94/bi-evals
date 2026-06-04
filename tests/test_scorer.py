@@ -525,8 +525,10 @@ class TestGetAssert:
             project:
               name: "Test"
             agent:
-              model: "claude-sonnet-4-5-20250929"
-              system_prompt: "prompts/system.md"
+              adapter: anthropic_tool_loop
+              anthropic_tool_loop:
+                model: "claude-sonnet-4-5-20250929"
+                system_prompt: "prompts/system.md"
             database:
               type: snowflake
             scoring:
@@ -649,8 +651,10 @@ class TestGetAssert:
             project:
               name: "Test"
             agent:
-              model: "test"
-              system_prompt: "p.md"
+              adapter: anthropic_tool_loop
+              anthropic_tool_loop:
+                model: "test"
+                system_prompt: "p.md"
             database:
               type: snowflake
         """)
@@ -689,10 +693,12 @@ class TestGetAssert:
             project:
               name: "Test"
             agent:
-              system_prompt: "p.md"
-              models:
-                - "claude-sonnet-4-5-20250929"
-                - "claude-haiku-4-5-20251001"
+              adapter: anthropic_tool_loop
+              anthropic_tool_loop:
+                system_prompt: "p.md"
+                models:
+                  - "claude-sonnet-4-5-20250929"
+                  - "claude-haiku-4-5-20251001"
             database:
               type: snowflake
             scoring:
@@ -822,8 +828,10 @@ class TestGetAssert:
             project:
               name: "Test"
             agent:
-              model: "claude-sonnet-4-5-20250929"
-              system_prompt: "p.md"
+              adapter: anthropic_tool_loop
+              anthropic_tool_loop:
+                model: "claude-sonnet-4-5-20250929"
+                system_prompt: "p.md"
             database:
               type: snowflake
             scoring:
@@ -905,8 +913,10 @@ class TestGetAssert:
             project:
               name: "Test"
             agent:
-              model: "test"
-              system_prompt: "p.md"
+              adapter: anthropic_tool_loop
+              anthropic_tool_loop:
+                model: "test"
+                system_prompt: "p.md"
             database:
               type: snowflake
         """)
@@ -937,8 +947,10 @@ class TestTieredScoring:
             project:
               name: "Test"
             agent:
-              model: "claude-sonnet-4-5-20250929"
-              system_prompt: "p.md"
+              adapter: anthropic_tool_loop
+              anthropic_tool_loop:
+                model: "claude-sonnet-4-5-20250929"
+                system_prompt: "p.md"
             database:
               type: snowflake
             scoring:

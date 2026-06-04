@@ -115,41 +115,138 @@ class ApiEndpointConfig(BaseModel):
     timeout: int = 60
 
 
-class AgentConfig(BaseModel):
-    type: str = "anthropic_tool_loop"  # "anthropic_tool_loop" or "api_endpoint"
+# Fields that, at the top level of ``agent:``, mark the *old* flat (two-mode)
+# schema. The schema is adapter-nested now (``agent.adapter`` + a block named for
+# the adapter), so any of these at the top level means an un-migrated config.
+_LEGACY_FLAT_AGENT_KEYS = frozenset(
+    {
+        "type",
+        "model",
+        "models",
+        "system_prompt",
+        "tools",
+        "max_rounds",
+        "api_key_env",
+        "endpoint",
+    }
+)
+
+
+class AnthropicToolLoopConfig(BaseModel):
+    """Config for the dev-only driving adapter (``adapter: anthropic_tool_loop``).
+
+    Not a public product feature — this drives a local Claude loop, useful for
+    authoring goldens before a real agent exists. All the model/prompt/tool
+    fields that used to live flat under ``agent:`` now nest here.
+    """
+
     model: str = ""
     # Multi-model evaluation: list of models to run the same goldens against.
-    # Mutually exclusive with `model`; exactly one of the two must be set for
-    # anthropic_tool_loop. After validation, `models` is always the canonical
-    # list (single `model` is normalized to a one-element list).
+    # Mutually exclusive with `model`; exactly one of the two must be set.
+    # After validation, `models` is always the canonical list (single `model` is
+    # normalized to a one-element list).
     models: list[str] = []
     system_prompt: str = ""  # relative path to system prompt file
     tools: list[ToolConfig] = []
     max_rounds: int = 10
     api_key_env: str = "ANTHROPIC_API_KEY"
-    # For api_endpoint type
-    endpoint: ApiEndpointConfig = ApiEndpointConfig()
 
     @model_validator(mode="after")
-    def _normalize_models(self) -> AgentConfig:
-        if self.type != "anthropic_tool_loop":
-            return self
+    def _normalize_models(self) -> AnthropicToolLoopConfig:
         has_singular = bool(self.model)
         has_plural = bool(self.models)
-        # If both are set but `models` is just the normalized mirror of `model`
-        # (exactly one element matching), that's idempotent re-validation —
-        # leave it alone.
+        # Idempotent re-validation: `models` is just the normalized mirror of
+        # `model` (exactly one matching element) — leave it alone.
         if has_singular and has_plural:
             if len(self.models) == 1 and self.models[0] == self.model:
                 return self
             raise ValueError(
-                "agent.model and agent.models are mutually exclusive; set exactly one."
+                "anthropic_tool_loop.model and .models are mutually exclusive; "
+                "set exactly one."
             )
         if has_singular and not has_plural:
             self.models = [self.model]
         elif has_plural and not has_singular:
             self.model = self.models[0]
         return self
+
+
+class AgentConfig(BaseModel):
+    """Which adapter produces the agent's answer, plus that adapter's config.
+
+    Adapter-nested schema (one contract, many adapters):
+
+        agent:
+          adapter: api_endpoint
+          api_endpoint: { url: ... }
+
+        agent:
+          adapter: anthropic_tool_loop      # dev-only
+          anthropic_tool_loop: { model: ..., system_prompt: ..., tools: [...] }
+
+    The old flat shape (``type:`` + ``model:``/``endpoint:`` as top-level peers)
+    is rejected with a migration error — see ``_reject_legacy_flat_schema``.
+
+    The ``type``/``model``/``endpoint``/... properties below delegate into the
+    nested blocks so readers can stay adapter-agnostic.
+    """
+
+    adapter: str = (
+        "api_endpoint"  # "api_endpoint" (default on-ramp) or "anthropic_tool_loop"
+    )
+    api_endpoint: ApiEndpointConfig = ApiEndpointConfig()
+    anthropic_tool_loop: AnthropicToolLoopConfig = AnthropicToolLoopConfig()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_flat_schema(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            stray = _LEGACY_FLAT_AGENT_KEYS & set(data)
+            if stray:
+                raise ValueError(
+                    f"agent: uses the old flat schema (found {sorted(stray)} at the "
+                    "top level). The schema is now adapter-nested: set `agent.adapter` "
+                    "and move adapter config under a block named for it, e.g.\n"
+                    "  agent:\n"
+                    "    adapter: api_endpoint\n"
+                    "    api_endpoint: { url: ... }\n"
+                    "See docs/migration-adapter-schema.md."
+                )
+        return data
+
+    # ── Back-compat accessors so readers stay adapter-agnostic ──────────────
+    @property
+    def type(self) -> str:
+        """Alias for ``adapter`` (kept so existing readers/tests don't churn)."""
+        return self.adapter
+
+    @property
+    def endpoint(self) -> ApiEndpointConfig:
+        return self.api_endpoint
+
+    @property
+    def model(self) -> str:
+        return self.anthropic_tool_loop.model
+
+    @property
+    def models(self) -> list[str]:
+        return self.anthropic_tool_loop.models
+
+    @property
+    def system_prompt(self) -> str:
+        return self.anthropic_tool_loop.system_prompt
+
+    @property
+    def tools(self) -> list[ToolConfig]:
+        return self.anthropic_tool_loop.tools
+
+    @property
+    def max_rounds(self) -> int:
+        return self.anthropic_tool_loop.max_rounds
+
+    @property
+    def api_key_env(self) -> str:
+        return self.anthropic_tool_loop.api_key_env
 
 
 class DatabaseConnection(BaseModel):
