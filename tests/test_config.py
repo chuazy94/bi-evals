@@ -296,6 +296,28 @@ class TestBiEvalsConfig:
         assert config.golden_tests.dir == "golden/"
         assert len(config.scoring.dimensions) == 10
 
+    def test_api_endpoint_config_loads(self, tmp_path: Path) -> None:
+        """The default on-ramp adapter loads via BiEvalsConfig.load (all the
+        other TestBiEvalsConfig fixtures exercise anthropic_tool_loop)."""
+        config_content = dedent("""\
+            project:
+              name: "Endpoint"
+            agent:
+              adapter: api_endpoint
+              api_endpoint:
+                url: "http://localhost:8000/ask"
+                response_sql_key: "answer.sql"
+            database:
+              type: snowflake
+        """)
+        config_file = tmp_path / "bi-evals.yaml"
+        config_file.write_text(config_content)
+
+        config = BiEvalsConfig.load(config_file)
+        assert config.agent.adapter == "api_endpoint"
+        assert config.agent.endpoint.url == "http://localhost:8000/ask"
+        assert config.agent.endpoint.response_sql_key == "answer.sql"
+
     def test_file_not_found(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
             BiEvalsConfig.load(tmp_path / "nonexistent.yaml")

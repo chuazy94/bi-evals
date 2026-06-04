@@ -490,7 +490,10 @@ reporting:
         runner = CliRunner()
         result = runner.invoke(cli, ["-c", str(config_file), "doctor"])
         assert result.exit_code != 0
-        assert "Unknown agent.adapter" in result.output
+        # `adapter` is a Literal, so an unknown value is caught at config-load
+        # (pydantic), surfacing via the raised exception rather than the doctor's
+        # dispatch branch.
+        assert "anthropic_tool_loop" in str(result.exception)
 
     def test_legacy_flat_schema_errors(self, tmp_path: Path) -> None:
         """Old flat `type:` config is rejected at load with a migration hint."""
