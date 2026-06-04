@@ -233,7 +233,7 @@ A Claude Code PostToolUse hook in `.claude/settings.json` watches the nine files
 
 The wording is deliberately permissive ("if this change altered the request flow, also update request-flow.md — otherwise no action needed") because the hook can't tell intent from a diff. False positives (reminder fires for a comment-only edit) cost nothing; false negatives (a real flow change with no doc update) cost doc rot. The list is intentionally narrow — adding files that don't shape this flow would dilute the signal.
 
-If you're modifying one of those seven files and the doc *should* change, the relevant sections to edit are usually Steps 2–6 (the parts that describe runtime behavior) and the "What's actually on disk" inventory.
+If you're modifying one of those nine files and the doc *should* change, the relevant sections to edit are usually Steps 2–6 (the parts that describe runtime behavior) and the "What's actually on disk" inventory.
 
 ---
 

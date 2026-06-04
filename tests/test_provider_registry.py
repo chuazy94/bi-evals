@@ -74,3 +74,20 @@ class TestAdapterErrorPaths:
         result = AnthropicToolLoopAdapter().produce("q", {}, config, None)
         assert isinstance(result, str)
         assert "System prompt not found" in result
+
+    def test_anthropic_missing_api_key(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The system-prompt check runs first, so give it a real file; the next
+        # guard is the unset api_key_env we want to exercise.
+        prompt_file = tmp_path / "system.md"
+        prompt_file.write_text("You are a SQL assistant.")
+        config = _config("anthropic_tool_loop")
+        config._base_dir = tmp_path
+        config.agent.system_prompt = "system.md"
+        config.agent.api_key_env = "DEFINITELY_NOT_SET_12345"
+        monkeypatch.delenv("DEFINITELY_NOT_SET_12345", raising=False)
+
+        result = AnthropicToolLoopAdapter().produce("q", {}, config, None)
+        assert isinstance(result, str)
+        assert "is not set" in result

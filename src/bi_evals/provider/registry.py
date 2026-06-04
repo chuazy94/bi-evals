@@ -32,7 +32,7 @@ class AnthropicToolLoopAdapter:
     def produce(
         self,
         question: str,
-        vars: dict[str, Any],
+        prompt_vars: dict[str, Any],  # protocol-required; unused by this adapter
         config: BiEvalsConfig,
         model: str | None,
     ) -> AgentResult | str:
@@ -74,9 +74,9 @@ class ApiEndpointAdapter:
     def produce(
         self,
         question: str,
-        vars: dict[str, Any],
+        prompt_vars: dict[str, Any],  # protocol-required; unused by this adapter
         config: BiEvalsConfig,
-        model: str | None,
+        model: str | None,  # Step 2 will carry this to the customer's agent
     ) -> AgentResult | str:
         endpoint = config.agent.endpoint
         if not endpoint.url:
