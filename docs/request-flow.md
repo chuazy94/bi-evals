@@ -42,9 +42,11 @@ After this step, control passes to Promptfoo. bi-evals' own process is just wait
 
 For every (test, model, trial) combination, Promptfoo invokes the bi-evals provider. The provider lives at `src/bi_evals/provider/entry.py:call_api()` and is referenced from the Promptfoo config as a `file://` provider path.
 
-**Built-in mode** (`agent.type: anthropic_tool_loop`): the provider runs the multi-turn Claude tool loop directly. Tool calls happen inside the same Python process; the model reads skill files via the `FileReaderTool`, writes SQL, the loop ends.
+`call_api()` does not branch on `agent.type` itself. It resolves an adapter via `build_adapter(config)` in `provider/registry.py` (which maps `agent.type` to one adapter, mirroring `db/factory.py`) and calls `adapter.produce(...)`. Every adapter returns the same canonical `AgentResult` — defined in `provider/contract.py` — so everything downstream (trace-write, scorer, ingest) is agent-agnostic. Adding a delivery shape means registering one adapter, not editing this flow.
 
-**BYO mode** (`agent.type: api_endpoint`): the provider calls `call_api_endpoint()` in `provider/api_endpoint.py`, which does exactly this:
+**`anthropic_tool_loop` adapter** (dev-only — not a public product feature): runs the multi-turn Claude tool loop directly via `agent_loop.py`. Tool calls happen inside the same Python process; the model reads skill files via the `FileReaderTool`, writes SQL, the loop ends.
+
+**`api_endpoint` adapter**: calls `call_api_endpoint()` in `provider/api_endpoint.py`, which does exactly this:
 
 ```python
 req = Request(endpoint_config.url, data=request_body, headers=headers, method="POST")
@@ -227,7 +229,7 @@ The cost is that you need a consistent naming scheme (`{slug}__{model}__{suffix}
 
 ## Keeping this doc honest
 
-A Claude Code PostToolUse hook in `.claude/settings.json` watches the seven files that drive this request flow: `cli.py`, `provider/api_endpoint.py`, `provider/entry.py`, `scorer/entry.py`, `trace_paths.py`, `promptfoo/bridge.py`, and `store/ingest.py`. When any of them is edited, the hook emits a system reminder asking the agent to update this doc if the change altered the documented flow.
+A Claude Code PostToolUse hook in `.claude/settings.json` watches the nine files that drive this request flow: `cli.py`, `provider/api_endpoint.py`, `provider/entry.py`, `provider/registry.py`, `provider/contract.py`, `scorer/entry.py`, `trace_paths.py`, `promptfoo/bridge.py`, and `store/ingest.py`. When any of them is edited, the hook emits a system reminder asking the agent to update this doc if the change altered the documented flow.
 
 The wording is deliberately permissive ("if this change altered the request flow, also update request-flow.md — otherwise no action needed") because the hook can't tell intent from a diff. False positives (reminder fires for a comment-only edit) cost nothing; false negatives (a real flow change with no doc update) cost doc rot. The list is intentionally narrow — adding files that don't shape this flow would dilute the signal.
 

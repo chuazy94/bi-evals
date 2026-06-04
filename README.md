@@ -4,6 +4,62 @@ A configurable Python framework for evaluating SQL-generating BI agents. You pro
 
 [Promptfoo](https://promptfoo.dev/) (Node.js) is used as the test runner engine; all custom logic is Python.
 
+## Where bi-evals fits in your eval process
+
+> **The goal:** bi-evals is a framework for the offline evaluation suite behind self-service
+> analytics. The **push on-ramp** (`submit()` SDK / `score --input`) described below is the
+> intended default; what ships today is under [Two modes](#two-modes).
+
+**bi-evals doesn't run your agent — you run your agent, and bi-evals grades its homework.** The
+offline evaluation suite is the golden questions you run your agent against before launch, gate
+releases on, and re-run to catch regressions. You author the evals; bi-evals is the shared engine
+that scores them.
+
+### Evaluate the response, don't rebuild the agent
+
+To be faithful you must score the agent your users actually hit, and to plug into *any* stack
+bi-evals can't assume how your agent is wired. So it makes **no assumption about how an answer was
+produced** — it evaluates the *response*. For each golden question your agent hands over two things:
+
+- **`generated_sql`** — the SQL it produced.
+- **`trace`** — what it did to get there (files/skills read, tools invoked).
+
+bi-evals **executes that SQL itself** against your warehouse, so you never send result sets — only
+the query and what it touched. Everything else (provider, orchestration, MCP/LangChain/notebook)
+stays yours and untouched.
+
+### What you'll need
+
+- **A BI agent that exposes its generated SQL and trace.** This is the real prerequisite — see
+  [The real boundary](#the-real-boundary-and-scope) below. bi-evals doesn't care how it's built.
+- **Warehouse credentials** bi-evals can use to execute SQL for grading.
+- **Golden questions with reference SQL** — the "right answer" to grade against. You author these.
+- Python 3.11+ and [uv](https://docs.astral.sh/uv/) to run the framework.
+
+### The journey
+
+1. **Install & scaffold** — `bi-evals init` gives you a config and a `golden/` folder. You provide
+   warehouse credentials and where your tests live.
+2. **Author golden tests** — a question + reference SQL + what should be true of the result. This
+   encodes what "correct" means for your data; it's the real work, and it's yours.
+3. **Run your own agent over the questions** — a loop around the agent you already have: ask each
+   question, collect `generated_sql` and `trace`, submit them. Your production agent runs unchanged.
+4. **Score** — bi-evals runs each generated SQL (and the reference) against your warehouse and
+   compares across ~10 dimensions, producing a pass/fail verdict and a report.
+5. **Gate and regress** — in CI, every change re-runs the suite, gates on a threshold, and shows a
+   per-dimension diff.
+
+### The real boundary, and scope
+
+What bi-evals can score depends on **whether your agent surfaces its own SQL and trace.** Most
+text-to-SQL agents do (it's in their UI) — then connecting is light. If your agent only returns a
+natural-language answer, you'll need to surface the SQL first, and that cost is the same however
+you integrate: nothing can score a query the agent never emitted.
+
+bi-evals targets the **offline** half of evaluation — the pre-launch gate, regression suite, and
+"change one thing, compare pass rates" experiments. Online/production monitoring is a different
+surface it doesn't aim to be; the seam is that every real correction is a candidate golden test.
+
 ## Two modes
 
 bi-evals runs in one of two modes. Pick the one that matches your situation **before** you scaffold a project — they share the same scoring engine but expect different config.

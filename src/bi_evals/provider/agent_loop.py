@@ -1,87 +1,28 @@
-"""Claude multi-turn tool-calling loop with trace capture."""
+"""Claude multi-turn tool-calling loop with trace capture.
+
+DEV-ONLY ADAPTER — not a public product feature. bi-evals' product stance is to
+evaluate the *response* of the real production agent, never to drive or rebuild
+its loop. This driving loop is kept only as an internal convenience for authoring
+golden tests and sanity-checking before a real agent exists. Do not position it
+as a way to "evaluate the agent" — it evaluates a local rebuild.
+
+The canonical contract types (``AgentResult``, ``TraceStep``, ``extract_sql``)
+now live in ``bi_evals.provider.contract``. They are re-exported here so existing
+importers keep working; new code should import from ``contract`` directly.
+"""
 
 from __future__ import annotations
 
-import re
 import time
-from dataclasses import dataclass, field
 from typing import Any
 
 import anthropic
 
+from bi_evals.provider.contract import AgentResult, TraceStep, extract_sql
 from bi_evals.provider.cost import calculate_cost
 from bi_evals.tools.base import Tool
 
-
-@dataclass
-class TraceStep:
-    """A single step in the agent's reasoning trace."""
-
-    round: int
-    type: str  # "tool_use" or "text"
-    tool_name: str | None = None
-    tool_input: dict[str, Any] | None = None
-    tool_result_preview: str | None = None  # truncated output
-    text: str | None = None
-    timestamp_ms: int = 0
-
-
-@dataclass
-class AgentResult:
-    """Result of running the agent loop."""
-
-    final_text: str
-    extracted_sql: str | None
-    trace: list[TraceStep] = field(default_factory=list)
-    files_read: list[str] = field(default_factory=list)
-    rounds: int = 0
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
-    cost: float = 0.0
-    latency_ms: int = 0
-
-    def trace_as_dicts(self) -> list[dict[str, Any]]:
-        """Serialize trace steps for JSON output."""
-        return [
-            {
-                "round": s.round,
-                "type": s.type,
-                "tool_name": s.tool_name,
-                "tool_input": s.tool_input,
-                "tool_result_preview": s.tool_result_preview,
-                "text": s.text,
-                "timestamp_ms": s.timestamp_ms,
-            }
-            for s in self.trace
-        ]
-
-
-def extract_sql(text: str) -> str | None:
-    """Extract SQL from the agent's response.
-
-    Tries in order:
-    1. ```sql code fences
-    2. ``` generic code fences containing SELECT
-    3. Bare SELECT ... ; pattern
-    """
-    # Strategy 1: ```sql fences
-    match = re.search(r"```sql\s*\n(.*?)```", text, re.DOTALL | re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-
-    # Strategy 2: ``` fences containing SELECT
-    for match in re.finditer(r"```\s*\n(.*?)```", text, re.DOTALL):
-        block = match.group(1).strip()
-        if re.search(r"\bSELECT\b", block, re.IGNORECASE):
-            return block
-
-    # Strategy 3: bare SELECT statement
-    match = re.search(r"(SELECT\b.+?)(?:;|\Z)", text, re.DOTALL | re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-
-    return None
+__all__ = ["AgentResult", "TraceStep", "extract_sql", "run_agent_loop"]
 
 
 def run_agent_loop(
