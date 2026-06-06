@@ -11,12 +11,15 @@ adding one branch here, with no change to the entry point or the scorer.
 
 from __future__ import annotations
 
+import json
 import os
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from bi_evals.config import BiEvalsConfig
 from bi_evals.provider.api_endpoint import call_api_endpoint
-from bi_evals.provider.contract import Adapter, AgentResult
+from bi_evals.provider.contract import Adapter, AgentResult, TraceStep, extract_sql
 from bi_evals.tools.registry import build_tools
 
 
@@ -85,6 +88,128 @@ class ApiEndpointAdapter:
         return call_api_endpoint(question=question, endpoint_config=endpoint)
 
 
+@lru_cache(maxsize=8)
+def _load_submissions(input_file: str) -> dict[str, dict[str, Any]]:
+    """Parse a push JSONL submission file into a ``{golden_file: row}`` map.
+
+    Cached per process so the file is read once even though Promptfoo calls the
+    adapter once per test. Raises ``ValueError`` with a row-specific message on
+    malformed JSON or a missing ``golden_file`` key.
+    """
+    submissions: dict[str, dict[str, Any]] = {}
+    path = Path(input_file)
+    with path.open() as f:
+        for lineno, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{input_file}:{lineno}: invalid JSON ({e})") from e
+            golden_file = row.get("golden_file")
+            if not golden_file:
+                raise ValueError(
+                    f"{input_file}:{lineno}: row is missing required 'golden_file'."
+                )
+            submissions[golden_file] = row
+    return submissions
+
+
+def _trace_from_row(row: dict[str, Any]) -> tuple[list[TraceStep], list[str]]:
+    """Normalise a submitted ``trace`` envelope into TraceSteps + files_read.
+
+    Open-envelope: ``trace`` may be a list of step dicts, or a dict carrying a
+    ``tool_calls``/``trace`` list and/or a ``files_read`` list. Whatever isn't
+    understood is ignored (Pivot Phase 4 turns absent fields into ``unknown``
+    dimensions). Returns ([], []) when nothing usable is present.
+    """
+    trace = row.get("trace")
+    steps_raw: list[Any] = []
+    files_read: list[str] = []
+
+    if isinstance(trace, list):
+        steps_raw = trace
+    elif isinstance(trace, dict):
+        steps_raw = trace.get("tool_calls") or trace.get("trace") or []
+        if isinstance(trace.get("files_read"), list):
+            files_read = list(trace["files_read"])
+
+    # A top-level files_read on the row wins if present.
+    if isinstance(row.get("files_read"), list):
+        files_read = list(row["files_read"])
+
+    steps: list[TraceStep] = []
+    for i, step in enumerate(steps_raw):
+        if not isinstance(step, dict):
+            continue
+        steps.append(
+            TraceStep(
+                round=i + 1,
+                type=step.get("type", "tool_use"),
+                tool_name=step.get("tool_name"),
+                tool_input=step.get("tool_input"),
+                tool_result_preview=step.get("tool_result_preview"),
+                text=step.get("text"),
+            )
+        )
+        path_val = (step.get("tool_input") or {}).get("path")
+        if path_val and not files_read:
+            files_read.append(path_val)
+
+    return steps, files_read
+
+
+class PushReplayAdapter:
+    """Replays a customer-submitted ``{generated_sql, trace}`` row.
+
+    The customer runs their own agent over the goldens and submits a JSONL file
+    (one row per golden, keyed by ``golden_file``). This adapter calls nothing —
+    it looks up the row for the test being run and returns it as the canonical
+    contract. ``bi-evals score --input`` populates ``agent.push.input_file``.
+    """
+
+    def produce(
+        self,
+        question: str,  # protocol-required; the submitted SQL is authoritative
+        prompt_vars: dict[str, Any],
+        config: BiEvalsConfig,
+        model: str | None,  # protocol-required; not used by push
+    ) -> AgentResult | str:
+        input_file = config.agent.push.input_file
+        if not input_file:
+            return "agent.push.input_file is not set (use `bi-evals score --input`)."
+
+        abs_input = str(config.resolve_path(input_file))
+        try:
+            submissions = _load_submissions(abs_input)
+        except (OSError, ValueError) as e:
+            return f"Could not read push submissions: {e}"
+
+        golden_file = prompt_vars.get("golden_file", "")
+        row = submissions.get(golden_file)
+        if row is None:
+            return f"No push submission found for golden_file '{golden_file}'."
+
+        generated_sql = row.get("generated_sql")
+        if not generated_sql:
+            return f"Push submission for '{golden_file}' is missing 'generated_sql'."
+
+        steps, files_read = _trace_from_row(row)
+        return AgentResult(
+            final_text=str(generated_sql),
+            extracted_sql=extract_sql(str(generated_sql)) or str(generated_sql),
+            trace=steps,
+            files_read=files_read,
+            rounds=len(steps),
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            cost=0.0,
+            latency_ms=0,
+        )
+
+
 def build_adapter(config: BiEvalsConfig) -> Adapter:
     """Resolve the adapter for the configured ``agent.type``."""
     agent_type = config.agent.type
@@ -92,7 +217,9 @@ def build_adapter(config: BiEvalsConfig) -> Adapter:
         return AnthropicToolLoopAdapter()
     if agent_type == "api_endpoint":
         return ApiEndpointAdapter()
+    if agent_type == "push":
+        return PushReplayAdapter()
     raise ValueError(
         f"Unknown agent type: '{agent_type}'. "
-        "Use 'anthropic_tool_loop' or 'api_endpoint'."
+        "Use 'api_endpoint', 'push', or 'anthropic_tool_loop'."
     )

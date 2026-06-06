@@ -93,11 +93,21 @@ def generate_promptfoo_config(
         if config.agent.models
         else ([config.agent.model] if config.agent.model else [""])
     )
+    # Push overrides reach the forked provider process via the provider block's
+    # config (the provider re-loads bi-evals.yaml from disk, so in-memory config
+    # mutations from `score` wouldn't otherwise survive the fork).
+    push_overrides: dict[str, Any] = {}
+    if config.agent.adapter == "push":
+        push_overrides = {
+            "adapter": "push",
+            "push_input_file": config.agent.push.input_file,
+        }
+
     providers = []
     for model in models:
         provider_block: dict[str, Any] = {
             "id": f"file://{provider_path}:call_api",
-            "config": {"config_path": abs_config_path},
+            "config": {"config_path": abs_config_path, **push_overrides},
         }
         if model:
             provider_block["label"] = f"bi-evals:{model}"

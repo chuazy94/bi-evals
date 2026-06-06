@@ -44,6 +44,8 @@ For every (test, model, trial) combination, Promptfoo invokes the bi-evals provi
 
 `call_api()` does not branch on `agent.type` itself. It resolves an adapter via `build_adapter(config)` in `provider/registry.py` (which maps `agent.type` to one adapter, mirroring `db/factory.py`) and calls `adapter.produce(...)`. Every adapter returns the same canonical `AgentResult` — defined in `provider/contract.py` — so everything downstream (trace-write, scorer, ingest) is agent-agnostic. Adding a delivery shape means registering one adapter, not editing this flow.
 
+**`push` adapter** (the `bi-evals score --input` path): calls nothing. `bi-evals score` forces this adapter and threads the submission file through the provider block's config (`adapter: push`, `push_input_file`), because the forked provider re-loads `bi-evals.yaml` from disk and wouldn't otherwise see `score`'s in-memory overrides. `PushReplayAdapter.produce()` looks up the submitted row by `golden_file` and returns it as an `AgentResult` — the same shape a live adapter would produce, so trace-write / scorer / ingest are identical from here on.
+
 **`anthropic_tool_loop` adapter** (dev-only — not a public product feature): runs the multi-turn Claude tool loop directly via `agent_loop.py`. Tool calls happen inside the same Python process; the model reads skill files via the `FileReaderTool`, writes SQL, the loop ends.
 
 **`api_endpoint` adapter**: calls `call_api_endpoint()` in `provider/api_endpoint.py`, which does exactly this:

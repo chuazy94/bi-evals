@@ -42,6 +42,14 @@ def call_api(
     config_path = provider_config.get("config_path", "bi-evals.yaml")
     config = BiEvalsConfig.load(Path(config_path))
 
+    # Push overrides: `bi-evals score` runs the push adapter without editing
+    # bi-evals.yaml, so it threads the adapter + input file through the provider
+    # block's config (the on-disk config the provider just loaded doesn't have
+    # them). Apply them here, after load.
+    if provider_config.get("adapter") == "push":
+        config.agent.adapter = "push"
+        config.agent.push.input_file = provider_config.get("push_input_file", "")
+
     agent_type = config.agent.type
     # Multi-model: each provider block carries its own `model` override so the
     # cartesian product of (test × model × repeat) runs correctly under Promptfoo.
