@@ -88,13 +88,15 @@ class ApiEndpointAdapter:
         return call_api_endpoint(question=question, endpoint_config=endpoint)
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=None)
 def _load_submissions(input_file: str) -> dict[str, dict[str, Any]]:
     """Parse a push JSONL submission file into a ``{golden_file: row}`` map.
 
-    Cached per process so the file is read once even though Promptfoo calls the
-    adapter once per test. Raises ``ValueError`` with a row-specific message on
-    malformed JSON or a missing ``golden_file`` key.
+    Cached per process (a single ``score`` run reads one file, but the adapter
+    is invoked once per test) so the file is parsed once. Raises ``ValueError``
+    with a row-specific message on malformed JSON, a missing ``golden_file``, or
+    a duplicate ``golden_file`` (which would otherwise silently overwrite an
+    earlier row and grade the wrong submission).
     """
     submissions: dict[str, dict[str, Any]] = {}
     path = Path(input_file)
@@ -111,6 +113,10 @@ def _load_submissions(input_file: str) -> dict[str, dict[str, Any]]:
             if not golden_file:
                 raise ValueError(
                     f"{input_file}:{lineno}: row is missing required 'golden_file'."
+                )
+            if golden_file in submissions:
+                raise ValueError(
+                    f"{input_file}:{lineno}: duplicate golden_file '{golden_file}'."
                 )
             submissions[golden_file] = row
     return submissions
@@ -140,6 +146,7 @@ def _trace_from_row(row: dict[str, Any]) -> tuple[list[TraceStep], list[str]]:
         files_read = list(row["files_read"])
 
     steps: list[TraceStep] = []
+    implicit_paths: list[str] = []
     for i, step in enumerate(steps_raw):
         if not isinstance(step, dict):
             continue
@@ -154,8 +161,13 @@ def _trace_from_row(row: dict[str, Any]) -> tuple[list[TraceStep], list[str]]:
             )
         )
         path_val = (step.get("tool_input") or {}).get("path")
-        if path_val and not files_read:
-            files_read.append(path_val)
+        if path_val:
+            implicit_paths.append(path_val)
+
+    # Only fall back to paths derived from steps when no explicit files_read was
+    # supplied — and capture *all* of them, not just the first.
+    if not files_read and implicit_paths:
+        files_read = implicit_paths
 
     return steps, files_read
 

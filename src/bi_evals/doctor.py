@@ -206,6 +206,60 @@ def check_builtin_setup(config: BiEvalsConfig) -> list[CheckResult]:
     return results
 
 
+def check_push_setup(config: BiEvalsConfig) -> list[CheckResult]:
+    """Pre-flight checks for the push adapter.
+
+    There is no live agent to ping — the customer ran their agent ahead of time
+    and submits a JSONL via `bi-evals score --input`. So doctor validates the
+    things push *does* depend on: the warehouse the scorer executes SQL against,
+    Promptfoo on PATH, and (when a submission file is configured) that it parses.
+    """
+    results: list[CheckResult] = [
+        CheckResult(
+            "push adapter",
+            "ok",
+            "No live agent to validate — submit results with `bi-evals score --input`.",
+        ),
+        check_snowflake_select_one(config),
+        check_promptfoo_available(),
+    ]
+
+    input_file = config.agent.push.input_file
+    if not input_file:
+        results.append(
+            CheckResult(
+                "Submission file",
+                "warn",
+                "agent.push.input_file not set (normally passed via `score --input`).",
+            )
+        )
+        return results
+
+    path = config.resolve_path(input_file)
+    if not path.exists():
+        results.append(
+            CheckResult("Submission file", "fail", f"not found: {input_file}")
+        )
+        return results
+    try:
+        rows = 0
+        with path.open() as f:
+            for lineno, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                if not row.get("golden_file"):
+                    raise ValueError(f"line {lineno}: missing 'golden_file'")
+                rows += 1
+        results.append(
+            CheckResult("Submission file", "ok", f"{input_file} ({rows} row(s))")
+        )
+    except (json.JSONDecodeError, ValueError, OSError) as e:
+        results.append(CheckResult("Submission file", "fail", f"{input_file}: {e}"))
+    return results
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # BYO mode checks
 # ──────────────────────────────────────────────────────────────────────────────
