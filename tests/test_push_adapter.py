@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from textwrap import dedent
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -81,6 +82,19 @@ class TestLoadSubmissions:
         with pytest.raises(ValueError, match="missing required 'golden_file'"):
             _load_submissions(str(p))
 
+    def test_duplicate_golden_file_raises(self, tmp_path: Path) -> None:
+        p = tmp_path / "r.jsonl"
+        _write_jsonl(
+            p,
+            [
+                {"golden_file": "golden/a.yaml", "generated_sql": "SELECT 1"},
+                {"golden_file": "golden/a.yaml", "generated_sql": "SELECT 2"},
+            ],
+        )
+        _load_submissions.cache_clear()
+        with pytest.raises(ValueError, match="duplicate golden_file 'golden/a.yaml'"):
+            _load_submissions(str(p))
+
 
 class TestTraceFromRow:
     def test_dict_envelope_with_tool_calls(self) -> None:
@@ -109,6 +123,20 @@ class TestTraceFromRow:
         row = {"files_read": ["A.md", "B.md"], "trace": []}
         _, files = _trace_from_row(row)
         assert files == ["A.md", "B.md"]
+
+    def test_captures_all_tool_paths_not_just_first(self) -> None:
+        # Regression: previously only the first step's path was kept.
+        row = {
+            "trace": {
+                "tool_calls": [
+                    {"tool_name": "read", "tool_input": {"path": "SKILL.md"}},
+                    {"tool_name": "read", "tool_input": {"path": "KNOWLEDGE.md"}},
+                ]
+            }
+        }
+        steps, files = _trace_from_row(row)
+        assert len(steps) == 2
+        assert files == ["SKILL.md", "KNOWLEDGE.md"]
 
     def test_no_trace_is_empty(self) -> None:
         steps, files = _trace_from_row({"generated_sql": "SELECT 1"})
@@ -245,3 +273,47 @@ class TestScoreCommand:
             ["-c", str(config_file), "score", "--input", str(tmp_path / "nope.jsonl")],
         )
         assert result.exit_code != 0  # click validates --input exists
+
+    def test_duplicate_golden_fails(self, tmp_path: Path) -> None:
+        config_file = _write_project(tmp_path)
+        results = tmp_path / "r.jsonl"
+        _write_jsonl(
+            results,
+            [
+                {"golden_file": "golden/cases/q1.yaml", "generated_sql": "SELECT 1"},
+                {"golden_file": "golden/cases/q1.yaml", "generated_sql": "SELECT 2"},
+            ],
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["-c", str(config_file), "score", "--input", str(results), "--dry-run"],
+        )
+        assert result.exit_code != 0
+        assert "duplicate golden_file" in result.output
+
+
+class TestDoctorPush:
+    def test_doctor_push_does_not_crash(self, tmp_path: Path) -> None:
+        from bi_evals.doctor import check_push_setup
+
+        results = tmp_path / "r.jsonl"
+        _write_jsonl(
+            results,
+            [{"golden_file": "golden/a.yaml", "generated_sql": "SELECT 1"}],
+        )
+        config = _push_config(tmp_path, "r.jsonl")
+        with (
+            patch("bi_evals.doctor.create_db_client") as mock_db,
+            patch("bi_evals.doctor.shutil.which", return_value="/usr/bin/npx"),
+        ):
+            mock_db.return_value.execute.return_value = type(
+                "R", (), {"error": None, "row_count": 1}
+            )()
+            checks = check_push_setup(config)
+        names = {c.name for c in checks}
+        assert "push adapter" in names
+        assert "Submission file" in names
+        # the valid submission file should be an "ok" check
+        sub = next(c for c in checks if c.name == "Submission file")
+        assert sub.severity == "ok"

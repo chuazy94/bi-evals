@@ -140,6 +140,7 @@ def doctor(ctx: click.Context) -> None:
     from bi_evals.doctor import (
         check_builtin_setup,
         check_byo_endpoint,
+        check_push_setup,
         format_report,
         is_failing,
     )
@@ -153,10 +154,13 @@ def doctor(ctx: click.Context) -> None:
     elif config.agent.adapter == "anthropic_tool_loop":
         results = check_builtin_setup(config)
         mode = "anthropic_tool_loop (dev-only)"
+    elif config.agent.adapter == "push":
+        results = check_push_setup(config)
+        mode = "push"
     else:
         raise click.ClickException(
             f"Unknown agent.adapter {config.agent.adapter!r}. "
-            "Expected 'api_endpoint' or 'anthropic_tool_loop'."
+            "Expected 'api_endpoint', 'push', or 'anthropic_tool_loop'."
         )
 
     click.echo(format_report(results, mode=mode))
@@ -374,6 +378,8 @@ def score(
         click.echo(yaml.dump(pf_config, default_flow_style=False, sort_keys=False))
         return
 
+    # Push is a pure replay of submitted rows — there are no live agent calls to
+    # cache, so always run uncached (no value, and avoids any stale-cache risk).
     _execute_eval(config, pf_config, verbose=verbose, no_cache=True)
 
 
@@ -388,24 +394,30 @@ def _validate_push_submissions(
     import json
 
     submitted: dict[str, dict] = {}
-    for lineno, line in enumerate(Path(input_file).read_text().splitlines(), start=1):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError as e:
-            raise click.ClickException(f"{input_file}:{lineno}: invalid JSON ({e})")
-        gf = row.get("golden_file")
-        if not gf:
-            raise click.ClickException(
-                f"{input_file}:{lineno}: row is missing required 'golden_file'."
-            )
-        if not row.get("generated_sql"):
-            raise click.ClickException(
-                f"{input_file}:{lineno}: row for '{gf}' is missing 'generated_sql'."
-            )
-        submitted[gf] = row
+    with Path(input_file).open() as f:
+        for lineno, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise click.ClickException(f"{input_file}:{lineno}: invalid JSON ({e})")
+            gf = row.get("golden_file")
+            if not gf:
+                raise click.ClickException(
+                    f"{input_file}:{lineno}: row is missing required 'golden_file'."
+                )
+            if not row.get("generated_sql"):
+                raise click.ClickException(
+                    f"{input_file}:{lineno}: row for '{gf}' is missing 'generated_sql'."
+                )
+            if gf in submitted:
+                raise click.ClickException(
+                    f"{input_file}:{lineno}: duplicate golden_file '{gf}' — "
+                    "each golden may appear at most once."
+                )
+            submitted[gf] = row
 
     selected = {t["vars"]["golden_file"] for t in pf_config.get("tests", [])}
     missing = sorted(selected - set(submitted))
