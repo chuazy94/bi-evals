@@ -247,6 +247,22 @@ def run(
         click.echo(yaml.dump(pf_config, default_flow_style=False, sort_keys=False))
         return
 
+    _execute_eval(config, pf_config, verbose=verbose, no_cache=no_cache)
+
+
+def _execute_eval(
+    config: BiEvalsConfig,
+    pf_config: dict,
+    *,
+    verbose: bool,
+    no_cache: bool,
+) -> None:
+    """Write the promptfoo config, run it, and auto-ingest the result.
+
+    Shared by `run` (live adapters) and `score` (push replay) — everything after
+    config generation is identical: both produce the same eval JSON + traces and
+    flow through the same ingest path.
+    """
     results_dir = config.resolve_path(config.reporting.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -295,6 +311,117 @@ def run(
         raise click.ClickException(f"Promptfoo exited with code {exit_code}")
 
     click.echo(f"\nDone. View results: npx promptfoo view")
+
+
+@cli.command()
+@click.option(
+    "--input",
+    "-i",
+    "input_file",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="JSONL of submissions: one {golden_file, generated_sql, trace?} per line.",
+)
+@click.option(
+    "--filter", "-f", "filter_pattern", help="Score only tests matching pattern."
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Generate promptfoo config without running."
+)
+@click.option("--verbose", "-v", is_flag=True, help="Enable verbose Promptfoo output.")
+@click.pass_context
+def score(
+    ctx: click.Context,
+    input_file: str,
+    filter_pattern: str | None,
+    dry_run: bool,
+    verbose: bool,
+) -> None:
+    """Score a pre-run submission file (push adapter).
+
+    You run your own agent over the goldens, write one JSONL line per result
+    ({golden_file, generated_sql, trace?}), and bi-evals scores it — no live
+    agent, no API spend. This forces the push adapter regardless of the
+    configured `agent.adapter`.
+    """
+    config_path = ctx.obj["config_path"]
+    config = BiEvalsConfig.load(config_path)
+
+    # Force push and point it at the submission file. score is the push entry
+    # point; the configured adapter (often api_endpoint) is intentionally
+    # overridden so a user can score without editing bi-evals.yaml.
+    config.agent.adapter = "push"
+    config.agent.push.input_file = str(Path(input_file).resolve())
+
+    pf_config = generate_promptfoo_config(config, config_path, filter_pattern)
+    test_count = len(pf_config.get("tests", []))
+    if test_count == 0:
+        if filter_pattern:
+            raise click.ClickException(f"No tests match filter '{filter_pattern}'.")
+        raise click.ClickException(
+            "No golden tests found. Add tests to the golden/ directory."
+        )
+
+    _validate_push_submissions(config, pf_config, input_file)
+
+    click.echo(f"Project: {config.project.name}")
+    click.echo(f"Tests:   {test_count}")
+    click.echo(f"Input:   {input_file}")
+    click.echo()
+
+    if dry_run:
+        click.echo("--- Generated promptfooconfig.yaml ---")
+        click.echo(yaml.dump(pf_config, default_flow_style=False, sort_keys=False))
+        return
+
+    _execute_eval(config, pf_config, verbose=verbose, no_cache=True)
+
+
+def _validate_push_submissions(
+    config: BiEvalsConfig, pf_config: dict, input_file: str
+) -> None:
+    """Fail fast with a clear message before launching Promptfoo.
+
+    Checks every selected golden has a submission row, and warns about
+    submissions that don't match any selected golden (typo / stale row).
+    """
+    import json
+
+    submitted: dict[str, dict] = {}
+    for lineno, line in enumerate(Path(input_file).read_text().splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as e:
+            raise click.ClickException(f"{input_file}:{lineno}: invalid JSON ({e})")
+        gf = row.get("golden_file")
+        if not gf:
+            raise click.ClickException(
+                f"{input_file}:{lineno}: row is missing required 'golden_file'."
+            )
+        if not row.get("generated_sql"):
+            raise click.ClickException(
+                f"{input_file}:{lineno}: row for '{gf}' is missing 'generated_sql'."
+            )
+        submitted[gf] = row
+
+    selected = {t["vars"]["golden_file"] for t in pf_config.get("tests", [])}
+    missing = sorted(selected - set(submitted))
+    if missing:
+        raise click.ClickException(
+            "No submission for these goldens:\n  "
+            + "\n  ".join(missing)
+            + f"\nAdd a line per golden to {input_file}."
+        )
+    extra = sorted(set(submitted) - selected)
+    if extra:
+        click.echo(
+            f"Note: {len(extra)} submission(s) don't match any selected golden "
+            f"(ignored): {', '.join(extra[:5])}" + (" ..." if len(extra) > 5 else ""),
+            err=True,
+        )
 
 
 @cli.command()

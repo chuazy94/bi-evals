@@ -115,6 +115,18 @@ class ApiEndpointConfig(BaseModel):
     timeout: int = 60
 
 
+class PushConfig(BaseModel):
+    """Config for the push adapter (``adapter: push``).
+
+    The customer runs their own agent over the goldens and submits a JSONL file
+    of ``{golden_file, generated_sql, trace}`` rows; the push adapter replays
+    each row instead of calling a live agent. ``input_file`` is normally set by
+    ``bi-evals score --input`` rather than written into ``bi-evals.yaml`` by hand.
+    """
+
+    input_file: str = ""
+
+
 # Fields that, at the top level of ``agent:``, mark the *old* flat (two-mode)
 # schema. The schema is adapter-nested now (``agent.adapter`` + a block named for
 # the adapter), so any of these at the top level means an un-migrated config.
@@ -194,9 +206,10 @@ class AgentConfig(BaseModel):
     # api_endpoint = default on-ramp; anthropic_tool_loop = dev-only driving adapter.
     # Typed as a Literal so a typo'd adapter fails at config-load with a clear
     # pydantic error, rather than only blowing up later at dispatch time.
-    adapter: Literal["api_endpoint", "anthropic_tool_loop"] = "api_endpoint"
+    adapter: Literal["api_endpoint", "anthropic_tool_loop", "push"] = "api_endpoint"
     api_endpoint: ApiEndpointConfig = ApiEndpointConfig()
     anthropic_tool_loop: AnthropicToolLoopConfig = AnthropicToolLoopConfig()
+    push: PushConfig = PushConfig()
 
     @model_validator(mode="before")
     @classmethod
