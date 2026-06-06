@@ -13,9 +13,10 @@
 |-------|------|--------|
 | **Pivot Phase 1** | Contract + adapter registry | ✅ merged (PR #28) — `docs/refactor-step1.md` |
 | **Pivot Phase 2** | Adapter-nested config schema (clean break) | ✅ merged (PR #29) — `docs/migration-adapter-schema.md` |
-| **Pivot Phase 3** | Push adapter (replay) + `submit()` SDK | ⬜ next |
+| **Pivot Phase 3** | Push adapter (replay) + `score --input` | ✅ merged (PR #34) — `docs/pivot-phase-3-design.md` |
 | **Pivot Phase 4** | Capability check (open-envelope trace) | ⬜ |
 | **Pivot Phase 5** | Model-as-request honesty marker | ⬜ |
+| **Pivot Phase 6** | OTel adapter — ingest spans the real agent emits | ⬜ (see "Why response-evaluation is the right approach" below) |
 
 **Settled architectural decisions:**
 - Push **reuses Promptfoo** — it does not bypass the runner. The replay adapter feeds submitted
@@ -83,3 +84,93 @@ needs no live agent or API spend.
   the Pivot Phase 4 capability check.
 - Fold in the latent bridge cleanup: model fan-out in `bridge.py` should be adapter-aware, matching
   the `run` fix from Pivot Phase 2 (which only fans out models for the driving adapter).
+
+## Pivot Phase 6 — OTel adapter (ingest spans the real agent emits) ⬜
+
+The lowest-customer-effort, highest-fidelity adapter, and — per the research below — the one the
+ecosystem has standardised on. The customer's **real, independently-running** agent emits
+OpenTelemetry GenAI spans (SQL + tool calls); bi-evals consumes them and maps them onto the
+canonical contract. No orchestration, no reconstruction, and the trace is clean by construction
+(structured spans, not scraped prose).
+
+- Likely leans heavily on capability the **runner we already use exposes**: Promptfoo is itself an
+  OTLP receiver with a `trajectory:` assertion family (see below), so a chunk of this may be
+  configuration rather than net-new infrastructure.
+- The reference SQL must still execute on bi-evals' own connection (the independence caveat in
+  `docs/bi-eval-integration-analysis.md` — never route the yardstick through the agent's tools).
+
+---
+
+## Why response-evaluation is the right approach (Promptfoo research, June 2026)
+
+This section records external research into how Promptfoo — the test runner bi-evals is built on —
+expects agentic systems to be evaluated. It directly validates the pivot, and it answers a recurring
+question: *"should bi-evals orchestrate the customer's LLM calls in an 'eval mode' so it can inject
+an instruction to emit a clean trace?"* The short answer the research gives is **no — that is the
+pre-pivot `anthropic_tool_loop` path, which both we and Promptfoo have since moved away from.**
+
+### Finding 1 — Promptfoo's own guidance is "wrap the real agent, don't reconstruct the loop"
+
+Promptfoo's custom-provider docs steer users to call their **actual production agent** from inside
+`callApi` and let it complete its loop internally, then return the final result — explicitly *"to
+ensure evaluation matches real-world behavior rather than simulating tool interactions."* That is the
+pivot's thesis, stated by the runner itself. ([custom provider docs][p-custom])
+
+### Finding 2 — Promptfoo added first-class trajectory (reasoning-path) assertions
+
+A `trajectory:` assertion family now grades *what the agent did*, not just the final answer:
+`trajectory:tool-used`, `trajectory:tool-sequence`, `trajectory:tool-args-match`,
+`trajectory:step-count`, and an LLM-judged `trajectory:goal-success`. This is the generic form of
+bi-evals' own `skill_path_correctness` dimension — confirming that grading the trace is a
+recognised, first-class concern. ([assertions][p-assert])
+
+### Finding 3 (decisive) — Promptfoo is an OpenTelemetry receiver for *external* agents
+
+Promptfoo runs an OTLP endpoint (`http://localhost:4318/v1/traces`) that accepts spans, in any
+language, from agents **running independently** — *"agents don't need to be driven exclusively by
+Promptfoo… agents running independently can emit spans"* — and grades them with the trajectory
+assertions above. Promptfoo calls this **"glass-box testing where Promptfoo grades agent behavior
+based on observable traces rather than just final outputs."** ([tracing docs][p-tracing])
+
+### Why this makes orchestration the wrong move
+
+When bi-evals was first built, *driving* the loop (`anthropic_tool_loop`) was a defensible way to
+obtain a structured, gradable trace — at the time, the runner had no trace ingestion. Two things
+have since invalidated that rationale:
+
+1. **The mirror is only ever approximate.** To drive the loop, bi-evals must supply the system
+   prompt, model, and routing — the *reasoning layer*, which is exactly the part that differs most
+   per company and most determines answer quality. Fidelity was always capped, and a hypothetical
+   "eval-mode orchestrator that injects a trace-format instruction" hits the same wall: to inject
+   anything, it must own the loop, and owning the loop *is* reconstructing the agent.
+2. **The one upside of driving — a clean, structured trace — is now available without driving.**
+   OTel span emission gives a clean-by-construction trace from the agent's *real* run. The clean
+   trace was the goal; orchestration was a means that costs fidelity; OTel achieves the goal without
+   paying that cost.
+
+So the "orchestrate in eval mode" idea is not a synthesis of before-and-after — it is a return to
+*before*, which is lower-fidelity and which the ecosystem (and Promptfoo specifically) has moved
+past. The legitimate instinct inside it — *clean traces are valuable* — is real, and the right owner
+of "emit a clean trace" is the **customer's own agent** (via OTel spans, or an eval-mode emit
+convention they add to their own loop), never a bi-evals orchestrator.
+
+### Implication for adapter priority
+
+The research promotes the **OTel adapter (Pivot Phase 6)** from "someday" toward strategically
+central: it is the lowest-customer-effort, highest-fidelity path, it is how the field gets clean
+traces, and the runner bi-evals already uses supports it natively (OTLP receiver + trajectory
+assertions) — so building it may be substantially configuration rather than new infrastructure.
+**push** remains the universal floor (works for any stack, including those emitting no telemetry);
+**OTel** is the premium path for already-instrumented stacks.
+
+### Sources
+
+- [Promptfoo — Custom / JavaScript Provider][p-custom]
+- [Promptfoo — Assertions / expected outputs (trajectory family)][p-assert]
+- [Promptfoo — Tracing (OTLP receiver for external agents)][p-tracing]
+- [Promptfoo — Python Provider][p-python]
+
+[p-custom]: https://www.promptfoo.dev/docs/providers/custom-api/
+[p-assert]: https://www.promptfoo.dev/docs/configuration/expected-outputs/
+[p-tracing]: https://www.promptfoo.dev/docs/tracing/
+[p-python]: https://www.promptfoo.dev/docs/providers/python/
