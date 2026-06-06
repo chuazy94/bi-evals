@@ -2,7 +2,9 @@
 
 ## Summary
 
-bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is the test runner; all custom logic (provider/adapters, tools, scoring, storage, reporting, viewer) is Python. The MVP (Pillar 1: Accuracy + Explainability per `docs/mvp-eval-platform.md`) is complete and exceeded. The project is now mid-way through a **response-evaluation architecture pivot** (`docs/bi-eval-integration-analysis.md`): reframing the agent layer as **one canonical contract `{generated_sql, trace}`, many adapters** — bi-evals scores the real agent's response and never rebuilds the agent. Steps 1 (contract + adapter registry, PR #28) and Phase 2a (adapter-nested schema, PR #29) are merged to `main`.
+bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is the test runner; all custom logic (provider/adapters, tools, scoring, storage, reporting, viewer) is Python. The MVP (Pillar 1: Accuracy + Explainability per `docs/mvp-eval-platform.md`) is complete and exceeded. The project is now mid-way through a **response-evaluation architecture pivot** (`docs/bi-eval-integration-analysis.md`): reframing the agent layer as **one canonical contract `{generated_sql, trace}`, many adapters** — bi-evals scores the real agent's response and never rebuilds the agent. Pivot Phase 1 (contract + adapter registry, PR #28) and Pivot Phase 2 (adapter-nested schema, PR #29) are merged to `main`.
+
+> **Phase numbering.** The original MVP phases (Phase 1–7.8) are historical and shipped. The new architecture work is numbered separately as **Pivot Phase 1, 2, …** to avoid colliding with them.
 
 What works today:
 
@@ -27,7 +29,7 @@ What works today:
 
 ### Phase 1: Project Skeleton + Config System
 
-- **`src/bi_evals/config.py`** — Pydantic config from `bi-evals.yaml`, `${ENV_VAR}` resolution with strict fail-fast, relative path resolution, automatic `.env` loading. Adapter-nested `AgentConfig` (Phase 2a): `agent.adapter` is a `Literal`; `api_endpoint`/`anthropic_tool_loop` config nest under blocks named for them; back-compat property accessors keep readers adapter-agnostic; old flat schema rejected with a migration hint.
+- **`src/bi_evals/config.py`** — Pydantic config from `bi-evals.yaml`, `${ENV_VAR}` resolution with strict fail-fast, relative path resolution, automatic `.env` loading. Adapter-nested `AgentConfig` (Pivot Phase 2): `agent.adapter` is a `Literal`; `api_endpoint`/`anthropic_tool_loop` config nest under blocks named for them; back-compat property accessors keep readers adapter-agnostic; old flat schema rejected with a migration hint.
 - **`src/bi_evals/cli.py`** — Click CLI; `init` with `api_endpoint` (default) / `dev` subcommands.
 - **`tests/test_config.py`**, **`tests/test_cli_init.py`** — config loading, env vars, dotenv, defaults, legacy-flat rejection, both init scaffolds.
 
@@ -87,8 +89,8 @@ What works today:
 
 ### Response-evaluation pivot (in progress)
 
-- **PR #28 (Step 1, merged)** — contract + adapter registry. One canonical `{generated_sql, trace}` contract; `Adapter` protocol + registry; import direction reversed so adapters depend on the contract, not each other. Behavior-neutral; the two-mode `if/elif` became a registry lookup.
-- **PR #29 (Phase 2a, merged)** — adapter-nested config schema (clean break). `agent.type` → `agent.adapter`; nested adapter config blocks; driving adapter demoted off the public surface; `init` subcommands renamed `dev` / `api_endpoint`; `docs/migration-adapter-schema.md` + a load-time rejection of the old flat schema. Review fixes: `Literal` adapter type, model-required validator for the driving adapter, adapter-aware model fan-out in `run`.
+- **Pivot Phase 1 — contract + adapter registry** (PR #28, merged). One canonical `{generated_sql, trace}` contract; `Adapter` protocol + registry; import direction reversed so adapters depend on the contract, not each other. Behavior-neutral; the two-mode `if/elif` became a registry lookup.
+- **Pivot Phase 2 — adapter-nested config schema** (PR #29, merged; clean break). `agent.type` → `agent.adapter`; nested adapter config blocks; driving adapter demoted off the public surface; `init` subcommands renamed `dev` / `api_endpoint`; `docs/migration-adapter-schema.md` + a load-time rejection of the old flat schema. Review fixes: `Literal` adapter type, model-required validator for the driving adapter, adapter-aware model fan-out in `run`.
 - **PR #30** — archived superseded phase docs; added `docs/bi-eval-integration-analysis.md` (the response-evaluation thesis).
 
 **Total: 372 unit tests passing, 0 warnings.**
@@ -97,7 +99,7 @@ What works today:
 
 ## Remaining
 
-### Phase 2b: Push adapter + `submit()` SDK (the default on-ramp)
+### Pivot Phase 3: Push adapter + `submit()` SDK (the default on-ramp)
 
 The headline of the pivot and the first slice with a tangible "run it, see a report" payoff that needs no live agent or API spend.
 
@@ -105,19 +107,15 @@ The headline of the pivot and the first slice with a tangible "run it, see a rep
 - A `PushReplayAdapter` registered like any other adapter: instead of producing a result, it replays the customer's submitted `{generated_sql, trace}` for each test, reusing the existing Promptfoo → scorer → ingest pipeline.
 - Make push the `init` default; update README "Two modes" framing.
 
-### Phase 2c: Capability check (open-envelope trace)
+### Pivot Phase 4: Capability check (open-envelope trace)
 
 - Treat `trace` as an open envelope (customer over-captures; scorer reads what it understands).
 - At score time, report which dimensions can be scored given what the submission contains; absent fields → `unknown`/skipped, surfaced explicitly, never silently failed. Doubles as the adoption ladder.
 
-### Phase 2d: Model-as-request honesty marker
+### Pivot Phase 5: Model-as-request honesty marker
 
-- `requested_model` / `actual_model` on the contract; report flags honored / violated / **unverifiable** so model A/B comparisons are never silently assumed faithful. A special case of 2c.
-- Fold in the latent bridge cleanup (model fan-out should be adapter-aware in `bridge.py`, matching the `run` fix from 2a).
-
-### Phase 8: COVID-19 Example Project
-
-- Promote `tmp/my-evals/` → `examples/covid-19/` (no creds, `.env.example`, trimmed results, README walkthrough, 8–10 goldens, verified on a fresh clone).
+- `requested_model` / `actual_model` on the contract; report flags honored / violated / **unverifiable** so model A/B comparisons are never silently assumed faithful. A special case of Pivot Phase 4.
+- Fold in the latent bridge cleanup (model fan-out should be adapter-aware in `bridge.py`, matching the `run` fix from Pivot Phase 2).
 
 ### Follow-ups surfaced from recent reviews
 
