@@ -146,6 +146,47 @@ Promptfoo ingests and the `trajectory:` assertions grade. ([tracing docs][p-trac
 This is the decisive fact for adapter strategy: a clean, structured, gradable trace can come from
 the **real agent's own run** via OTel — no need for bi-evals to drive the loop to manufacture one.
 
+### Finding 4 — Promptfoo's actual agent pattern is "wrap the real agent in-process," not reconstruct it
+
+Promptfoo's agent guides demonstrate evaluating a *real* agent by wrapping it in a Python provider
+that keeps the agent's runtime in process — not by rebuilding its loop. From the Google ADK guide,
+the rationale verbatim: wrapping the app as a Python provider *"keeps the ADK runtime in process, so
+Promptfoo can inspect the same sessions, artifacts, and native OpenTelemetry spans that the agent
+produced."* ([Evaluate Google ADK Agents][p-adk])
+
+Note the mechanism and its limit: this works because the agent is an importable SDK object, so the
+provider runs the *customer's real agent*. It is neither "reconstruct the loop" (`anthropic_tool_loop`)
+nor "call an HTTP endpoint" (`api_endpoint`) — it is "run the real agent and observe its native
+spans." Where the agent isn't a local importable object (the common case across arbitrary customer
+stacks), the same principle is served by the agent emitting OTel spans (Finding 3) or submitting its
+output (push) — i.e. response-evaluation.
+
+### Finding 5 — Promptfoo's own text-to-SQL guide is static-only; bi-evals extends past where it stops
+
+Promptfoo's [text-to-SQL guide][p-sql] configures **plain model providers** (verbatim:
+`- openai:gpt-5-mini` / `- openai:gpt-5`) and grades with **static validation** — `is-sql` /
+`contains-sql`. It does **not** run a tool loop, does **not** call a deployed agent, and does
+**not** execute the generated SQL against a database (the guide focuses "exclusively on testing raw
+LLM outputs converted to SQL"). So Promptfoo treats the agent layer and execution-based accuracy as
+out of scope for its base SQL story — which is exactly the gap bi-evals fills (execution-based,
+multi-dimension scoring of the *real agent's* response). We are extending past Promptfoo's guidance,
+not contradicting it.
+
+### What Promptfoo recommends for `anthropic_tool_loop` vs `api_endpoint` (the original question)
+
+**Nothing directly — and the absence is itself informative.** A search of the docs found no
+recommendation favouring reconstruct-the-loop over call-the-endpoint for BI/SQL evals. What exists:
+
+- Promptfoo's SQL guide does *neither* — it tests raw models statically (Finding 5).
+- Promptfoo's agent pattern is *wrap the real agent in-process* + observe native spans (Finding 4),
+  never "reconstruct the loop."
+- There is **no** Promptfoo pattern resembling `anthropic_tool_loop` (bi-evals reconstructing the
+  agent). That approach is a bi-evals invention, consistent with the pivot demoting it to dev-only.
+
+In short: Promptfoo neither endorses nor provides the reconstruct-the-loop path; every agent example
+it ships is a wrap/observe-the-real-agent pattern. That supports the pivot without needing to claim
+Promptfoo issued a "don't reconstruct" instruction (it didn't, in those words).
+
 ### Why this makes orchestration the wrong move
 
 When bi-evals was first built, *driving* the loop (`anthropic_tool_loop`) was a defensible way to
@@ -183,8 +224,18 @@ assertions) — so building it may be substantially configuration rather than ne
 - [Promptfoo — Assertions / expected outputs (trajectory family)][p-assert]
 - [Promptfoo — Tracing (OTLP receiver for external agents)][p-tracing]
 - [Promptfoo — Python Provider][p-python]
+- [Promptfoo — Evaluate Google ADK Agents (wrap-real-agent-in-process)][p-adk]
+- [Promptfoo — Evaluating LLM text-to-SQL performance (static-only)][p-sql]
 
 [p-custom]: https://www.promptfoo.dev/docs/providers/custom-api/
 [p-assert]: https://www.promptfoo.dev/docs/configuration/expected-outputs/
 [p-tracing]: https://www.promptfoo.dev/docs/tracing/
 [p-python]: https://www.promptfoo.dev/docs/providers/python/
+[p-adk]: https://www.promptfoo.dev/docs/guides/evaluate-google-adk/
+[p-sql]: https://www.promptfoo.dev/docs/guides/text-to-sql-evaluation/
+
+> **Verification note.** Every quote in this section was pulled verbatim from the linked Promptfoo
+> docs (June 2026). An earlier draft contained two fetch-summariser paraphrases quoted as if literal
+> (a "wrap the real agent" recommendation, and "glass-box testing" / "agents running independently
+> can emit spans"); those were removed once re-checked against the source. Treat fetched summaries as
+> interpretation — quote only after verifying against the page.
