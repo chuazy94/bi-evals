@@ -106,15 +106,25 @@ canonical contract. No orchestration, no reconstruction, and the trace is clean 
 This section records external research into how Promptfoo — the test runner bi-evals is built on —
 expects agentic systems to be evaluated. It directly validates the pivot, and it answers a recurring
 question: *"should bi-evals orchestrate the customer's LLM calls in an 'eval mode' so it can inject
-an instruction to emit a clean trace?"* The short answer the research gives is **no — that is the
-pre-pivot `anthropic_tool_loop` path, which both we and Promptfoo have since moved away from.**
+an instruction to emit a clean trace?"* The short answer the research supports is **no — that is the
+pre-pivot `anthropic_tool_loop` path, and the runner now offers a higher-fidelity route (ingesting
+spans from the real agent) that removes the only reason to drive the loop ourselves.**
 
-### Finding 1 — Promptfoo's own guidance is "wrap the real agent, don't reconstruct the loop"
+### Finding 1 — Promptfoo's provider API is built to call a real agent, not reconstruct it
 
-Promptfoo's custom-provider docs steer users to call their **actual production agent** from inside
-`callApi` and let it complete its loop internally, then return the final result — explicitly *"to
-ensure evaluation matches real-world behavior rather than simulating tool interactions."* That is the
-pivot's thesis, stated by the runner itself. ([custom provider docs][p-custom])
+A Promptfoo custom provider needs only an `id` and a `callApi(prompt, context, options)` that
+returns a `ProviderResponse` — i.e. it hands you the question and expects the final output back,
+with no opinion on how you produce it. `callApi` is the natural place to call your *own* deployed
+agent and let it run its full loop internally. For agents that build multi-turn conversations, the
+response may include a `prompt` field to report the actual prompt sent. ([custom provider
+docs][p-custom])
+
+> **Sourcing caveat.** The page documents this *capability* (call out to whatever you like from
+> `callApi`); it does **not** contain an explicit "wrap the real agent, don't reconstruct"
+> recommendation in those words. An earlier draft of this section quoted such a recommendation —
+> that phrasing was a fetch-summariser paraphrase and has been corrected. The architectural
+> conclusion rests on Findings 2 and 3 below, which are directly sourced; Finding 1 is supporting
+> context about what the provider API makes natural, not a Promptfoo policy statement.
 
 ### Finding 2 — Promptfoo added first-class trajectory (reasoning-path) assertions
 
@@ -124,13 +134,17 @@ A `trajectory:` assertion family now grades *what the agent did*, not just the f
 bi-evals' own `skill_path_correctness` dimension — confirming that grading the trace is a
 recognised, first-class concern. ([assertions][p-assert])
 
-### Finding 3 (decisive) — Promptfoo is an OpenTelemetry receiver for *external* agents
+### Finding 3 (decisive) — Promptfoo is an OpenTelemetry receiver, and external agent loops can feed it
 
-Promptfoo runs an OTLP endpoint (`http://localhost:4318/v1/traces`) that accepts spans, in any
-language, from agents **running independently** — *"agents don't need to be driven exclusively by
-Promptfoo… agents running independently can emit spans"* — and grades them with the trajectory
-assertions above. Promptfoo calls this **"glass-box testing where Promptfoo grades agent behavior
-based on observable traces rather than just final outputs."** ([tracing docs][p-tracing])
+Verbatim from the tracing docs: *"Promptfoo acts as an **OpenTelemetry receiver**, collecting
+traces from your providers"*, exposing an OTLP endpoint at `http://localhost:4318/v1/traces` with
+*"Standard OpenTelemetry support: Use any OpenTelemetry SDK in any language"*. Crucially:
+*"External providers that wrap their own agent loops can adopt the same convention: emit one
+OpenTelemetry span per LLM round."* So a customer's own agent loop can emit structured spans that
+Promptfoo ingests and the `trajectory:` assertions grade. ([tracing docs][p-tracing])
+
+This is the decisive fact for adapter strategy: a clean, structured, gradable trace can come from
+the **real agent's own run** via OTel — no need for bi-evals to drive the loop to manufacture one.
 
 ### Why this makes orchestration the wrong move
 
