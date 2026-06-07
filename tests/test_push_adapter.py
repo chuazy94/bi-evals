@@ -21,6 +21,7 @@ from bi_evals.provider.contract import AgentResult
 from bi_evals.provider.registry import (
     PushReplayAdapter,
     _load_submissions,
+    _resolve_sql,
     _trace_from_row,
     build_adapter,
 )
@@ -143,6 +144,43 @@ class TestTraceFromRow:
         assert steps == [] and files == []
 
 
+class TestResolveSql:
+    def test_generated_sql_wins_over_response_text(self) -> None:
+        sql, _, err = _resolve_sql(
+            {"generated_sql": "SELECT 1", "response_text": "```sql\nSELECT 2\n```"},
+            "g",
+        )
+        assert err is None
+        assert sql == "SELECT 1"
+
+    def test_generated_sql_fenced_is_unwrapped(self) -> None:
+        sql, _, err = _resolve_sql({"generated_sql": "```sql\nSELECT 5\n```"}, "g")
+        assert err is None and sql == "SELECT 5"
+
+    def test_extracts_from_response_text(self) -> None:
+        sql, final, err = _resolve_sql(
+            {"response_text": "Here:\n```sql\nSELECT 3\n```\nDone."}, "g"
+        )
+        assert err is None
+        assert sql == "SELECT 3"
+        assert final == "Here:\n```sql\nSELECT 3\n```\nDone."  # raw answer kept
+
+    def test_final_text_prefers_response_text(self) -> None:
+        _, final, _ = _resolve_sql(
+            {"generated_sql": "SELECT 1", "response_text": "the answer"}, "g"
+        )
+        assert final == "the answer"
+
+    def test_response_text_without_sql_errors(self) -> None:
+        sql, _, err = _resolve_sql({"response_text": "I couldn't answer that."}, "g")
+        assert sql == ""
+        assert err is not None and "no SQL could be extracted" in err
+
+    def test_neither_field_errors(self) -> None:
+        _, _, err = _resolve_sql({"trace": {}}, "g")
+        assert err is not None and "missing both" in err
+
+
 class TestPushReplayAdapter:
     def test_replays_matching_row(self, tmp_path: Path) -> None:
         p = tmp_path / "r.jsonl"
@@ -165,6 +203,40 @@ class TestPushReplayAdapter:
         assert result.extracted_sql == "SELECT SUM(rev) FROM t"
         assert result.files_read == ["SKILL.md"]
 
+    def test_replays_response_text_row(self, tmp_path: Path) -> None:
+        p = tmp_path / "r.jsonl"
+        _write_jsonl(
+            p,
+            [
+                {
+                    "golden_file": "golden/a.yaml",
+                    "response_text": "Sure:\n```sql\nSELECT 1\n```\nThat's it.",
+                }
+            ],
+        )
+        _load_submissions.cache_clear()
+        config = _push_config(tmp_path, "r.jsonl")
+        result = PushReplayAdapter().produce(
+            "Q", {"golden_file": "golden/a.yaml"}, config, None
+        )
+        assert isinstance(result, AgentResult)
+        assert result.extracted_sql == "SELECT 1"
+        assert "That's it." in result.final_text  # raw answer preserved
+
+    def test_response_text_without_sql_errors(self, tmp_path: Path) -> None:
+        p = tmp_path / "r.jsonl"
+        _write_jsonl(
+            p,
+            [{"golden_file": "golden/a.yaml", "response_text": "no query here"}],
+        )
+        _load_submissions.cache_clear()
+        config = _push_config(tmp_path, "r.jsonl")
+        result = PushReplayAdapter().produce(
+            "Q", {"golden_file": "golden/a.yaml"}, config, None
+        )
+        assert isinstance(result, str)
+        assert "no SQL could be extracted" in result
+
     def test_missing_row_returns_error(self, tmp_path: Path) -> None:
         p = tmp_path / "r.jsonl"
         _write_jsonl(p, [{"golden_file": "golden/a.yaml", "generated_sql": "X"}])
@@ -176,7 +248,7 @@ class TestPushReplayAdapter:
         assert isinstance(result, str)
         assert "No push submission found" in result
 
-    def test_missing_generated_sql_returns_error(self, tmp_path: Path) -> None:
+    def test_missing_both_sql_fields_returns_error(self, tmp_path: Path) -> None:
         p = tmp_path / "r.jsonl"
         _write_jsonl(p, [{"golden_file": "golden/a.yaml", "generated_sql": ""}])
         _load_submissions.cache_clear()
@@ -185,7 +257,7 @@ class TestPushReplayAdapter:
             "Q", {"golden_file": "golden/a.yaml"}, config, None
         )
         assert isinstance(result, str)
-        assert "missing 'generated_sql'" in result
+        assert "missing both" in result
 
     def test_unset_input_file_returns_error(self, tmp_path: Path) -> None:
         config = _push_config(tmp_path, "")
@@ -291,6 +363,40 @@ class TestScoreCommand:
         )
         assert result.exit_code != 0
         assert "duplicate golden_file" in result.output
+
+    def test_response_text_row_accepted(self, tmp_path: Path) -> None:
+        config_file = _write_project(tmp_path)
+        results = tmp_path / "r.jsonl"
+        _write_jsonl(
+            results,
+            [
+                {
+                    "golden_file": "golden/cases/q1.yaml",
+                    "response_text": "Answer:\n```sql\nSELECT 1\n```",
+                }
+            ],
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["-c", str(config_file), "score", "--input", str(results), "--dry-run"],
+        )
+        assert result.exit_code == 0, result.output
+
+    def test_response_text_without_sql_fails(self, tmp_path: Path) -> None:
+        config_file = _write_project(tmp_path)
+        results = tmp_path / "r.jsonl"
+        _write_jsonl(
+            results,
+            [{"golden_file": "golden/cases/q1.yaml", "response_text": "no sql here"}],
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["-c", str(config_file), "score", "--input", str(results), "--dry-run"],
+        )
+        assert result.exit_code != 0
+        assert "no SQL could be extracted" in result.output
 
 
 class TestDoctorPush:

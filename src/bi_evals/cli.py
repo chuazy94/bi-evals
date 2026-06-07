@@ -393,6 +393,8 @@ def _validate_push_submissions(
     """
     import json
 
+    from bi_evals.provider.registry import _resolve_sql
+
     submitted: dict[str, dict] = {}
     with Path(input_file).open() as f:
         for lineno, line in enumerate(f, start=1):
@@ -408,10 +410,12 @@ def _validate_push_submissions(
                 raise click.ClickException(
                     f"{input_file}:{lineno}: row is missing required 'golden_file'."
                 )
-            if not row.get("generated_sql"):
-                raise click.ClickException(
-                    f"{input_file}:{lineno}: row for '{gf}' is missing 'generated_sql'."
-                )
+            # Accept either a pre-extracted `generated_sql` or a raw
+            # `response_text` we can extract from — same resolution the adapter
+            # uses at run time, so validation and scoring never disagree.
+            _sql, _text, sql_err = _resolve_sql(row, gf)
+            if sql_err:
+                raise click.ClickException(f"{input_file}:{lineno}: {sql_err}")
             if gf in submitted:
                 raise click.ClickException(
                     f"{input_file}:{lineno}: duplicate golden_file '{gf}' — "

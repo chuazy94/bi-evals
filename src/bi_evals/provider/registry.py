@@ -122,6 +122,53 @@ def _load_submissions(input_file: str) -> dict[str, dict[str, Any]]:
     return submissions
 
 
+def _resolve_sql(row: dict[str, Any], golden_file: str) -> tuple[str, str, str | None]:
+    """Resolve the SQL to score from a submission row.
+
+    Real agents rarely emit clean SQL — they return it fenced or buried in prose.
+    So a row may carry either a pre-extracted ``generated_sql`` or the agent's
+    raw ``response_text`` (mirroring the ``api_endpoint`` adapter's
+    sql-key/text-key split). Precedence:
+
+      1. ``generated_sql`` if present — trust the customer's explicit extraction
+         (still run ``extract_sql`` so a fenced/prose value is unwrapped).
+      2. else ``response_text`` — extract the SQL from the raw answer.
+      3. else error — nothing to score.
+
+    Returns ``(sql, final_text, error)``. ``error`` is non-None when no usable
+    SQL could be determined, in which case ``sql``/``final_text`` are empty.
+    """
+    generated_sql = row.get("generated_sql")
+    response_text = row.get("response_text")
+
+    if generated_sql:
+        raw = str(generated_sql)
+        sql = extract_sql(raw) or raw
+        # Prefer the raw answer as final_text when the agent supplied one.
+        final_text = str(response_text) if response_text else raw
+        return sql, final_text, None
+
+    if response_text:
+        raw = str(response_text)
+        sql = extract_sql(raw)
+        if not sql:
+            return (
+                "",
+                "",
+                f"Push submission for '{golden_file}' has a response_text but no "
+                "SQL could be extracted from it (no fenced ```sql block or bare "
+                "SELECT found).",
+            )
+        return sql, raw, None
+
+    return (
+        "",
+        "",
+        f"Push submission for '{golden_file}' is missing both 'generated_sql' "
+        "and 'response_text'.",
+    )
+
+
 def _trace_from_row(row: dict[str, Any]) -> tuple[list[TraceStep], list[str]]:
     """Normalise a submitted ``trace`` envelope into TraceSteps + files_read.
 
@@ -203,14 +250,14 @@ class PushReplayAdapter:
         if row is None:
             return f"No push submission found for golden_file '{golden_file}'."
 
-        generated_sql = row.get("generated_sql")
-        if not generated_sql:
-            return f"Push submission for '{golden_file}' is missing 'generated_sql'."
+        sql, final_text, err = _resolve_sql(row, golden_file)
+        if err:
+            return err
 
         steps, files_read = _trace_from_row(row)
         return AgentResult(
-            final_text=str(generated_sql),
-            extracted_sql=extract_sql(str(generated_sql)) or str(generated_sql),
+            final_text=final_text,
+            extracted_sql=sql,
             trace=steps,
             files_read=files_read,
             rounds=len(steps),
