@@ -37,7 +37,13 @@ registered adapter — the "one contract, many adapters" architecture paying off
 ```
 
 - `golden_file` (required) — path matching a golden, relative to the config dir. The join key.
-- `generated_sql` (required) — the SQL the customer's agent produced.
+- `generated_sql` **or** `response_text` (one required) — the SQL to score. `generated_sql` is the
+  pre-extracted query (still unwrapped via `extract_sql`, so a fenced/prose value works);
+  `response_text` is the agent's **raw answer**, from which the SQL is extracted. Precedence:
+  `generated_sql` wins when both are present; if only `response_text` is given and no SQL can be
+  extracted, that row fails with a clear error. This mirrors `api_endpoint`'s
+  `response_sql_key`/`response_text_key` split — real agents rarely emit clean SQL, so the customer
+  can submit whatever their agent actually produced.
 - `trace` (optional) — open envelope; whatever the agent emitted. Pivot Phase 4 turns absent trace
   fields into `unknown` dimensions rather than failures. For Phase 3, a missing trace just means the
   trace-dependent dimension (`skill_path_correctness`) has nothing to grade (already skips today).
@@ -91,15 +97,20 @@ mixed into a prose answer, and traces in wildly varying shapes. So the customer'
 output into these fields."** The "contract" is just the *target shape* — the work is the mapping
 to it (which richer adapters like OTel later shrink, but never eliminate).
 
-The first cut is already somewhat forgiving: the adapter runs `extract_sql()` on the submitted
-`generated_sql`, so a fenced/prose blob still yields the SQL (the `tmp/my-evals` example submits
-one deliberately). But the contract should be honest about this.
+The adapter runs `extract_sql()` on the submitted SQL, so a fenced/prose blob still yields the SQL,
+**and** a row may submit `response_text` (the agent's raw answer) instead of `generated_sql` — see
+the submission format above. So the customer can submit what their agent actually produces.
 
-## Explicitly deferred (fast follow-up)
+## Done in a follow-up
 
-- **Accept `response_text` as an alternative to `generated_sql`** — submit the agent's raw answer
+- ✅ **Accept `response_text` as an alternative to `generated_sql`** — submit the agent's raw answer
   and let the adapter extract the SQL, mirroring `api_endpoint`'s `response_sql_key`/
-  `response_text_key`. Plus realistic, messy-output docs/examples rather than the clean ideal.
+  `response_text_key`. `generated_sql` wins on conflict; `response_text` with no extractable SQL
+  fails the row with a clear error. Validation (`score`) and runtime (adapter) share one
+  `_resolve_sql` so they never disagree.
+
+## Still deferred
+
 - `submit()` SDK helper (a `Runner` that yields golden questions and collects submissions).
 - Making push the `init` default + README "Two modes" rework.
 - Capability check (Pivot Phase 4) and model-as-request marker (Pivot Phase 5).
