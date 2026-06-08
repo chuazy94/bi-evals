@@ -73,6 +73,11 @@ def extract_output_aliases(sql: str, dialect: str = "snowflake") -> set[str]:
     golden's ``required_columns`` lists output names instead of source columns —
     a common authoring mistake, since the question often phrases the ask as
     "output columns: ...".
+
+    Collects aliases from *every* SELECT level, including CTEs and subqueries —
+    not just the outermost projection. That is intentional for the use-case: an
+    intermediate alias is just as wrong to list in ``required_columns`` as a
+    final one, so flagging any of them is correct.
     """
     try:
         parsed = sqlglot.parse(sql, dialect=dialect)

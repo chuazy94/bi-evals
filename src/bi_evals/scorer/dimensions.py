@@ -216,7 +216,7 @@ def _row_key(row: dict[str, Any], columns: list[str], tolerance: float) -> tuple
 
 def _align_generated_rows(
     reference: QueryResult, generated: QueryResult
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], bool]:
     """Return generated rows re-keyed to the *reference* column names.
 
     Row matching keys by column name, but a black-box agent (push / api_endpoint
@@ -232,21 +232,31 @@ def _align_generated_rows(
     reference column names positionally. If counts differ we can't safely pair,
     so return the generated rows unchanged (the dimensions will report the
     mismatch as a genuine failure).
+
+    NOTE: positional remap assumes both queries list columns in the same logical
+    order (col 0 ↔ col 0, …), not merely the same row order. Two queries
+    answering the same question almost always agree on column order, but a query
+    that reorders its projection relative to the reference would be silently
+    mis-paired. Revisit if such a case surfaces.
+
+    Returns ``(rows, was_remapped)`` — ``was_remapped`` is True only when
+    positional remapping was applied, so callers can pick the right column names
+    for downstream mapping without relying on object identity.
     """
     ref_cols = [c.upper() for c in reference.columns]
     gen_cols = [c.upper() for c in generated.columns]
 
     if set(ref_cols).issubset(set(gen_cols)):
-        return generated.rows  # names align — nothing to do
+        return generated.rows, False  # names align — nothing to do
     if len(ref_cols) != len(gen_cols):
-        return generated.rows  # can't pair positionally — let it fail honestly
+        return generated.rows, False  # can't pair positionally — fail honestly
 
     remapped: list[dict[str, Any]] = []
     for row in generated.rows:
         # generated row values in column order, relabelled with reference names
         values = [row.get(gc) for gc in gen_cols]
         remapped.append(dict(zip(ref_cols, values)))
-    return remapped
+    return remapped, True
 
 
 def check_row_completeness(
@@ -271,7 +281,7 @@ def check_row_completeness(
     tolerance = rc.value_tolerance
     threshold = rc.completeness_threshold
 
-    gen_rows = _align_generated_rows(reference, generated)
+    gen_rows, _ = _align_generated_rows(reference, generated)
     ref_keys = {_row_key(r, key_cols, tolerance) for r in reference.rows}
     gen_keys = {_row_key(r, key_cols, tolerance) for r in gen_rows}
 
@@ -317,7 +327,7 @@ def check_row_precision(
     tolerance = rc.value_tolerance
     threshold = rc.precision_threshold
 
-    gen_rows = _align_generated_rows(reference, generated)
+    gen_rows, _ = _align_generated_rows(reference, generated)
     ref_keys = {_row_key(r, key_cols, tolerance) for r in reference.rows}
     gen_keys = {_row_key(r, key_cols, tolerance) for r in gen_rows}
 
@@ -381,15 +391,13 @@ def check_value_accuracy(
 
     # Re-key generated rows to reference column names (positionally, when the
     # agent named its columns differently) so name-based matching works.
-    gen_rows = _align_generated_rows(reference, generated)
+    gen_rows, was_remapped = _align_generated_rows(reference, generated)
 
     if rc.value_columns:
         col_pairs = [(c.upper(), c.upper()) for c in rc.value_columns]
     else:
-        # After alignment, generated rows carry reference column names.
-        gen_cols_for_map = (
-            reference.columns if gen_rows is not generated.rows else generated.columns
-        )
+        # After a positional remap, generated rows carry reference column names.
+        gen_cols_for_map = reference.columns if was_remapped else generated.columns
         col_pairs = _build_column_map(reference.columns, gen_cols_for_map, key_cols)
 
     if not col_pairs:
