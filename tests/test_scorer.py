@@ -443,6 +443,19 @@ class TestPositionFallbackMatching:
         r = check_row_completeness(gen, ref, _golden(row_comparison=rc), _scoring())
         assert r.passed, r.reason
 
+    def test_row_precision_matches_when_names_differ(self) -> None:
+        ref = _qr(
+            ["NATION", "CNT"],
+            [{"NATION": "INDIA", "CNT": 5}, {"NATION": "IRAQ", "CNT": 4}],
+        )
+        gen = _qr(
+            ["N", "C"],
+            [{"N": "INDIA", "C": 5}, {"N": "IRAQ", "C": 4}],
+        )
+        rc = RowComparison(enabled=True)
+        r = check_row_precision(gen, ref, _golden(row_comparison=rc), _scoring())
+        assert r.passed, r.reason
+
     def test_position_fallback_still_catches_wrong_values(self) -> None:
         # Renamed columns but a genuinely wrong value → must still fail.
         ref = _qr(["NATION", "CNT"], [{"NATION": "INDIA", "CNT": 5}])
