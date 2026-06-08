@@ -11,6 +11,7 @@ from bi_evals.golden.model import AntiPatterns, GoldenTest
 from bi_evals.scorer.sql_utils import (
     extract_columns_with_tables,
     extract_filter_columns,
+    extract_output_aliases,
     extract_select_columns,
     extract_tables,
 )
@@ -123,11 +124,25 @@ def check_column_alignment(generated_sql: str, golden: GoldenTest) -> DimensionR
             score=1.0,
             reason=f"All required source columns present: {sorted(required)}",
         )
+    # Common authoring mistake: required_columns lists *output aliases* (the
+    # names in the question's "output columns: ...") rather than the *source*
+    # columns this dimension checks. Detect it and say so, rather than emitting
+    # a confusing "missing source column" for a query that's otherwise correct.
+    alias_named = missing & extract_output_aliases(generated_sql)
+    reason = f"Missing required source columns: {sorted(missing)}"
+    if alias_named:
+        reason += (
+            f". Note: {sorted(alias_named)} appear to be output aliases, not "
+            "source columns — column_alignment checks the source columns a query "
+            "reads, not its result names. If these are output names, replace them "
+            "in the golden's required_columns with the source columns they're "
+            "computed from."
+        )
     return DimensionResult(
         name="column_alignment",
         passed=False,
         score=0.0,
-        reason=f"Missing required source columns: {sorted(missing)}",
+        reason=reason,
     )
 
 
@@ -199,6 +214,41 @@ def _row_key(row: dict[str, Any], columns: list[str], tolerance: float) -> tuple
     return tuple(_normalize_value(row.get(c.upper()), tolerance) for c in columns)
 
 
+def _align_generated_rows(
+    reference: QueryResult, generated: QueryResult
+) -> list[dict[str, Any]]:
+    """Return generated rows re-keyed to the *reference* column names.
+
+    Row matching keys by column name, but a black-box agent (push / api_endpoint
+    / otel) names its output columns however it likes — a correct answer with
+    ``nation_name`` instead of the golden's ``NATION`` would otherwise key to
+    nothing and falsely fail. SQL result-set order is deterministic and the
+    golden's ``ORDER BY`` pins it, so when names don't line up we fall back to
+    matching by ordinal position.
+
+    All-or-nothing: if every reference column name is present in the generated
+    result, keep the generated rows as-is (name matching, today's behaviour).
+    Otherwise, if the column *counts* match, remap each generated row onto the
+    reference column names positionally. If counts differ we can't safely pair,
+    so return the generated rows unchanged (the dimensions will report the
+    mismatch as a genuine failure).
+    """
+    ref_cols = [c.upper() for c in reference.columns]
+    gen_cols = [c.upper() for c in generated.columns]
+
+    if set(ref_cols).issubset(set(gen_cols)):
+        return generated.rows  # names align — nothing to do
+    if len(ref_cols) != len(gen_cols):
+        return generated.rows  # can't pair positionally — let it fail honestly
+
+    remapped: list[dict[str, Any]] = []
+    for row in generated.rows:
+        # generated row values in column order, relabelled with reference names
+        values = [row.get(gc) for gc in gen_cols]
+        remapped.append(dict(zip(ref_cols, values)))
+    return remapped
+
+
 def check_row_completeness(
     generated: QueryResult,
     reference: QueryResult,
@@ -221,8 +271,9 @@ def check_row_completeness(
     tolerance = rc.value_tolerance
     threshold = rc.completeness_threshold
 
+    gen_rows = _align_generated_rows(reference, generated)
     ref_keys = {_row_key(r, key_cols, tolerance) for r in reference.rows}
-    gen_keys = {_row_key(r, key_cols, tolerance) for r in generated.rows}
+    gen_keys = {_row_key(r, key_cols, tolerance) for r in gen_rows}
 
     if not ref_keys:
         return _skip("row_completeness", "reference returned 0 rows")
@@ -266,8 +317,9 @@ def check_row_precision(
     tolerance = rc.value_tolerance
     threshold = rc.precision_threshold
 
+    gen_rows = _align_generated_rows(reference, generated)
     ref_keys = {_row_key(r, key_cols, tolerance) for r in reference.rows}
-    gen_keys = {_row_key(r, key_cols, tolerance) for r in generated.rows}
+    gen_keys = {_row_key(r, key_cols, tolerance) for r in gen_rows}
 
     if not gen_keys:
         return _skip("row_precision", "generated returned 0 rows")
@@ -327,10 +379,18 @@ def check_value_accuracy(
     key_cols = rc.key_columns or reference.columns
     tolerance = rc.value_tolerance
 
+    # Re-key generated rows to reference column names (positionally, when the
+    # agent named its columns differently) so name-based matching works.
+    gen_rows = _align_generated_rows(reference, generated)
+
     if rc.value_columns:
         col_pairs = [(c.upper(), c.upper()) for c in rc.value_columns]
     else:
-        col_pairs = _build_column_map(reference.columns, generated.columns, key_cols)
+        # After alignment, generated rows carry reference column names.
+        gen_cols_for_map = (
+            reference.columns if gen_rows is not generated.rows else generated.columns
+        )
+        col_pairs = _build_column_map(reference.columns, gen_cols_for_map, key_cols)
 
     if not col_pairs:
         return _skip("value_accuracy", "no value columns to compare")
@@ -343,7 +403,7 @@ def check_value_accuracy(
     mismatches: list[str] = []
     matched_count = 0
 
-    for row in generated.rows:
+    for row in gen_rows:
         k = _row_key(row, key_cols, tolerance)
         ref_row = ref_by_key.get(k)
         if ref_row is None:

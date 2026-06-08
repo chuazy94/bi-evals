@@ -250,6 +250,19 @@ class TestColumnAlignment:
         assert r.passed
         assert "skipped" in r.reason
 
+    def test_output_alias_in_required_columns_gets_hint(self) -> None:
+        """A common authoring mistake: required_columns lists an OUTPUT alias
+        (GROSS_REVENUE) instead of the SOURCE column. The failure should explain
+        that, not just report a confusing 'missing source column'."""
+        r = check_column_alignment(
+            "SELECT C_NAME, SUM(L_EXTENDEDPRICE) AS GROSS_REVENUE "
+            "FROM t GROUP BY C_NAME",
+            _golden(required_columns=["C_NAME", "GROSS_REVENUE"]),
+        )
+        assert not r.passed
+        assert "GROSS_REVENUE" in r.reason
+        assert "output alias" in r.reason
+
 
 # ---------------------------------------------------------------------------
 # Dimension 4: Filter Correctness
@@ -395,6 +408,65 @@ class TestValueAccuracy:
         r = check_value_accuracy(_qr([]), _qr([]), _golden(), _scoring())
         assert r.passed
         assert "skipped" in r.reason
+
+
+class TestPositionFallbackMatching:
+    """When key column NAMES differ between agent and golden (the common
+    black-box case), rows are matched by ordinal position. Default key_cols =
+    all reference columns, so a differently-named key column otherwise breaks
+    the whole join."""
+
+    def test_value_accuracy_matches_when_all_names_differ(self) -> None:
+        # The inventory case: identical values, every output column renamed.
+        ref = _qr(
+            ["NATION", "VERY_BIG_BUCKET"],
+            [{"NATION": "INDIA", "VERY_BIG_BUCKET": 50305}],
+        )
+        gen = _qr(
+            ["NATION_NAME", "VERY_BIG_ROW_COUNT"],
+            [{"NATION_NAME": "INDIA", "VERY_BIG_ROW_COUNT": 50305}],
+        )
+        rc = RowComparison(enabled=True)  # no key_columns → defaults to all ref cols
+        r = check_value_accuracy(gen, ref, _golden(row_comparison=rc), _scoring())
+        assert r.passed, r.reason
+
+    def test_row_completeness_matches_when_names_differ(self) -> None:
+        ref = _qr(
+            ["NATION", "CNT"],
+            [{"NATION": "INDIA", "CNT": 5}, {"NATION": "IRAQ", "CNT": 4}],
+        )
+        gen = _qr(
+            ["N", "C"],
+            [{"N": "INDIA", "C": 5}, {"N": "IRAQ", "C": 4}],
+        )
+        rc = RowComparison(enabled=True)
+        r = check_row_completeness(gen, ref, _golden(row_comparison=rc), _scoring())
+        assert r.passed, r.reason
+
+    def test_position_fallback_still_catches_wrong_values(self) -> None:
+        # Renamed columns but a genuinely wrong value → must still fail.
+        ref = _qr(["NATION", "CNT"], [{"NATION": "INDIA", "CNT": 5}])
+        gen = _qr(["N", "C"], [{"N": "INDIA", "C": 999}])
+        rc = RowComparison(enabled=True)
+        r = check_row_completeness(gen, ref, _golden(row_comparison=rc), _scoring())
+        assert not r.passed
+
+    def test_name_match_preserved_when_names_align(self) -> None:
+        # When names DO align, behaviour is unchanged (no positional remap).
+        ref = _qr(["NATION", "CNT"], [{"NATION": "INDIA", "CNT": 5}])
+        gen = _qr(["NATION", "CNT"], [{"NATION": "INDIA", "CNT": 5}])
+        rc = RowComparison(enabled=True)
+        r = check_row_completeness(gen, ref, _golden(row_comparison=rc), _scoring())
+        assert r.passed
+
+    def test_column_count_mismatch_does_not_remap(self) -> None:
+        # Different column counts → can't pair positionally → honest failure,
+        # not a wrong match.
+        ref = _qr(["NATION", "CNT"], [{"NATION": "INDIA", "CNT": 5}])
+        gen = _qr(["N"], [{"N": "INDIA"}])
+        rc = RowComparison(enabled=True)
+        r = check_row_completeness(gen, ref, _golden(row_comparison=rc), _scoring())
+        assert not r.passed
 
 
 # ---------------------------------------------------------------------------

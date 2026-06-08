@@ -64,6 +64,31 @@ def extract_select_columns(sql: str, dialect: str = "snowflake") -> set[str]:
     return columns
 
 
+def extract_output_aliases(sql: str, dialect: str = "snowflake") -> set[str]:
+    """Extract the output alias names defined anywhere via ``AS`` in the SQL.
+
+    These are the *result* column names (e.g. ``SUM(x) AS GROSS_REVENUE`` →
+    ``GROSS_REVENUE``), as opposed to the source columns
+    :func:`extract_select_columns` returns. Used to give a helpful error when a
+    golden's ``required_columns`` lists output names instead of source columns —
+    a common authoring mistake, since the question often phrases the ask as
+    "output columns: ...".
+    """
+    try:
+        parsed = sqlglot.parse(sql, dialect=dialect)
+    except Exception:
+        return set()
+    aliases: set[str] = set()
+    for stmt in parsed:
+        if stmt is None:
+            continue
+        for select in stmt.find_all(exp.Select):
+            for expr in select.expressions:
+                if isinstance(expr, exp.Alias) and expr.alias:
+                    aliases.add(expr.alias.upper())
+    return aliases
+
+
 def extract_columns_with_tables(
     sql: str, dialect: str = "snowflake"
 ) -> set[tuple[str | None, str]]:
