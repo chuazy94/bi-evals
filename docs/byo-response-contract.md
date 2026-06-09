@@ -1,6 +1,13 @@
-# BYO Response Contract
+# api_endpoint Response Contract
 
-This document is the authoritative spec for the JSON response that a BYO endpoint must return to bi-evals. If you're setting `agent.type: api_endpoint` in `bi-evals.yaml`, your endpoint needs to conform to this contract for scoring to work as expected.
+This document is the authoritative spec for the JSON response an **`api_endpoint`** agent must
+return to bi-evals. If you're setting `agent.adapter: api_endpoint` in `bi-evals.yaml` (bi-evals
+POSTs each question to your live agent), your endpoint needs to conform to this contract for
+scoring to work as expected.
+
+> This applies to the `api_endpoint` adapter only. For the **push** adapter (you submit a JSONL
+> your agent already produced), the equivalent per-row shape is documented in
+> [`push-limitations.md`](./push-limitations.md).
 
 Machine-readable version: [`src/bi_evals/byo_response_schema.json`](../src/bi_evals/byo_response_schema.json) (JSON Schema 2020-12). The schema is bundled inside the package so `bi-evals doctor` can load it via `importlib.resources` at runtime — it validates against this exact file.
 

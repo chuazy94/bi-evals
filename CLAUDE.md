@@ -121,8 +121,10 @@ If a feature has no surface in the user-facing config (pure internal refactor, n
 
 ## Documentation
 
-- `docs/feature_summary.md` — consolidated reference for every feature with the commands to invoke it
+- `docs/pivot-phases.md` — the response-evaluation pivot: adapters (push / api_endpoint / dev / OTel), phase plan, and the Promptfoo research behind it
+- `docs/push-limitations.md` — what the push adapter requires and its sharp edges
 - `docs/golden-tests-guide.md` — golden-test schema and authoring guide
 - `docs/duckdb-schema.md` — storage schema reference
-- `docs/mvp-eval-platform.md` — original design doc and roadmap
+- `docs/mvp-eval-platform.md` — original (pre-pivot) design doc and roadmap
+- `STATUS.md` — current implementation status (the source of truth for "what works today")
 - `STATUS.md` — implementation status snapshot, updated via the `/project-status` skill 
