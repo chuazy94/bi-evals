@@ -75,17 +75,21 @@ for f in report.failures:
 
 ### `Runner(config_path="bi-evals.yaml", *, filter=None)`
 Loads `BiEvalsConfig`. `filter` is the same substring filter `run`/`score` accept (id /
-category / tag), so a CI job can scope a subset.
+category / tag), so a CI job can scope a subset. **The filter is applied once, in
+`golden_cases()`** — it yields only matching cases, and `score()` validates submissions
+against that same filtered set. So a customer who iterates `golden_cases()` and submits each
+case will never trip the "missing submission" pre-flight; the two stay in lockstep.
 
 ### `runner.golden_cases() -> Iterator[Case]`
-Yields one `Case` per golden (via the existing `load_golden_tests_with_paths`).
+Yields one `Case` per golden (via the existing `load_golden_tests_with_paths`), honoring the
+`filter`.
 
 ```python
 @dataclass(frozen=True)
 class Case:
     id: str           # golden id
     question: str     # the question to ask your agent
-    golden_file: str  # relative path — the join key (opaque to the customer)
+    golden_file: str  # internal join key — don't construct it yourself, but safe to print
     category: str
 ```
 
@@ -97,7 +101,11 @@ duplicate-golden rejection). Missing or extra fields raise immediately with a cl
 (fail at the call site, not later at `score()`).
 
 ### `runner.score(*, verbose=False) -> RunReport`
-1. Writes the collected submissions to a `results.jsonl` under the project's `results/` dir.
+1. Writes the collected submissions to `results/sdk_<ts>.jsonl` under the project's
+   `results/` dir. **This file is kept**, not cleaned up — it's a replayable artifact (same
+   principle as the `results/eval_<ts>.json` the CLI keeps: the JSON/JSONL files remain the
+   replayable source of truth, DuckDB is the queryable view). A customer can re-run it later
+   with `bi-evals score --input results/sdk_<ts>.jsonl`.
 2. Invokes the **existing** push score path (`generate_promptfoo_config` with
    `adapter=push`, `_validate_push_submissions`, `_execute_eval`) — same code as
    `bi-evals score --input`.
@@ -107,6 +115,14 @@ Raises if a selected golden has no submission (same pre-flight as the CLI).
 
 ```python
 @dataclass(frozen=True)
+class TestResult:
+    test_id: str            # the golden's id
+    passed: bool
+    score: float            # weighted overall score
+    fail_reason: str        # e.g. "Failed critical dimension(s): ['value_accuracy']"
+    # (mirrors the per-test row already stored in DuckDB / store/queries.py)
+
+@dataclass(frozen=True)
 class RunReport:
     run_id: str
     total: int
@@ -114,8 +130,10 @@ class RunReport:
     failed: int
     pass_rate: float            # passed / total
     report_path: str            # the HTML report
-    failures: list[TestResult]  # per-test: test_id, score, fail_reason, ...
-    def __bool__(self) -> bool: ...   # True when all passed — `if not runner.score(): ...`
+    failures: list[TestResult]  # the failing tests only (passed ones omitted)
+
+    def __bool__(self) -> bool:
+        return self.failed == 0  # truthy when all passed — `if not runner.score(): ...`
 ```
 
 ## The `error` row (push schema extension)
