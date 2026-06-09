@@ -403,7 +403,7 @@ uv run bi-evals run --yes
 uv run bi-evals run -c path/to/bi-evals.yaml
 ```
 
-For the full set of CLI commands (report, compare, cost, flakiness, ingest), see [feature_summary.md](./feature_summary.md).
+For the full set of CLI commands, run `bi-evals --help`; for current capabilities see [`STATUS.md`](../STATUS.md).
 
 ---
 

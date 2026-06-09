@@ -1,6 +1,10 @@
 # Design: BI Agent Eval Platform MVP
 
-**Date**: March 2026 | **Status**: Draft
+> **Historical design doc.** This is the original (March 2026) MVP plan and three-pillars
+> vision, kept for context. It predates the response-evaluation pivot. For what's built and
+> current, see [`../STATUS.md`](../STATUS.md) and [`pivot-phases.md`](./pivot-phases.md).
+
+**Date**: March 2026 | **Status**: Draft (superseded in parts by the pivot)
 
 ---
 
