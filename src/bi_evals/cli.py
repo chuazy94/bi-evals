@@ -43,15 +43,48 @@ def cli(ctx: click.Context, config_path: str) -> None:
 def init(ctx: click.Context) -> None:
     """Scaffold a new bi-evals project.
 
-    Default on-ramp is `api_endpoint` (bi-evals calls your existing agent over
-    HTTP and scores what it returns). `dev` scaffolds the dev-only driving
-    adapter for authoring goldens before a real agent exists.
+    Default on-ramp is `push` (you run your own agent, submit its results — via
+    the `bi_evals.Runner` SDK or a JSONL file — and bi-evals scores them).
+    `api_endpoint` is for an agent already exposed as an HTTP service; `dev`
+    scaffolds the dev-only driving adapter for authoring goldens before a real
+    agent exists.
     """
     if ctx.invoked_subcommand is None:
         raise click.UsageError(
-            "must specify a scaffold: 'api_endpoint' (default on-ramp) or 'dev'. "
-            "Run 'bi-evals init --help' for details."
+            "must specify a scaffold: 'push' (default on-ramp), 'api_endpoint', "
+            "or 'dev'. Run 'bi-evals init --help' for details."
         )
+
+
+@init.command("push")
+@click.option(
+    "--dir",
+    "-d",
+    "target_dir",
+    default=".",
+    help="Directory to scaffold the project in.",
+)
+def init_push(target_dir: str) -> None:
+    """Scaffold a push project (you run your agent, bi-evals scores its output)."""
+    target = Path(target_dir).resolve()
+    target.mkdir(parents=True, exist_ok=True)
+
+    _scaffold_project(target, mode="push")
+    click.echo(f"Scaffolded push bi-evals project in {target}")
+    click.echo()
+    click.echo("Next steps:")
+    click.echo("  1. Edit bi-evals.yaml — configure your Snowflake connection")
+    click.echo("  2. Create golden tests in golden/ (question + reference_sql)")
+    click.echo("  3. Edit .env with your Snowflake credentials")
+    click.echo("  4. Run your agent over the goldens and score — either with the SDK:")
+    click.echo(
+        "       import bi_evals; r = bi_evals.Runner('bi-evals.yaml')\n"
+        "       for case in r.golden_cases(): r.submit(case, generated_sql=...)\n"
+        "       report = r.score()"
+    )
+    click.echo(
+        "     or by writing a results.jsonl and: bi-evals score --input results.jsonl"
+    )
 
 
 @init.command("api_endpoint")
@@ -348,96 +381,61 @@ def score(
     agent, no API spend. This forces the push adapter regardless of the
     configured `agent.adapter`.
     """
+    from bi_evals.runner_core import (
+        PushScoreError,
+        run_push_score,
+        validate_push_submissions,
+    )
+
     config_path = ctx.obj["config_path"]
     config = BiEvalsConfig.load(config_path)
 
-    # Force push and point it at the submission file. score is the push entry
-    # point; the configured adapter (often api_endpoint) is intentionally
-    # overridden so a user can score without editing bi-evals.yaml.
-    config.agent.adapter = "push"
-    config.agent.push.input_file = str(Path(input_file).resolve())
-
-    pf_config = generate_promptfoo_config(config, config_path, filter_pattern)
-    test_count = len(pf_config.get("tests", []))
-    if test_count == 0:
-        if filter_pattern:
-            raise click.ClickException(f"No tests match filter '{filter_pattern}'.")
-        raise click.ClickException(
-            "No golden tests found. Add tests to the golden/ directory."
-        )
-
-    _validate_push_submissions(config, pf_config, input_file)
-
-    click.echo(f"Project: {config.project.name}")
-    click.echo(f"Tests:   {test_count}")
-    click.echo(f"Input:   {input_file}")
-    click.echo()
-
     if dry_run:
+        # Show the generated config without running. Validate first so dry-run
+        # still surfaces submission problems.
+        config.agent.adapter = "push"
+        config.agent.push.input_file = str(Path(input_file).resolve())
+        pf_config = generate_promptfoo_config(config, config_path, filter_pattern)
+        if not pf_config.get("tests"):
+            raise click.ClickException(
+                f"No tests match filter '{filter_pattern}'."
+                if filter_pattern
+                else "No golden tests found. Add tests to the golden/ directory."
+            )
+        try:
+            validate_push_submissions(config, pf_config, input_file)
+        except PushScoreError as e:
+            raise click.ClickException(str(e))
         click.echo("--- Generated promptfooconfig.yaml ---")
         click.echo(yaml.dump(pf_config, default_flow_style=False, sort_keys=False))
         return
 
-    # Push is a pure replay of submitted rows — there are no live agent calls to
-    # cache, so always run uncached (no value, and avoids any stale-cache risk).
-    _execute_eval(config, pf_config, verbose=verbose, no_cache=True)
-
-
-def _validate_push_submissions(
-    config: BiEvalsConfig, pf_config: dict, input_file: str
-) -> None:
-    """Fail fast with a clear message before launching Promptfoo.
-
-    Checks every selected golden has a submission row, and warns about
-    submissions that don't match any selected golden (typo / stale row).
-    """
-    import json
-
-    from bi_evals.provider.registry import _resolve_sql
-
-    submitted: dict[str, dict] = {}
-    with Path(input_file).open() as f:
-        for lineno, line in enumerate(f, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError as e:
-                raise click.ClickException(f"{input_file}:{lineno}: invalid JSON ({e})")
-            gf = row.get("golden_file")
-            if not gf:
-                raise click.ClickException(
-                    f"{input_file}:{lineno}: row is missing required 'golden_file'."
-                )
-            # Accept either a pre-extracted `generated_sql` or a raw
-            # `response_text` we can extract from — same resolution the adapter
-            # uses at run time, so validation and scoring never disagree.
-            _sql, _text, sql_err = _resolve_sql(row, gf)
-            if sql_err:
-                raise click.ClickException(f"{input_file}:{lineno}: {sql_err}")
-            if gf in submitted:
-                raise click.ClickException(
-                    f"{input_file}:{lineno}: duplicate golden_file '{gf}' — "
-                    "each golden may appear at most once."
-                )
-            submitted[gf] = row
-
-    selected = {t["vars"]["golden_file"] for t in pf_config.get("tests", [])}
-    missing = sorted(selected - set(submitted))
-    if missing:
-        raise click.ClickException(
-            "No submission for these goldens:\n  "
-            + "\n  ".join(missing)
-            + f"\nAdd a line per golden to {input_file}."
+    click.echo(f"Project: {config.project.name}")
+    click.echo(f"Input:   {input_file}")
+    click.echo()
+    try:
+        result = run_push_score(
+            config,
+            config_path,
+            input_file,
+            filter_pattern=filter_pattern,
+            verbose=verbose,
+            echo=click.echo,
         )
-    extra = sorted(set(submitted) - selected)
-    if extra:
+    except PushScoreError as e:
+        raise click.ClickException(str(e))
+
+    if result.extra_submissions:
+        extra = result.extra_submissions
         click.echo(
             f"Note: {len(extra)} submission(s) don't match any selected golden "
             f"(ignored): {', '.join(extra[:5])}" + (" ..." if len(extra) > 5 else ""),
             err=True,
         )
+    if result.run_id:
+        click.echo(f"Report:   bi-evals report --run-id {result.run_id}")
+    if result.exit_code != 0:
+        raise click.ClickException(f"Promptfoo exited with code {result.exit_code}")
 
 
 @cli.command()
@@ -811,6 +809,10 @@ def _scaffold_project(target: Path, *, mode: str) -> None:
         config_template = _TEMPLATE_CONFIG_BYO
         env_template = _TEMPLATE_ENV_BYO
         sample_env = _SAMPLE_DOT_ENV_BYO
+    elif mode == "push":
+        config_template = _TEMPLATE_CONFIG_PUSH
+        env_template = _TEMPLATE_ENV_PUSH
+        sample_env = _SAMPLE_DOT_ENV_PUSH
     else:
         raise ValueError(f"unknown mode: {mode!r}")
 
@@ -1027,6 +1029,91 @@ _SAMPLE_DOT_ENV_BYO = """\
 
 BI_AGENT_URL=http://localhost:8000/ask
 BI_AGENT_TOKEN=
+SNOWFLAKE_ACCOUNT=
+SNOWFLAKE_USER=
+SNOWFLAKE_PRIVATE_KEY_PATH=~/.ssh/snowflake_rsa_key.p8
+SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
+SNOWFLAKE_WAREHOUSE=
+SNOWFLAKE_DATABASE=
+SNOWFLAKE_SCHEMA=
+"""
+
+# ────────────────────────────────────────────────────────────────────────────
+# push mode templates — you run your agent, submit results, bi-evals scores them
+# ────────────────────────────────────────────────────────────────────────────
+
+_TEMPLATE_CONFIG_PUSH = """\
+# push adapter (default on-ramp): you run your own agent over the goldens and
+# submit its results; bi-evals scores them — no live agent call, no API spend.
+# Submit via the SDK (bi_evals.Runner) or a JSONL file (bi-evals score --input).
+# bi-evals never talks to your agent; it only needs the warehouse to execute SQL.
+
+project:
+  name: "My BI Agent Evals"
+
+agent:
+  adapter: "push"
+  push:
+    input_file: "results.jsonl"   # the file `bi-evals score --input` reads; the
+                                   # SDK writes its own results/sdk_<ts>.jsonl
+
+database:
+  type: snowflake
+  connection:
+    account: "${SNOWFLAKE_ACCOUNT}"
+    user: "${SNOWFLAKE_USER}"
+    private_key_path: "${SNOWFLAKE_PRIVATE_KEY_PATH}"
+    private_key_passphrase: "${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}"  # optional, if key is encrypted
+    warehouse: "${SNOWFLAKE_WAREHOUSE}"
+    database: "${SNOWFLAKE_DATABASE}"
+    schema: "${SNOWFLAKE_SCHEMA}"
+  query_timeout: 30
+
+golden_tests:
+  dir: "golden/"
+
+scoring:
+  dimensions:
+    - execution
+    - table_alignment
+    - column_alignment
+    - filter_correctness
+    - row_completeness
+    - row_precision
+    - value_accuracy
+    - no_hallucinated_columns
+    # skill_path_correctness only scores if your submissions include a `trace`.
+    # Re-enable once your agent surfaces its tool/file activity.
+    # - skill_path_correctness
+  thresholds:
+    completeness: 0.95
+    precision: 0.95
+    value_tolerance: 0.0001
+
+reporting:
+  output_dir: "reports/"
+  results_dir: "results/"
+
+storage:
+  db_path: "results/bi-evals.duckdb"
+  auto_ingest: true
+"""
+
+_TEMPLATE_ENV_PUSH = """\
+SNOWFLAKE_ACCOUNT=
+SNOWFLAKE_USER=
+SNOWFLAKE_PRIVATE_KEY_PATH=~/.ssh/snowflake_rsa_key.p8
+SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
+SNOWFLAKE_WAREHOUSE=
+SNOWFLAKE_DATABASE=
+SNOWFLAKE_SCHEMA=
+"""
+
+_SAMPLE_DOT_ENV_PUSH = """\
+# Local credentials for this push eval project (gitignored).
+# Replace placeholder values before scoring. push needs only the warehouse —
+# bi-evals executes your submitted SQL to grade it; it never calls your agent.
+
 SNOWFLAKE_ACCOUNT=
 SNOWFLAKE_USER=
 SNOWFLAKE_PRIVATE_KEY_PATH=~/.ssh/snowflake_rsa_key.p8

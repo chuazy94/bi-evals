@@ -24,8 +24,14 @@ One JSON object per line in a `.jsonl` file, one row per golden test:
 | Field | Required? | Purpose |
 |---|---|---|
 | `golden_file` | **yes** | Path (relative to the config dir) of the golden this row answers. The join key. |
-| `generated_sql` **or** `response_text` | **one of** | The SQL to score. `generated_sql` = pre-extracted SQL; `response_text` = the agent's raw answer (SQL extracted from it). |
+| `generated_sql` **or** `response_text` **or** `error` | **one of** | `generated_sql` = pre-extracted SQL; `response_text` = the agent's raw answer (SQL extracted from it); `error` = the agent failed this golden (scored as a failing `execution`). |
 | `trace` | optional | What the agent did (tool calls / files read). Needed for `skill_path_correctness`. |
+
+> **The SDK writes these rows for you.** `bi_evals.Runner` (the recommended on-ramp) owns the
+> loop, the JSONL, and scoring — you call `runner.submit(case, generated_sql=...)` (or
+> `response_text=` / `error=`) and `runner.score()`. The raw `.jsonl` below is the logs-only
+> fallback for when you can't call your agent from Python. **Either way, this doc's
+> requirements still apply** — the SDK removes the plumbing, not what your agent must expose.
 
 ---
 

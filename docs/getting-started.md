@@ -163,29 +163,52 @@ See [`golden-tests-guide.md`](./golden-tests-guide.md) for the full schema.
 
 ---
 
-## Step 5a — Produce the submission, then score (push)
+## Step 5a — Score with the SDK (recommended)
 
-Run **your** agent over the golden questions and write one JSONL row per golden:
+The `bi_evals.Runner` SDK owns the loop, collection, file I/O, and scoring — you write
+one `ask()` call against your own agent:
 
-```jsonl
-{"golden_file": "golden/revenue-001.yaml", "response_text": "Here's the query:\n```sql\nSELECT region, SUM(revenue) AS total FROM analytics.fct_revenue WHERE quarter='2026Q1' GROUP BY region ORDER BY total DESC\n```", "trace": {"files_read": ["REVENUE.md"]}}
+```python
+import bi_evals
+
+runner = bi_evals.Runner("bi-evals.yaml")
+for case in runner.golden_cases():
+    try:
+        answer = my_agent.ask(case.question)
+        runner.submit(case, generated_sql=answer.sql, trace=answer.trace)
+        # or, if your agent returns prose: response_text=answer.text
+    except Exception as e:
+        runner.submit(case, error=str(e))     # flaky agent → record + keep going
+
+report = runner.score()                        # executes SQL, scores, writes report
+print(f"{report.passed}/{report.total} passed → {report.report_path}")
+assert report.pass_rate >= 0.9                 # gate CI on it
 ```
 
-- `golden_file` — the golden this row answers (the join key).
-- `generated_sql` **or** `response_text` — the SQL, pre-extracted or as raw prose (bi-evals
-  extracts the SQL from a ```sql fence or a bare SELECT).
-- `trace` (optional) — the agent's tool/file activity; needed for `skill_path_correctness`.
+`submit()` takes `generated_sql` **or** `response_text` (raw answer — the SQL is extracted
+from a ```sql fence or bare SELECT) **or** `error` (the agent failed this golden — scored as
+a failing `execution`). `trace` is optional; it's needed for `skill_path_correctness`.
 
-You can hand-write this, loop over `bi-evals` goldens calling your agent, or harvest your
-agent's own audit log. (See [`push-limitations.md`](./push-limitations.md) for all three
-and the full requirements.)
+> The SDK removes the *plumbing*, not the requirement that your agent **expose** its SQL and
+> trace — see [`push-limitations.md`](./push-limitations.md).
 
-Then:
+## Step 5a-alt — Score a JSONL file you produced (logs-only / non-Python)
+
+If you can't call your agent from Python (e.g. you only have a log dump), write the same
+rows to a `.jsonl` yourself and score the file:
+
+```jsonl
+{"golden_file": "golden/revenue-001.yaml", "response_text": "Here's the query:\n```sql\nSELECT ...\n```", "trace": {"files_read": ["REVENUE.md"]}}
+{"golden_file": "golden/usage-002.yaml", "error": "agent timed out"}
+```
 
 ```bash
 bi-evals doctor                       # warehouse reachable? submission parses?
 bi-evals score --input results.jsonl  # extract SQL → execute → score → ingest
 ```
+
+(See [`push-limitations.md`](./push-limitations.md) for ways to produce the file and the
+full requirements.)
 
 ## Step 5b — Alternative: point bi-evals at a live endpoint (api_endpoint)
 

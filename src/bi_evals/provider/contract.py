@@ -56,6 +56,10 @@ class AgentResult:
     total_tokens: int = 0
     cost: float = 0.0
     latency_ms: int = 0
+    # Set when the agent failed to produce an answer at all (e.g. a push
+    # submission with an `error` field). The scorer treats this as a failed
+    # `execution` dimension carrying this message, rather than trying to run SQL.
+    agent_error: str | None = None
 
     def trace_as_dicts(self) -> list[dict[str, Any]]:
         """Serialize trace steps for JSON output."""

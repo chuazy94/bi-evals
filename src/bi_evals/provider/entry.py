@@ -86,6 +86,7 @@ def call_api(
         "trace": result.trace_as_dicts(),
         "files_read": result.files_read,
         "generated_sql": result.extracted_sql,
+        "agent_error": result.agent_error,
         "prompt_tokens": result.prompt_tokens,
         "completion_tokens": result.completion_tokens,
         "total_tokens": result.total_tokens,
