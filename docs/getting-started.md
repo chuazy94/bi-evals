@@ -66,26 +66,16 @@ activated venv).
 ## Step 2 — Scaffold the project
 
 ```bash
-bi-evals init api_endpoint --dir .
+bi-evals init push --dir .
 ```
 
-This writes `bi-evals.yaml`, `.env` / `.env.example`, an example golden, and
-`golden/`, `results/`, `reports/` directories. (There's no `init push` scaffold yet — use
-`init api_endpoint`; the `score` command forces the push adapter regardless of what the
-config says, so the same scaffold works for push. For the dev driving adapter, use
-`bi-evals init dev`.)
+This writes a push-shaped `bi-evals.yaml` (`agent.adapter: push`), `.env` / `.env.example`
+(Snowflake-only — push needs no agent URL), an example golden, and `golden/`, `results/`,
+`reports/` directories.
 
-Then set `agent.adapter: push` in `bi-evals.yaml` for clarity:
-
-```yaml
-agent:
-  adapter: push
-  push:
-    input_file: results.jsonl     # normally set by `bi-evals score --input`
-```
-
-(For **api_endpoint**, leave `adapter: api_endpoint` and fill in the `api_endpoint:` block —
-see Step 5b.)
+(For a live HTTP agent use `bi-evals init api_endpoint` — it additionally ships
+`adapter_example.py`, a FastAPI shim demonstrating the response contract; see Step 5b. For
+the dev-only driving adapter, `bi-evals init dev`.)
 
 ---
 

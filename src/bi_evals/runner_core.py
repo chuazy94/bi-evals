@@ -10,6 +10,7 @@ the plain-Python version. The CLI command is now a thin wrapper that translates
 
 from __future__ import annotations
 
+import copy
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -57,7 +58,7 @@ def validate_push_submissions(
     """Fail fast before launching Promptfoo. Returns the list of *extra*
     submissions (rows that match no selected golden — ignored, not an error).
     Raises ``PushScoreError`` on any blocking problem."""
-    from bi_evals.provider.registry import _resolve_sql
+    from bi_evals.provider.registry import resolve_sql
 
     submitted: dict[str, dict] = {}
     with Path(input_file).open() as f:
@@ -76,7 +77,7 @@ def validate_push_submissions(
                 )
             # Same SQL resolution the adapter uses at run time, so validation and
             # scoring never disagree on what's acceptable.
-            _sql, _text, sql_err = _resolve_sql(row, gf)
+            _sql, _text, sql_err = resolve_sql(row, gf)
             if sql_err:
                 raise PushScoreError(f"{input_file}:{lineno}: {sql_err}")
             if gf in submitted:
@@ -111,7 +112,13 @@ def run_push_score(
     Forces the push adapter and points it at ``input_file``. Returns a
     :class:`PushScoreResult`; raises :class:`PushScoreError` on user-actionable
     problems. ``echo`` receives progress lines (the CLI passes ``click.echo``).
+
+    The caller's ``config`` is never mutated: the push overrides are applied to
+    a deep copy, so a long-lived config (e.g. ``Runner._config``, or one
+    configured for another adapter) isn't silently flipped to push as a side
+    effect of scoring.
     """
+    config = copy.deepcopy(config)  # private attrs (_base_dir) survive deepcopy
     config.agent.adapter = "push"
     config.agent.push.input_file = str(Path(input_file).resolve())
 

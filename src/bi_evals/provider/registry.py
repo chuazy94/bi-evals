@@ -125,7 +125,7 @@ def _load_submissions(input_file: str) -> dict[str, dict[str, Any]]:
     return submissions
 
 
-def _resolve_sql(row: dict[str, Any], golden_file: str) -> tuple[str, str, str | None]:
+def resolve_sql(row: dict[str, Any], golden_file: str) -> tuple[str, str, str | None]:
     """Resolve the SQL to score from a submission row.
 
     Real agents rarely emit clean SQL — they return it fenced or buried in prose.
@@ -286,7 +286,7 @@ class PushReplayAdapter:
                 agent_error=str(row["error"]),
             )
 
-        sql, final_text, err = _resolve_sql(row, golden_file)
+        sql, final_text, err = resolve_sql(row, golden_file)
         if err:
             return err
 
