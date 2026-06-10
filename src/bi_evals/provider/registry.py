@@ -12,6 +12,7 @@ adding one branch here, with no change to the entry point or the scorer.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +21,8 @@ from typing import Any
 from bi_evals.config import BiEvalsConfig
 from bi_evals.provider.api_endpoint import call_api_endpoint
 from bi_evals.provider.contract import Adapter, AgentResult, TraceStep, extract_sql
+
+log = logging.getLogger("bi_evals.provider")
 from bi_evals.tools.registry import build_tools
 
 
@@ -130,20 +133,31 @@ def _resolve_sql(row: dict[str, Any], golden_file: str) -> tuple[str, str, str |
     raw ``response_text`` (mirroring the ``api_endpoint`` adapter's
     sql-key/text-key split). Precedence:
 
-      1. ``generated_sql`` if present — trust the customer's explicit extraction
+      1. an ``error`` row is valid — the agent failed to answer; nothing to
+         extract, and the adapter handles it as a failed `execution` outcome.
+      2. ``generated_sql`` if present — trust the customer's explicit extraction
          (still run ``extract_sql`` so a fenced/prose value is unwrapped).
-      2. else ``response_text`` — extract the SQL from the raw answer.
-      3. else error — nothing to score.
+      3. else ``response_text`` — extract the SQL from the raw answer.
+      4. else error — nothing to score.
 
     Returns ``(sql, final_text, error)``. ``error`` is non-None when no usable
     SQL could be determined, in which case ``sql``/``final_text`` are empty.
+    For an ``error`` row, returns ``("", "", None)`` — valid, no SQL.
     """
+    if row.get("error"):
+        return "", "", None  # valid: the agent-error path is handled in produce()
+
     generated_sql = row.get("generated_sql")
     response_text = row.get("response_text")
 
     if generated_sql:
         raw = str(generated_sql)
-        sql = extract_sql(raw) or raw
+        extracted = extract_sql(raw)
+        sql = extracted or raw
+        if extracted is None:
+            # No fence/bare-SELECT found — the value was used verbatim. Usually
+            # fine (it was already clean SQL), but worth noting at debug.
+            log.debug("%s: generated_sql used verbatim (no fence found)", golden_file)
         # Prefer the raw answer as final_text when the agent supplied one.
         final_text = str(response_text) if response_text else raw
         return sql, final_text, None
@@ -152,6 +166,11 @@ def _resolve_sql(row: dict[str, Any], golden_file: str) -> tuple[str, str, str |
         raw = str(response_text)
         sql = extract_sql(raw)
         if not sql:
+            log.warning(
+                "%s: no SQL extractable from response_text (%d chars)",
+                golden_file,
+                len(raw),
+            )
             return (
                 "",
                 "",
@@ -159,6 +178,7 @@ def _resolve_sql(row: dict[str, Any], golden_file: str) -> tuple[str, str, str |
                 "SQL could be extracted from it (no fenced ```sql block or bare "
                 "SELECT found).",
             )
+        log.debug("%s: extracted SQL from response_text: %s", golden_file, sql)
         return sql, raw, None
 
     return (
@@ -250,11 +270,26 @@ class PushReplayAdapter:
         if row is None:
             return f"No push submission found for golden_file '{golden_file}'."
 
+        steps, files_read = _trace_from_row(row)
+
+        # An `error` row records that the agent failed to answer this golden
+        # (timeout, crash, no SQL produced). It's a first-class *failing*
+        # outcome, not a missing submission — the scorer fails `execution` with
+        # this message rather than executing SQL.
+        if row.get("error"):
+            return AgentResult(
+                final_text=str(row["error"]),
+                extracted_sql=None,
+                trace=steps,
+                files_read=files_read,
+                rounds=len(steps),
+                agent_error=str(row["error"]),
+            )
+
         sql, final_text, err = _resolve_sql(row, golden_file)
         if err:
             return err
 
-        steps, files_read = _trace_from_row(row)
         return AgentResult(
             final_text=final_text,
             extracted_sql=sql,

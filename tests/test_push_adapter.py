@@ -237,6 +237,25 @@ class TestPushReplayAdapter:
         assert isinstance(result, str)
         assert "no SQL could be extracted" in result
 
+    def test_error_row_produces_agent_error(self, tmp_path: Path) -> None:
+        p = tmp_path / "r.jsonl"
+        _write_jsonl(
+            p,
+            [{"golden_file": "golden/a.yaml", "error": "agent timed out after 60s"}],
+        )
+        _load_submissions.cache_clear()
+        config = _push_config(tmp_path, "r.jsonl")
+        result = PushReplayAdapter().produce(
+            "Q", {"golden_file": "golden/a.yaml"}, config, None
+        )
+        assert isinstance(result, AgentResult)
+        assert result.agent_error == "agent timed out after 60s"
+        assert result.extracted_sql is None
+        # an error row is valid in validation (not "missing both")
+        from bi_evals.provider.registry import _resolve_sql
+
+        assert _resolve_sql({"error": "x"}, "g")[2] is None
+
     def test_missing_row_returns_error(self, tmp_path: Path) -> None:
         p = tmp_path / "r.jsonl"
         _write_jsonl(p, [{"golden_file": "golden/a.yaml", "generated_sql": "X"}])

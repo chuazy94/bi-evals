@@ -8,11 +8,14 @@ SQL, runs enabled dimensions, and returns per-dimension results.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from bi_evals.config import BiEvalsConfig
 from bi_evals.db.factory import create_db_client
+
+log = logging.getLogger("bi_evals.scorer")
 from bi_evals.golden.loader import load_golden_test
 from bi_evals.trace_paths import make_test_id_slug, slugify_model
 from bi_evals.scorer.dimensions import (
@@ -123,6 +126,25 @@ def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
 
     generated_sql = trace_data.get("generated_sql", "")
     trace_steps = trace_data.get("trace", [])
+    agent_error = trace_data.get("agent_error")
+
+    # The agent failed to answer this golden (e.g. a push `error` row). Report it
+    # as a failed `execution` dimension carrying the message — a visible failing
+    # outcome, not a silent gap or a generic "no SQL" error.
+    if agent_error:
+        return {
+            "pass": False,
+            "score": 0.0,
+            "reason": f"agent error: {agent_error}",
+            "componentResults": [
+                {
+                    "pass": False,
+                    "score": 0.0,
+                    "reason": f"agent error: {agent_error}",
+                    "namedScores": {"execution": 0.0},
+                }
+            ],
+        }
 
     if not generated_sql:
         return {
@@ -132,16 +154,32 @@ def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
         }
 
     reference_sql = golden.reference_sql
+    test_label = vars_.get("golden_file") or test_id_slug
 
-    # Execute SQL
+    # Execute SQL. This is the slow, failure-prone step (network + warehouse +
+    # auth) — narrate it and surface execution errors at run time rather than
+    # only into the trace file.
+    log.info("%s: executing generated SQL against %s", test_label, config.database.type)
     db_client = create_db_client(config.database)
     try:
         generated_result = db_client.execute(generated_sql)
+        if not generated_result.success:
+            log.warning(
+                "%s: generated SQL execution failed: %s",
+                test_label,
+                generated_result.error,
+            )
         reference_result = (
             db_client.execute(reference_sql)
             if reference_sql
             else QueryResult(columns=[], rows=[], row_count=0, error="No reference SQL")
         )
+        if reference_sql and not reference_result.success:
+            log.warning(
+                "%s: reference SQL execution failed: %s",
+                test_label,
+                reference_result.error,
+            )
     finally:
         db_client.close()
 
