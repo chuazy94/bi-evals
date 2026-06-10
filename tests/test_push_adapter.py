@@ -21,7 +21,7 @@ from bi_evals.provider.contract import AgentResult
 from bi_evals.provider.registry import (
     PushReplayAdapter,
     _load_submissions,
-    _resolve_sql,
+    resolve_sql,
     _trace_from_row,
     build_adapter,
 )
@@ -146,7 +146,7 @@ class TestTraceFromRow:
 
 class TestResolveSql:
     def test_generated_sql_wins_over_response_text(self) -> None:
-        sql, _, err = _resolve_sql(
+        sql, _, err = resolve_sql(
             {"generated_sql": "SELECT 1", "response_text": "```sql\nSELECT 2\n```"},
             "g",
         )
@@ -154,11 +154,11 @@ class TestResolveSql:
         assert sql == "SELECT 1"
 
     def test_generated_sql_fenced_is_unwrapped(self) -> None:
-        sql, _, err = _resolve_sql({"generated_sql": "```sql\nSELECT 5\n```"}, "g")
+        sql, _, err = resolve_sql({"generated_sql": "```sql\nSELECT 5\n```"}, "g")
         assert err is None and sql == "SELECT 5"
 
     def test_extracts_from_response_text(self) -> None:
-        sql, final, err = _resolve_sql(
+        sql, final, err = resolve_sql(
             {"response_text": "Here:\n```sql\nSELECT 3\n```\nDone."}, "g"
         )
         assert err is None
@@ -166,18 +166,18 @@ class TestResolveSql:
         assert final == "Here:\n```sql\nSELECT 3\n```\nDone."  # raw answer kept
 
     def test_final_text_prefers_response_text(self) -> None:
-        _, final, _ = _resolve_sql(
+        _, final, _ = resolve_sql(
             {"generated_sql": "SELECT 1", "response_text": "the answer"}, "g"
         )
         assert final == "the answer"
 
     def test_response_text_without_sql_errors(self) -> None:
-        sql, _, err = _resolve_sql({"response_text": "I couldn't answer that."}, "g")
+        sql, _, err = resolve_sql({"response_text": "I couldn't answer that."}, "g")
         assert sql == ""
         assert err is not None and "no SQL could be extracted" in err
 
     def test_neither_field_errors(self) -> None:
-        _, _, err = _resolve_sql({"trace": {}}, "g")
+        _, _, err = resolve_sql({"trace": {}}, "g")
         assert err is not None and "missing both" in err
 
 
@@ -252,9 +252,9 @@ class TestPushReplayAdapter:
         assert result.agent_error == "agent timed out after 60s"
         assert result.extracted_sql is None
         # an error row is valid in validation (not "missing both")
-        from bi_evals.provider.registry import _resolve_sql
+        from bi_evals.provider.registry import resolve_sql
 
-        assert _resolve_sql({"error": "x"}, "g")[2] is None
+        assert resolve_sql({"error": "x"}, "g")[2] is None
 
     def test_missing_row_returns_error(self, tmp_path: Path) -> None:
         p = tmp_path / "r.jsonl"

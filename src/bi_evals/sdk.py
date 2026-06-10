@@ -117,21 +117,28 @@ class Runner:
         self._config = BiEvalsConfig.load(Path(config_path))
         self._filter = filter
         self._submissions: dict[str, dict[str, Any]] = {}
+        self._total_cases_cache: int | None = None
         if verbose:
             _enable_console_logging()
 
-    def _total_cases(self) -> int:
-        """Count of selected goldens (for the submit heartbeat denominator)."""
+    def _load_selected(self) -> list[tuple[Any, str]]:
+        """Load goldens honoring the filter; caches the count for heartbeats."""
         pairs = load_golden_tests_with_paths(self._config)
         if self._filter:
             pairs = filter_tests(pairs, self._filter)
-        return len(pairs)
+        self._total_cases_cache = len(pairs)
+        return pairs
+
+    def _total_cases(self) -> int:
+        """Count of selected goldens (submit heartbeat denominator), cached so
+        the heartbeat doesn't re-parse every golden YAML on each submit()."""
+        if self._total_cases_cache is None:
+            self._load_selected()
+        return self._total_cases_cache or 0
 
     def golden_cases(self) -> Iterator[Case]:
         """Yield one :class:`Case` per golden, honoring the ``filter``."""
-        pairs = load_golden_tests_with_paths(self._config)
-        if self._filter:
-            pairs = filter_tests(pairs, self._filter)
+        pairs = self._load_selected()
         cases = [
             Case(
                 id=golden.id,
@@ -203,9 +210,18 @@ class Runner:
         """Write the collected submissions to a kept ``results/sdk_<ts>.jsonl``
         artifact, run the push score pipeline, and return a :class:`RunReport`.
 
+        ``verbose`` here streams the Promptfoo *subprocess* output — it is not
+        SDK progress logging (for that, use ``Runner(verbose=True)``).
+
         Raises :class:`PushScoreError` (e.g. a selected golden has no
-        submission) — the same pre-flight the CLI applies.
+        submission, or nothing was submitted) — the same pre-flight the CLI
+        applies.
         """
+        if not self._submissions:
+            raise PushScoreError(
+                "No submissions recorded — call submit() for each golden before "
+                "score()."
+            )
         results_dir = self._config.resolve_path(self._config.reporting.results_dir)
         results_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -147,7 +147,7 @@ To support `submit(case, error=...)` symmetrically, the push row schema gains an
 
 Scoring an error row: the `execution` dimension fails with `agent error: <error>`; the other
 dimensions skip (nothing to grade). This makes "the agent failed to answer" a first-class,
-visible, *failing* outcome — not a silent gap. Implementation: `_resolve_sql` (or the
+visible, *failing* outcome — not a silent gap. Implementation: `resolve_sql` (or the
 adapter) recognises `error` and short-circuits to a failed `AgentResult` carrying the error
 text; `check_execution` reports it. **This touches the push adapter + scorer, not just the
 SDK** — flagged because it's a (small) contract change, and `push-limitations.md` /

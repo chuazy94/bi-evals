@@ -107,7 +107,7 @@ the submission format above. So the customer can submit what their agent actuall
   and let the adapter extract the SQL, mirroring `api_endpoint`'s `response_sql_key`/
   `response_text_key`. `generated_sql` wins on conflict; `response_text` with no extractable SQL
   fails the row with a clear error. Validation (`score`) and runtime (adapter) share one
-  `_resolve_sql` so they never disagree.
+  `resolve_sql` so they never disagree.
 
 ## Still deferred
 

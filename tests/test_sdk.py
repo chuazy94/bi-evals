@@ -181,6 +181,39 @@ class TestScore:
         assert isinstance(report.failures[0], TestResult)
         assert "agent crashed" in report.failures[0].fail_reason
 
+    def test_score_without_submissions_raises(self, tmp_path: Path) -> None:
+        from bi_evals.runner_core import PushScoreError
+
+        runner = Runner(str(_project(tmp_path, 1)))
+        with pytest.raises(PushScoreError, match="No submissions recorded"):
+            runner.score()
+
+    def test_run_push_score_does_not_mutate_caller_config(self, tmp_path: Path) -> None:
+        """run_push_score works on a deep copy — a long-lived config (e.g. the
+        Runner's) must not be flipped to push/input_file as a side effect of
+        scoring. Calls the REAL run_push_score with only the Promptfoo
+        subprocess mocked, so the deepcopy itself is exercised."""
+        import json as _json
+
+        from bi_evals.config import BiEvalsConfig
+        from bi_evals.runner_core import run_push_score
+
+        config_file = _project(tmp_path, 1)
+        config = BiEvalsConfig.load(config_file)
+        # Caller's config is configured for a DIFFERENT adapter.
+        config.agent.adapter = "api_endpoint"
+        results = tmp_path / "r.jsonl"
+        results.write_text(
+            _json.dumps({"golden_file": "golden/q1.yaml", "generated_sql": "SELECT 1"})
+            + "\n"
+        )
+
+        with patch("bi_evals.runner_core.run_promptfoo", return_value=0):
+            run_push_score(config, str(config_file), str(results))
+
+        assert config.agent.adapter == "api_endpoint"  # not flipped to push
+        assert config.agent.push.input_file == "results.jsonl"  # untouched
+
     def test_report_bool_true_when_all_pass(self, tmp_path: Path) -> None:
         r = RunReport(
             run_id="r",
@@ -226,9 +259,16 @@ class TestLogging:
         self, tmp_path: Path
     ) -> None:
         root = logging.getLogger("bi_evals")
-        Runner(str(_project(tmp_path, 1)), verbose=True)
-        Runner(str(_project(tmp_path, 1)), verbose=True)  # again — must not dup
-        console = [h for h in root.handlers if getattr(h, "_bi_evals_console", False)]
-        assert len(console) == 1
-        # cleanup so we don't leak the handler into other tests
-        root.removeHandler(console[0])
+        try:
+            Runner(str(_project(tmp_path, 1)), verbose=True)
+            Runner(str(_project(tmp_path, 1)), verbose=True)  # again — must not dup
+            console = [
+                h for h in root.handlers if getattr(h, "_bi_evals_console", False)
+            ]
+            assert len(console) == 1
+        finally:
+            # Always remove the console handler(s) so a failed assertion can't
+            # leak them into other logging tests.
+            for h in list(root.handlers):
+                if getattr(h, "_bi_evals_console", False):
+                    root.removeHandler(h)
