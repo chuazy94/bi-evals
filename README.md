@@ -4,133 +4,27 @@ A configurable Python framework for evaluating SQL-generating BI agents. You pro
 
 [Promptfoo](https://promptfoo.dev/) (Node.js) is used as the test runner engine; all custom logic is Python.
 
-## Where bi-evals fits in your eval process
-
-> bi-evals is a framework for the offline evaluation suite behind self-service analytics.
-> The default on-ramp is the **`bi_evals.Runner` SDK** — see
-> [Getting started](#getting-started-with-the-sdk) below.
-
-**bi-evals doesn't run your agent — you run your agent, and bi-evals grades its homework.** The
-offline evaluation suite is the golden questions you run your agent against before launch, gate
-releases on, and re-run to catch regressions. You author the evals; bi-evals is the shared engine
-that scores them.
-
-### Evaluate the response, don't rebuild the agent
-
-To be faithful you must score the agent your users actually hit, and to plug into *any* stack
-bi-evals can't assume how your agent is wired. So it makes **no assumption about how an answer was
-produced** — it evaluates the *response*. For each golden question your agent hands over two things:
-
-- **`generated_sql`** — the SQL it produced.
-- **`trace`** — what it did to get there (files/skills read, tools invoked).
-
-bi-evals **executes that SQL itself** against your warehouse, so you never send result sets — only
-the query and what it touched. Everything else (provider, orchestration, MCP/LangChain/notebook)
-stays yours and untouched.
-
-### What you'll need
-
-- **A BI agent that exposes its generated SQL and trace.** This is the real prerequisite — see
-  [The real boundary](#the-real-boundary-and-scope) below. bi-evals doesn't care how it's built;
-  [`docs/instrumenting-your-agent.md`](docs/instrumenting-your-agent.md) describes the output
-  shapes that make scoring effortless.
-- **Warehouse credentials** bi-evals can use to execute SQL for grading.
-- **Golden questions with reference SQL** — the "right answer" to grade against. You author these.
-- Python 3.11+ and [uv](https://docs.astral.sh/uv/) to run the framework.
-
-### The journey
-
-1. **Install & scaffold** — `bi-evals init push` gives you a config and a `golden/` folder. You
-   provide warehouse credentials and where your tests live.
-2. **Author golden tests** — a question + reference SQL + what should be true of the result. This
-   encodes what "correct" means for your data; it's the real work, and it's yours.
-3. **Run your own agent over the questions** — the `bi_evals.Runner` SDK owns the loop: you write
-   one `ask()` call against the agent you already have and `submit()` what it returns. Your
-   production agent runs unchanged.
-4. **Score** — bi-evals runs each generated SQL (and the reference) against your warehouse and
-   compares across 10 dimensions, producing a pass/fail verdict and a report.
-5. **Gate and regress** — in CI, every change re-runs the suite, gates on a threshold, and shows a
-   per-dimension diff.
-
-### The real boundary, and scope
-
-What bi-evals can score depends on **whether your agent surfaces its own SQL and trace.** Most
-text-to-SQL agents do (it's in their UI) — then connecting is light. If your agent only returns a
-natural-language answer, you'll need to surface the SQL first, and that cost is the same however
-you integrate: nothing can score a query the agent never emitted.
-
-bi-evals targets the **offline** half of evaluation — the pre-launch gate, regression suite, and
-"change one thing, compare pass rates" experiments. Online/production monitoring is a different
-surface it doesn't aim to be; the seam is that every real correction is a candidate golden test.
-
-## Adapters: how your agent's answers reach the scorer
-
-`agent.adapter` in `bi-evals.yaml` selects how answers arrive. The scoring engine is identical for
-all of them — pick the adapter that matches your situation **before** you scaffold a project.
-
-| Adapter | How it works | Use when |
-|---|---|---|
-| **`push`** (default) | You run your agent, hand each answer to the **`bi_evals.Runner` SDK** (or write a JSONL and `bi-evals score --input`). No live agent during scoring. | Almost always — works for any stack (MCP, LangChain, a notebook, anything). |
-| **`api_endpoint`** | bi-evals POSTs each question to your agent's HTTP endpoint and scores the response live. | Your agent is already a clean question→SQL HTTP service. Response shape: [`docs/byo-response-contract.md`](docs/byo-response-contract.md); validate with `bi-evals doctor`. |
-| **`anthropic_tool_loop`** (dev-only) | bi-evals runs Claude with *your* skill files locally. Evaluates a rebuild, not your real agent. | Authoring goldens before a real agent exists. |
-
-See [`docs/getting-started.md`](docs/getting-started.md) for the full walkthrough.
-
 ## How it works
 
-1. **You define golden tests** in YAML -- each contains a natural-language question, reference SQL, expected skill path, and scoring criteria.
-2. **Your agent answers each question** — you submit `{generated_sql, trace}` via the SDK or a JSONL file (push), or bi-evals fetches it live (`api_endpoint`).
-3. **The scorer runs both the generated and reference SQL** against your database and compares results across 10 dimensions. See [Scoring](#scoring) for details.
+**bi-evals doesn't run your agent — you run your agent, and bi-evals grades its homework.** It
+makes no assumption about how an answer was produced; for each golden question your agent hands
+over two things:
 
-## Scoring
+- **`generated_sql`** — the SQL it produced.
+- **`trace`** (optional) — what it did to get there (files/skills read, tools invoked).
 
-A test produces 10 independent dimension results, then a single pass/fail verdict via tiered/weighted aggregation. A dimension whose golden has nothing to evaluate (e.g. `anti_pattern_compliance` with no `anti_patterns` declared) skips as a vacuous pass and is dropped from the report.
+bi-evals **executes that SQL itself** against your warehouse — you never send result sets — and
+compares the results against your golden's reference SQL across 10 dimensions, producing a
+pass/fail verdict you can gate CI on. Everything else (provider, orchestration,
+MCP/LangChain/notebook) stays yours and untouched.
 
-### Dimensions
+The one real prerequisite: **your agent must expose the SQL it generated** — nothing can score a
+query the agent never emitted. [`docs/instrumenting-your-agent.md`](docs/instrumenting-your-agent.md)
+describes the output shapes that make scoring effortless.
 
-| Dimension | Tier | Default weight | What it checks |
-|---|---|---|---|
-| `execution` | critical | 3.0 | Generated SQL runs without error |
-| `row_completeness` | critical | 3.0 | Generated results contain the expected rows (executes both queries against the live DB and compares row keys) |
-| `value_accuracy` | critical | 3.0 | Numeric values in matching rows are within `value_tolerance`; column matching falls back to position when aliases differ |
-| `row_precision` | important | 2.0 | No spurious extra rows beyond the reference |
-| `anti_pattern_compliance` | important | 2.0 | The SQL avoids the golden's declared `forbidden_tables`/`forbidden_columns` |
-| `column_alignment` | important | 2.0 | The SQL references the source columns listed in the golden test's `required_columns` (aliases ignored) |
-| `table_alignment` | diagnostic | 1.0 | Correct physical tables referenced (CTE names excluded) |
-| `filter_correctness` | diagnostic | 1.0 | WHERE-clause column/operator structure matches the reference |
-| `no_hallucinated_columns` | diagnostic | 1.0 | No fabricated source columns in the SQL beyond what the reference uses |
-| `skill_path_correctness` | diagnostic | 1.0 | Agent read the right files and invoked the expected tools |
-
-### Pass/fail rule
-
-A test passes when **both** conditions hold:
-
-1. Every dimension listed in `scoring.critical_dimensions` passes (default: `execution`, `row_completeness`, `value_accuracy`).
-2. The weighted score across all dimensions is at least `scoring.pass_threshold` (default: `0.75`).
-
-If any critical dimension fails, the test fails regardless of the weighted score. This means the result-based correctness checks are gating, while structural checks (table/column/filter alignment) act as diagnostic signals that influence the score but don't independently fail the test.
-
-### Tuning
-
-All values are configurable in `bi-evals.yaml` under `scoring`:
-
-```yaml
-scoring:
-  dimensions: [...]              # which dimensions to run
-  critical_dimensions: [...]     # which must pass; others are advisory
-  dimension_weights: { ... }     # per-dimension weight in the overall score
-  pass_threshold: 0.75           # minimum weighted score to pass
-  thresholds:
-    completeness: 0.95           # row_completeness ratio threshold
-    precision: 0.95              # row_precision ratio threshold
-    value_tolerance: 0.0001      # numeric tolerance for value_accuracy
-```
-
-Common adjustments:
-
-- **Stricter eval**: raise `pass_threshold` (e.g. `0.9`), or add diagnostic dimensions to `critical_dimensions`.
-- **Looser eval**: lower `pass_threshold`, drop noisy dimensions (e.g. remove `filter_correctness` from `dimensions`), or set `value_tolerance` higher.
-- **Result-only mode**: enable just `execution`, `row_completeness`, `row_precision`, `value_accuracy` and ignore structural checks entirely.
+bi-evals targets **offline** evaluation — the pre-launch gate and regression suite — not
+production monitoring. The seam between the two: every real production miss is a candidate
+golden test.
 
 ## Getting started with the SDK
 
@@ -143,14 +37,15 @@ The fastest path from zero to a scored eval run. Full walkthrough (including the
 - Node.js (bi-evals runs Promptfoo under the hood via `npx`)
 - A Snowflake account with key-pair authentication
 - **Your own BI agent that exposes its generated SQL** — see
-  [`docs/instrumenting-your-agent.md`](docs/instrumenting-your-agent.md) for the output shapes
-  bi-evals picks up best
+  [`docs/instrumenting-your-agent.md`](docs/instrumenting-your-agent.md)
 
 ### 1. Install & scaffold
 
 ```bash
 mkdir my-evals && cd my-evals
-uv init && uv add bi-evals       # or from a checkout: uv sync --group dev
+uv init
+uv add "bi-evals @ git+https://github.com/chuazy94/bi-evals"   # not yet on PyPI
+# or from a local checkout: uv add /path/to/bi-evals
 uv run bi-evals init push --dir .
 ```
 
@@ -221,6 +116,67 @@ uv run bi-evals ui                     # interactive viewer with per-test drilld
 uv run bi-evals compare latest prev    # regression diff between two runs
 ```
 
+## Adapters: how your agent's answers reach the scorer
+
+`agent.adapter` in `bi-evals.yaml` selects how answers arrive. The scoring engine is identical for
+all of them — pick the adapter that matches your situation **before** you scaffold a project.
+
+| Adapter | How it works | Use when |
+|---|---|---|
+| **`push`** (default) | You run your agent, hand each answer to the **`bi_evals.Runner` SDK** (or write a JSONL and `bi-evals score --input`). No live agent during scoring. | Almost always — works for any stack (MCP, LangChain, a notebook, anything). |
+| **`api_endpoint`** | bi-evals POSTs each question to your agent's HTTP endpoint and scores the response live. | Your agent is already a clean question→SQL HTTP service. Response shape: [`docs/byo-response-contract.md`](docs/byo-response-contract.md); validate with `bi-evals doctor`. |
+| **`anthropic_tool_loop`** (dev-only) | bi-evals runs Claude with *your* skill files locally. Evaluates a rebuild, not your real agent. | Authoring goldens before a real agent exists. |
+
+See [`docs/getting-started.md`](docs/getting-started.md) for the full walkthrough.
+
+## Scoring
+
+A test produces 10 independent dimension results, then a single pass/fail verdict via tiered/weighted aggregation. A dimension whose golden has nothing to evaluate (e.g. `anti_pattern_compliance` with no `anti_patterns` declared) skips as a vacuous pass and is dropped from the report.
+
+### Dimensions
+
+| Dimension | Tier | Default weight | What it checks |
+|---|---|---|---|
+| `execution` | critical | 3.0 | Generated SQL runs without error |
+| `row_completeness` | critical | 3.0 | Generated results contain the expected rows (executes both queries against the live DB and compares row keys) |
+| `value_accuracy` | critical | 3.0 | Numeric values in matching rows are within `value_tolerance`; column matching falls back to position when aliases differ |
+| `row_precision` | important | 2.0 | No spurious extra rows beyond the reference |
+| `anti_pattern_compliance` | important | 2.0 | The SQL avoids the golden's declared `forbidden_tables`/`forbidden_columns` |
+| `column_alignment` | important | 2.0 | The SQL references the source columns listed in the golden test's `required_columns` (aliases ignored) |
+| `table_alignment` | diagnostic | 1.0 | Correct physical tables referenced (CTE names excluded) |
+| `filter_correctness` | diagnostic | 1.0 | WHERE-clause column/operator structure matches the reference |
+| `no_hallucinated_columns` | diagnostic | 1.0 | No fabricated source columns in the SQL beyond what the reference uses |
+| `skill_path_correctness` | diagnostic | 1.0 | Agent read the right files and invoked the expected tools |
+
+### Pass/fail rule
+
+A test passes when **both** conditions hold:
+
+1. Every dimension listed in `scoring.critical_dimensions` passes (default: `execution`, `row_completeness`, `value_accuracy`).
+2. The weighted score across all dimensions is at least `scoring.pass_threshold` (default: `0.75`).
+
+If any critical dimension fails, the test fails regardless of the weighted score: result-based
+correctness checks are gating, while structural checks act as diagnostic signals.
+
+### Tuning
+
+All values are configurable in `bi-evals.yaml` under `scoring`:
+
+```yaml
+scoring:
+  dimensions: [...]              # which dimensions to run
+  critical_dimensions: [...]     # which must pass; others are advisory
+  dimension_weights: { ... }     # per-dimension weight in the overall score
+  pass_threshold: 0.75           # minimum weighted score to pass
+  thresholds:
+    completeness: 0.95           # row_completeness ratio threshold
+    precision: 0.95              # row_precision ratio threshold
+    value_tolerance: 0.0001      # numeric tolerance for value_accuracy
+```
+
+Raise `pass_threshold` or promote dimensions into `critical_dimensions` for a stricter eval;
+drop noisy dimensions from `dimensions` or raise `value_tolerance` for a looser one.
+
 ## Project structure
 
 ```
@@ -257,6 +213,7 @@ src/bi_evals/
 ## Development
 
 ```bash
+uv sync --group dev                                  # install from a checkout
 uv run python -m pytest tests/ -v                    # all tests
 uv run python -m pytest tests/ -m "not integration"  # unit tests only
 ```
