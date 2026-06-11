@@ -1,15 +1,14 @@
 # bi-evals
 
-A configurable Python framework for evaluating SQL-generating BI agents. You provide skill/knowledge files, golden tests, and database credentials -- the framework handles the LLM provider loop, multi-dimension accuracy scoring, and regression detection.
+A configurable Python framework for evaluating SQL-generating BI agents. You provide golden tests, database credentials, and your agent's answers -- the framework handles SQL execution, 10-dimension accuracy scoring, HTML reporting, and regression detection.
 
 [Promptfoo](https://promptfoo.dev/) (Node.js) is used as the test runner engine; all custom logic is Python.
 
 ## Where bi-evals fits in your eval process
 
-> **The goal.** bi-evals is a framework for the offline evaluation suite behind self-service
-> analytics. The **push on-ramp** (`submit()` SDK / `score --input`) described below is *planned,
-> not yet shipped* — it's the direction we're building toward. For how to run an eval **today**,
-> see [Two modes](#two-modes) and [Quick start](#quick-start).
+> bi-evals is a framework for the offline evaluation suite behind self-service analytics.
+> The default on-ramp is the **`bi_evals.Runner` SDK** — see
+> [Getting started](#getting-started-with-the-sdk) below.
 
 **bi-evals doesn't run your agent — you run your agent, and bi-evals grades its homework.** The
 offline evaluation suite is the golden questions you run your agent against before launch, gate
@@ -32,21 +31,24 @@ stays yours and untouched.
 ### What you'll need
 
 - **A BI agent that exposes its generated SQL and trace.** This is the real prerequisite — see
-  [The real boundary](#the-real-boundary-and-scope) below. bi-evals doesn't care how it's built.
+  [The real boundary](#the-real-boundary-and-scope) below. bi-evals doesn't care how it's built;
+  [`docs/instrumenting-your-agent.md`](docs/instrumenting-your-agent.md) describes the output
+  shapes that make scoring effortless.
 - **Warehouse credentials** bi-evals can use to execute SQL for grading.
 - **Golden questions with reference SQL** — the "right answer" to grade against. You author these.
 - Python 3.11+ and [uv](https://docs.astral.sh/uv/) to run the framework.
 
 ### The journey
 
-1. **Install & scaffold** — `bi-evals init` gives you a config and a `golden/` folder. You provide
-   warehouse credentials and where your tests live.
+1. **Install & scaffold** — `bi-evals init push` gives you a config and a `golden/` folder. You
+   provide warehouse credentials and where your tests live.
 2. **Author golden tests** — a question + reference SQL + what should be true of the result. This
    encodes what "correct" means for your data; it's the real work, and it's yours.
-3. **Run your own agent over the questions** — a loop around the agent you already have: ask each
-   question, collect `generated_sql` and `trace`, submit them. Your production agent runs unchanged.
+3. **Run your own agent over the questions** — the `bi_evals.Runner` SDK owns the loop: you write
+   one `ask()` call against the agent you already have and `submit()` what it returns. Your
+   production agent runs unchanged.
 4. **Score** — bi-evals runs each generated SQL (and the reference) against your warehouse and
-   compares across ~10 dimensions, producing a pass/fail verdict and a report.
+   compares across 10 dimensions, producing a pass/fail verdict and a report.
 5. **Gate and regress** — in CI, every change re-runs the suite, gates on a threshold, and shows a
    per-dimension diff.
 
@@ -61,42 +63,28 @@ bi-evals targets the **offline** half of evaluation — the pre-launch gate, reg
 "change one thing, compare pass rates" experiments. Online/production monitoring is a different
 surface it doesn't aim to be; the seam is that every real correction is a candidate golden test.
 
-## Two modes
+## Adapters: how your agent's answers reach the scorer
 
-bi-evals runs in one of two modes. Pick the one that matches your situation **before** you scaffold a project — they share the same scoring engine but expect different config.
+`agent.adapter` in `bi-evals.yaml` selects how answers arrive. The scoring engine is identical for
+all of them — pick the adapter that matches your situation **before** you scaffold a project.
 
-### Built-in mode
+| Adapter | How it works | Use when |
+|---|---|---|
+| **`push`** (default) | You run your agent, hand each answer to the **`bi_evals.Runner` SDK** (or write a JSONL and `bi-evals score --input`). No live agent during scoring. | Almost always — works for any stack (MCP, LangChain, a notebook, anything). |
+| **`api_endpoint`** | bi-evals POSTs each question to your agent's HTTP endpoint and scores the response live. | Your agent is already a clean question→SQL HTTP service. Response shape: [`docs/byo-response-contract.md`](docs/byo-response-contract.md); validate with `bi-evals doctor`. |
+| **`anthropic_tool_loop`** (dev-only) | bi-evals runs Claude with *your* skill files locally. Evaluates a rebuild, not your real agent. | Authoring goldens before a real agent exists. |
 
-bi-evals runs the agent itself: Claude + your skill/knowledge files + tools it provides. You bring an Anthropic API key, system prompt, and skill files; bi-evals handles the tool-calling loop.
-
-**Use this when** you don't yet have a production BI agent and want to evaluate (or build) one with bi-evals' built-in Claude harness — or when you want to compare models on a controlled harness.
-
-Config: `agent.type: anthropic_tool_loop`.
-
-### Bring-your-own mode (BYO)
-
-bi-evals calls your existing BI agent over HTTP and scores what it returns. You bring an endpoint URL (and any auth headers); your agent does the routing, retrieval, and SQL generation as it does in production. The skills/knowledge config is unused — your agent owns those.
-
-**Use this when** you already have a production BI agent (any model, any stack) and want to evaluate what actually ships.
-
-Config: `agent.type: api_endpoint`. The response shape your endpoint must return is specified in [`docs/byo-response-contract.md`](docs/byo-response-contract.md); validate against it with `bi-evals doctor`.
-
-### Which to pick
-
-If you have a production BI agent reachable over HTTP → **BYO**. Otherwise → **Built-in**.
-
-See [`docs/getting-started.md`](docs/getting-started.md) for a per-mode walkthrough.
+See [`docs/getting-started.md`](docs/getting-started.md) for the full walkthrough.
 
 ## How it works
 
 1. **You define golden tests** in YAML -- each contains a natural-language question, reference SQL, expected skill path, and scoring criteria.
-2. **The framework sends each question to your agent** — either Built-in (Claude tool-loop run by bi-evals) or BYO (HTTP call to your agent).
-3. **The agent generates SQL** using tools you configure (file reader for skill/knowledge files, `describe_table` for schema discovery).
-4. **The scorer runs both the generated and reference SQL** against your database and compares results across 9 dimensions. See [Scoring](#scoring) for details.
+2. **Your agent answers each question** — you submit `{generated_sql, trace}` via the SDK or a JSONL file (push), or bi-evals fetches it live (`api_endpoint`).
+3. **The scorer runs both the generated and reference SQL** against your database and compares results across 10 dimensions. See [Scoring](#scoring) for details.
 
 ## Scoring
 
-A test produces 9 independent dimension results, then a single pass/fail verdict via tiered/weighted aggregation.
+A test produces 10 independent dimension results, then a single pass/fail verdict via tiered/weighted aggregation. A dimension whose golden has nothing to evaluate (e.g. `anti_pattern_compliance` with no `anti_patterns` declared) skips as a vacuous pass and is dropped from the report.
 
 ### Dimensions
 
@@ -106,6 +94,7 @@ A test produces 9 independent dimension results, then a single pass/fail verdict
 | `row_completeness` | critical | 3.0 | Generated results contain the expected rows (executes both queries against the live DB and compares row keys) |
 | `value_accuracy` | critical | 3.0 | Numeric values in matching rows are within `value_tolerance`; column matching falls back to position when aliases differ |
 | `row_precision` | important | 2.0 | No spurious extra rows beyond the reference |
+| `anti_pattern_compliance` | important | 2.0 | The SQL avoids the golden's declared `forbidden_tables`/`forbidden_columns` |
 | `column_alignment` | important | 2.0 | The SQL references the source columns listed in the golden test's `required_columns` (aliases ignored) |
 | `table_alignment` | diagnostic | 1.0 | Correct physical tables referenced (CTE names excluded) |
 | `filter_correctness` | diagnostic | 1.0 | WHERE-clause column/operator structure matches the reference |
@@ -143,69 +132,126 @@ Common adjustments:
 - **Looser eval**: lower `pass_threshold`, drop noisy dimensions (e.g. remove `filter_correctness` from `dimensions`), or set `value_tolerance` higher.
 - **Result-only mode**: enable just `execution`, `row_completeness`, `row_precision`, `value_accuracy` and ignore structural checks entirely.
 
-## Quick start
+## Getting started with the SDK
+
+The fastest path from zero to a scored eval run. Full walkthrough (including the JSONL and
+`api_endpoint` alternatives): [`docs/getting-started.md`](docs/getting-started.md).
 
 ### Prerequisites
 
-- Python 3.11+
-- [uv](https://docs.astral.sh/uv/)
-- Node.js (for Promptfoo)
+- Python 3.11+ and [uv](https://docs.astral.sh/uv/)
+- Node.js (bi-evals runs Promptfoo under the hood via `npx`)
 - A Snowflake account with key-pair authentication
+- **Your own BI agent that exposes its generated SQL** — see
+  [`docs/instrumenting-your-agent.md`](docs/instrumenting-your-agent.md) for the output shapes
+  bi-evals picks up best
 
-### Install
+### 1. Install & scaffold
 
 ```bash
-uv sync --group dev
+mkdir my-evals && cd my-evals
+uv init && uv add bi-evals       # or from a checkout: uv sync --group dev
+uv run bi-evals init push --dir .
 ```
 
-### Scaffold a project
+This writes a push-shaped `bi-evals.yaml`, `.env` / `.env.example` (Snowflake-only), an example
+golden test, and `golden/`, `results/`, `reports/` directories.
+
+### 2. Configure your warehouse
+
+Fill in `.env` (loaded automatically; see `.env.example` for the variable list). Then check the
+setup before spending anything:
 
 ```bash
-uv run bi-evals init --dir /path/to/my-evals
+uv run bi-evals doctor
 ```
 
-This creates a `bi-evals.yaml` config, a `.env` file, and starter directories for golden tests, skills, and results.
+### 3. Write your first golden test
 
-### Configure
+One YAML file per question in `golden/` — a question, the reference SQL for the correct answer,
+and what should be true of the result:
 
-Edit `bi-evals.yaml` to point at your skill files, database, and model. Set credentials in `.env` (loaded automatically). See `.env.example` for required variables.
-
-### Run an eval
-
-```bash
-cd /path/to/my-evals
-uv run bi-evals run              # run all golden tests
-uv run bi-evals run -v           # verbose Promptfoo output
-uv run bi-evals run --no-cache   # force fresh API calls
-uv run bi-evals run -f cases     # filter tests by id/category/tag
+```yaml
+id: revenue-001
+category: revenue
+question: "What was total revenue by region last quarter?"
+reference_sql: |
+  SELECT region, SUM(revenue) AS total
+  FROM analytics.fct_revenue
+  WHERE quarter = '2026Q1'
+  GROUP BY region
+expected:
+  required_columns: [region, revenue]   # SOURCE columns the query must read — not output aliases
+  row_comparison:
+    enabled: true
 ```
 
-### View results
+See [`docs/golden-tests-guide.md`](docs/golden-tests-guide.md) for the full schema.
+
+### 4. Run your agent and score
+
+The `bi_evals.Runner` SDK owns iteration, collection, and scoring — you write one `ask()` call
+against the agent you already have:
+
+```python
+import bi_evals
+
+runner = bi_evals.Runner("bi-evals.yaml", verbose=True)
+for case in runner.golden_cases():
+    try:
+        answer = my_agent.ask(case.question)      # your agent, unchanged
+        runner.submit(case, generated_sql=answer.sql, trace=answer.trace)
+        # or, if your agent returns prose: response_text=answer.text
+    except Exception as e:
+        runner.submit(case, error=str(e))         # flaky agent → recorded, run continues
+
+report = runner.score()                           # executes SQL, scores, writes HTML report
+print(f"{report.passed}/{report.total} passed → {report.report_path}")
+assert report.pass_rate >= 0.9                    # gate CI on it
+```
+
+`submit()` takes `generated_sql` **or** `response_text` (raw answer — SQL is extracted) **or**
+`error`. `trace` is optional; it's needed for `skill_path_correctness`.
+
+### 5. View results
 
 ```bash
-uv run bi-evals view             # open Promptfoo web UI
+uv run bi-evals report                 # self-contained HTML scorecard
+uv run bi-evals ui                     # interactive viewer with per-test drilldown
+uv run bi-evals compare latest prev    # regression diff between two runs
 ```
 
 ## Project structure
 
 ```
 src/bi_evals/
-  cli.py          # CLI entry point (init, run, view, report, compare)
+  sdk.py          # bi_evals.Runner — the public SDK (golden_cases / submit / score)
+  runner_core.py  # Push-score pipeline core shared by the SDK and the CLI
+  cli.py          # CLI entry point (init, score, run, doctor, report, compare, ui, ...)
   config.py       # Pydantic config model driven by bi-evals.yaml
-  provider/       # Agent dispatch (Claude tool loop, HTTP endpoint)
-  scorer/         # 9-dimension evaluators + SQL parsing utilities
+  doctor.py       # Pre-run setup validation per adapter
+  provider/       # Adapter contract + registry (push, api_endpoint, anthropic_tool_loop)
+  scorer/         # 10-dimension evaluators + SQL parsing utilities
   tools/          # Tool protocol (file_reader, describe_table)
   db/             # Database client protocol (Snowflake implementation)
   golden/         # Golden test loader and Pydantic models
   promptfoo/      # Promptfoo config generation and runner bridge
+  store/          # Embedded DuckDB run history (ingest + query helpers)
   report/         # HTML report generation
+  compare/        # Run-vs-run regression diff
+  ui/             # Local FastAPI viewer (runs list, per-test drilldown)
 ```
 
 ## Documentation
 
-- [`docs/bi-eval-framework.md`](docs/bi-eval-framework.md) -- design rationale and architecture
+- [`docs/getting-started.md`](docs/getting-started.md) -- full setup walkthrough (SDK, JSONL, and api_endpoint paths)
 - [`docs/golden-tests-guide.md`](docs/golden-tests-guide.md) -- how to write golden tests
-- [`docs/mvp-eval-platform.md`](docs/mvp-eval-platform.md) -- MVP implementation plan
+- [`docs/instrumenting-your-agent.md`](docs/instrumenting-your-agent.md) -- for agent builders: what your agent should emit so bi-evals scores it with zero massaging
+- [`docs/push-limitations.md`](docs/push-limitations.md) -- what the push adapter requires; the push-ready checklist
+- [`docs/byo-response-contract.md`](docs/byo-response-contract.md) -- the `api_endpoint` response shape
+- [`docs/eval-landscape.md`](docs/eval-landscape.md) -- where bi-evals sits in the eval-tool landscape and why the SDK is the on-ramp
+- [`docs/pivot-phases.md`](docs/pivot-phases.md) -- the adapter architecture and where it's heading
+- [`STATUS.md`](STATUS.md) -- what works today
 - [`CLAUDE.md`](CLAUDE.md) -- architecture reference and development commands
 
 ## Development
