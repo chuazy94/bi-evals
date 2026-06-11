@@ -24,7 +24,9 @@ for all of them.
 > **The real prerequisite, for every adapter:** your agent must expose the **SQL it
 > generated**. bi-evals grades by executing that SQL — it can't score a query the agent
 > never revealed. If your agent only returns a chart or a prose summary, surface the SQL
-> first. See [`push-limitations.md`](./push-limitations.md) for the full checklist.
+> first. See [`instrumenting-your-agent.md`](./instrumenting-your-agent.md) for the output
+> shapes that work best, and [`push-limitations.md`](./push-limitations.md) for the full
+> checklist.
 
 This guide leads with **push** (the recommended path) and notes the `api_endpoint`
 alternative where it differs.

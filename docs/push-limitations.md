@@ -179,6 +179,8 @@ shrink the mapping but never remove it.
 
 ## Related
 
+- `docs/instrumenting-your-agent.md` — the prescriptive flip of this doc, for the agent
+  builder: what to emit so none of these sharp edges bite.
 - `docs/pivot-phase-3-design.md` — the push adapter design.
 - `docs/pivot-phases.md` — where push sits among the adapters; why OTel is the
   lower-effort, higher-fidelity future path.
