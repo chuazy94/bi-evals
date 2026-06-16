@@ -1,6 +1,6 @@
 [project]
 name = "bi-evals"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Evaluation framework for SQL-generating BI agents"
 requires-python = ">=3.11"
 dependencies = [
@@ -33,6 +33,9 @@ bi-evals = "bi_evals.cli:cli"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/bi_evals/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/bi_evals"]
