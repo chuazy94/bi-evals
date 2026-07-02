@@ -14,6 +14,18 @@ Every change should be judged against that. In practice:
 
 If a proposed change doesn't make first-run setup faster, clearer, or more forgiving, flag that tradeoff before building it.
 
+### Before adding to the roadmap
+
+When the user proposes a new feature, phase, or change of direction, check it against `STATUS.md`'s "Remaining — Build Stages" section and the MVP north star *before* writing any plan doc or code. State explicitly which of these applies — be a critic here, not a cheerleader:
+
+- **Already covered** — an existing stage already describes this; point to it instead of creating something new.
+- **Changes an existing stage** — update that stage's entry (and its doc under `docs/plans/` if one exists) rather than adding a new one.
+- **Genuinely new, and fits** — append it as a new stage at the end of the sequence, and ask the user where it should be prioritized relative to the others rather than assuming.
+- **Doesn't fit the north star** — say so plainly and decline to build it as proposed. Don't soften this into a caveat buried after implementation details. Name the specific mismatch (e.g., "this is a new scoring dimension, which CLAUDE.md deprioritizes for MVP" or "this doesn't make first-run setup faster or clearer"). The user can override, but the default is push back, not comply.
+- **Fits, but isn't a priority** — say that too, explicitly, even if you go on to help with it because the user insists. Don't let "sure, I can do that" imply "this is a good idea right now."
+
+Do this check even for small-sounding asks — the failure mode is scope drifting across several disconnected plan docs that no longer agree with each other, not any single large addition. Agreement should be earned by the idea, not defaulted to out of politeness.
+
 ## What this project is
 
 bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Users provide their own skill/knowledge files, golden tests, and database credentials — the framework handles the LLM provider loop, 10-dimension accuracy scoring, HTML reporting, and regression detection. Promptfoo (Node.js) is used as the test runner engine; all custom logic is Python.
@@ -121,7 +133,12 @@ If a feature has no surface in the user-facing config (pure internal refactor, n
 
 ## Documentation
 
-- `docs/pivot-phases.md` — the response-evaluation pivot: adapters (push / api_endpoint / dev / OTel), phase plan, and the Promptfoo research behind it
+`docs/` holds reference docs (current, shipped behavior) and user guides. `docs/plans/`
+holds plan/design docs — proposals and phase designs, whether already shipped (kept for
+history) or still upcoming. `STATUS.md`'s "Build Stages" section is the ordered backlog;
+each upcoming plan doc is named after its stage number there.
+
+- `docs/plans/pivot-phases-overview.md` — the response-evaluation pivot: adapters (push / api_endpoint / dev / OTel), phase plan, and the Promptfoo research behind it
 - `docs/push-limitations.md` — what the push adapter requires and its sharp edges
 - `docs/golden-tests-guide.md` — golden-test schema and authoring guide
 - `docs/duckdb-schema.md` — storage schema reference
