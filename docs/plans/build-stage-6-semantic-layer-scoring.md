@@ -2,9 +2,9 @@
 
 > **Status: proposal, post-MVP.** `CLAUDE.md` lists "No semantic layer integration" as an explicit
 > MVP non-goal, and the north star is first-run setup speed. This is a genuinely valuable capability
-> but should be framed as a **new Pivot Phase that builds on Phase 4 (open-envelope trace)** — see
-> `docs/plans/pivot-phases-overview.md` — not as an MVP item. This doc records the review + research from the
-> discussion so the design is captured before any code.
+> but should be framed as **Build Stage 6, which builds on Build Stage 2 (open-envelope trace)** — see
+> `STATUS.md`'s "Remaining — Build Stages" — not as an MVP item. This doc records the review + research
+> from the discussion so the design is captured before any code.
 
 ## The gap
 
@@ -104,7 +104,7 @@ class SemanticLayerParser(Protocol):
 
 ### 3. Where the semantic query comes from at scoring time
 
-This is where **Pivot Phase 4 (open-envelope trace)** pays off: `semantic_query` is just another
+This is where **Build Stage 2 (open-envelope trace)** pays off: `semantic_query` is just another
 optional key the customer over-captures; the scorer reads it if present. Three sources, increasing
 effort:
 
@@ -164,7 +164,7 @@ pattern, recorded here so the work is scoped):
 
 ## Recommended sequencing
 
-- **Frame as a new Pivot Phase** that depends on Phase 4's open envelope — not MVP.
+- **Frame as Build Stage 6** that depends on Build Stage 2's open envelope — not MVP.
 - **Start with Snowflake end-to-end.** Cheapest first target for this stack: already on Snowflake,
   and the semantic selection is parseable straight out of the generated SQL — no new agent capture.
   Prove the canonical schema + dimensions + one parser, then add dbt/Cube as pure adapters.

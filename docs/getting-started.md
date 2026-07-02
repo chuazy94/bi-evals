@@ -272,6 +272,6 @@ pass/fail and reason, files read, and the full trace.
 
 - [`push-limitations.md`](./push-limitations.md) — what push requires; the push-ready checklist.
 - [`golden-tests-guide.md`](./golden-tests-guide.md) — golden-test schema and authoring.
-- [`pivot-phases.md`](./pivot-phases.md) — the adapter architecture and where it's heading.
+- [`plans/pivot-phases-overview.md`](./plans/pivot-phases-overview.md) — the adapter architecture and where it's heading.
 - [`byo-response-contract.md`](./byo-response-contract.md) — the `api_endpoint` response shape.
 - [`STATUS.md`](../STATUS.md) — what works today.
