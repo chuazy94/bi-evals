@@ -1,6 +1,6 @@
 # Refactor Step 1 — Contract + Adapter Registry
 
-> Part of the response-evaluation pivot. See `docs/bi-eval-integration-analysis.md` for the
+> Part of the response-evaluation pivot. See `docs/plans/pivot-phase-1-integration-analysis.md` for the
 > full thesis and issue #27. This doc covers **only Step 1**: the architectural core.
 
 ## Thesis recap (one line)

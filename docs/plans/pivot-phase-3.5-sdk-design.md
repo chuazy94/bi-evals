@@ -5,7 +5,7 @@ call against their own agent, and the framework owns iteration, collection, JSON
 scoring. It is the ergonomic front-end to the **same push pipeline** that
 `bi-evals score --input` uses — not a second pipeline.
 
-Strategy context: `docs/eval-landscape.md` (why the SDK is top priority — raw-file push is
+Strategy context: `docs/plans/eval-landscape-strategy.md` (why the SDK is top priority — raw-file push is
 the highest-effort build-it path; the SDK turns its painful parts into the framework's job).
 
 ## What the SDK does — and does NOT — solve

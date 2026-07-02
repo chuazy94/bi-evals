@@ -2,7 +2,7 @@
 
 This doc records a strategic discussion (June 2026): how production AI eval is done
 generally, where bi-evals fits, and the direction that falls out of it. It complements
-`docs/bi-eval-integration-analysis.md` (the adapter thesis) — that doc is about *how the
+`docs/plans/pivot-phase-1-integration-analysis.md` (the adapter thesis) — that doc is about *how the
 agent's output reaches us*; this one is about *which kind of eval we are*.
 
 ## Offline vs online eval
@@ -72,7 +72,7 @@ Friction lives in two places, in priority order:
 
 ## Adapters graded by adoption friction
 
-The adapters all feed the same scorer (`docs/bi-eval-integration-analysis.md`); they differ
+The adapters all feed the same scorer (`docs/plans/pivot-phase-1-integration-analysis.md`); they differ
 only in how much work the customer does to reach a first green run. Our prior docs ranked
 them by *invasiveness* and labelled raw-file **push** the "default on-ramp" — but sorted by
 *adoption friction*, raw-file push is actually the **highest-effort build-it path**, not the
