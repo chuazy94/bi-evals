@@ -2,25 +2,26 @@
 
 ## Summary
 
-bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is the test runner; all custom logic (provider/adapters, tools, scoring, storage, reporting, viewer) is Python. The MVP (Pillar 1: Accuracy + Explainability per `docs/mvp-eval-platform.md`) is complete and exceeded. The project is mid-way through a **response-evaluation architecture pivot** (`docs/bi-eval-integration-analysis.md`, `docs/pivot-phases.md`): the agent layer is now **one canonical contract `{generated_sql, trace}`, many adapters** — bi-evals scores the real agent's response and never rebuilds the agent. **Pivot Phases 1–3 are merged**; the push on-ramp has been validated end-to-end against a real agent + Snowflake.
+bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is the test runner; all custom logic (provider/adapters, tools, scoring, storage, reporting, viewer) is Python. The MVP (Pillar 1: Accuracy + Explainability per `docs/mvp-eval-platform.md`) is complete and exceeded. The project has completed the **response-evaluation architecture pivot** (`docs/plans/pivot-phase-1-integration-analysis.md`, `docs/plans/pivot-phases-overview.md`): the agent layer is **one canonical contract `{generated_sql, trace}`, many adapters** — bi-evals scores the real agent's response and never rebuilds the agent. The framework tagged its first release, **v0.1.0** (2026-06-16), and the README now leads with the SDK on-ramp.
 
-> **Phase numbering.** The original MVP phases (Phase 1–7.8) are historical and shipped. The new architecture work is numbered separately as **Pivot Phase 1, 2, …** to avoid colliding with them.
+> **Phase numbering.** The original MVP phases (Phase 1–7.8) are historical and shipped. The response-evaluation architecture work is numbered separately as **Pivot Phase 1, 2, …** to avoid colliding with them.
 
 What works today:
 
-- **`bi-evals score --input results.jsonl`** — score a submission the customer's own agent produced (push adapter), no live agent and no API spend. Each row is `{golden_file, generated_sql | response_text, trace?}`; `response_text` (the agent's raw prose answer) is accepted and the SQL extracted from it. Validates the JSONL up front (per-row errors, missing/duplicate-golden detection).
+- **`bi_evals.Runner` SDK** (`import bi_evals`) — the primary on-ramp. `runner.golden_cases()` yields questions, `runner.submit(case, generated_sql=..., trace=...)` records answers, `runner.score()` runs the push pipeline and returns an assertable `RunReport` (`pass_rate`, `failures`, truthy iff `failed == 0`). `Runner(verbose=True)` streams progress (loaded/submitted/scored heartbeats) to stderr — no logging setup required.
+- **`bi-evals score --input results.jsonl`** — score a submission the customer's own agent produced (push adapter), no live agent and no API spend. Each row is `{golden_file, generated_sql | response_text, trace?}`; `response_text` (the agent's raw prose answer) is accepted and the SQL extracted from it. Validates the JSONL up front (per-row errors, missing/duplicate-golden detection). The SDK's `score()` is a thin wrapper over the same `runner_core.run_push_score` the CLI uses — one pipeline, two front doors.
 - `bi-evals init api_endpoint` (default on-ramp) / `bi-evals init dev` (dev-only driving adapter) scaffold projects with the adapter-nested config shape; bare `bi-evals init` errors with a hint. The api_endpoint scaffold ships `adapter_example.py` (a FastAPI shim demonstrating the response contract).
 - `bi-evals doctor` validates a project's runtime setup before a paid eval run. **api_endpoint**: synthetic POST + JSON Schema validation + scoring-coverage report. **push**: warehouse reachable + Promptfoo on PATH + submission file parses. **dev (anthropic_tool_loop)**: Anthropic API key reachable, system prompt + tool `base_dir`s exist, Snowflake `SELECT 1`, `npx` on PATH.
 - `bi-evals run` runs the full eval end-to-end (live adapters) and auto-ingests into DuckDB; `--filter`, `--dry-run`, `--repeats N`, `--no-cache`, `--yes`, `--verbose`.
 - `bi-evals ingest <path>` backfills existing eval JSON.
 - `bi-evals report [--run-id ID]` writes a self-contained HTML report (filter strip, per-dimension failure reasons, category dashboard, weakest dimensions, weighted-score rule + per-test verdict, model summary + cost-vs-quality scatter, stability, freshness, cost alerts, all-tests table).
-- `bi-evals compare A B` writes an HTML regression diff with tiered verdict (🟢/🟡/🔴) and prompt-drift annotations; supports `latest` / `prev`.
+- `bi-evals compare A B` writes an HTML regression diff with tiered verdict (🟢/🟡/🔴) and prompt-drift annotations; supports `latest` / `prev`. **No CI exit-code gate yet** — see Remaining.
 - `bi-evals ui` starts a local FastAPI + Jinja viewer: runs list (project filter, meta refresh, compare shortcuts, triage filters + "regressed since" badge), single-run view, per-test drilldown (generated SQL, reference SQL, per-dimension reasons, files-read, full trace JSON).
 - `bi-evals cost [--last-n N]`, `bi-evals flakiness [--last-n N] [--limit N]`, `bi-evals view` (Promptfoo web UI).
 - **Adapter architecture**: `agent.adapter` selects an adapter from a registry — `push` (replay submitted results), `api_endpoint` (POST to the live agent), `anthropic_tool_loop` (dev-only; runs Claude + skill files locally). All normalise into the canonical `AgentResult` the scorer consumes; the scorer is adapter-agnostic.
 - **10-dimension scorer** with tiered/weighted pass-fail. Row matching is **position-tolerant**: when the agent names output columns differently from the golden's reference, rows match by ordinal position rather than falsely failing (the values are what matter, not the labels).
 - Multi-model evaluation (dev adapter), repeat-run variance, `FileReaderTool` + `DescribeTableTool`, `SnowflakeClient`, `GoldenTest` with `last_verified_at` and `anti_patterns`.
-- **410 unit tests passing, 0 warnings.** Strict YAML loading; old flat `agent:` configs rejected at load with a migration hint.
+- **427 unit tests passing, 0 warnings.** Strict YAML loading; old flat `agent:` configs rejected at load with a migration hint.
 
 ---
 
@@ -29,7 +30,7 @@ What works today:
 ### Phase 1: Project Skeleton + Config System
 
 - **`src/bi_evals/config.py`** — Pydantic config; `${ENV_VAR}` resolution with strict fail-fast; auto `.env` loading. Adapter-nested `AgentConfig` (Pivot Phase 2): `agent.adapter` is a `Literal` (`api_endpoint` | `anthropic_tool_loop` | `push`); each adapter's config nests under a block named for it; `push: PushConfig(input_file)`; back-compat property accessors keep readers adapter-agnostic; old flat schema rejected with a migration hint.
-- **`src/bi_evals/cli.py`** — Click CLI; `init` (`api_endpoint` default / `dev`); `score`, `run`, `doctor`, `ingest`, `report`, `compare`, `ui`, `cost`, `flakiness`, `view`. `run`/`score` share the write-config → run → ingest tail via `_execute_eval`.
+- **`src/bi_evals/cli.py`** — Click CLI; `init` (`api_endpoint` default / `dev`); `score`, `run`, `doctor`, `ingest`, `report`, `compare`, `ui`, `cost`, `flakiness`, `view`. `run`/`score` share the write-config → run → ingest tail via `_execute_eval`, which now delegates through `runner_core` (shared with the SDK).
 - **`tests/test_config.py`**, **`tests/test_cli_init.py`** — config loading, env vars, dotenv, defaults, legacy-flat rejection, both init scaffolds.
 
 ### Phase 2: Tools + Adapters + Provider (response-evaluation architecture)
@@ -89,50 +90,85 @@ What works today:
 - **Pivot Phase 3 — push adapter** (PR #34). `bi-evals score --input`; `PushReplayAdapter` replays submitted rows through the existing scorer/ingest pipeline (untouched); push overrides threaded across the Promptfoo fork boundary. **`tests/test_push_adapter.py`**.
   - **`response_text` refinement** (PR #36) — accept the agent's raw prose answer and extract the SQL (mirrors `api_endpoint`'s sql-key/text-key split); `_resolve_sql` shared by validation and runtime.
   - **Scorer position-tolerant matching** (PR #37) — found by running the demo against a real Snowflake agent: row matching keyed by column *name*, so a correct answer with renamed output columns falsely failed. Now falls back to ordinal position; `column_alignment` gained an alias-vs-source authoring hint.
-- **Promptfoo research** (PRs #30/#33/#35) — `docs/bi-eval-integration-analysis.md` (the thesis) + verbatim-sourced findings in `docs/pivot-phases.md` validating response-evaluation and settling the "should bi-evals orchestrate the agent?" question (no — OTel/observe the real agent).
+
+### Pivot Phase 3.5 — SDK on-ramp (merged)
+
+- **`src/bi_evals/runner_core.py`** — extracted the write-config → run Promptfoo → ingest tail shared by the CLI (`_execute_eval`) and the SDK, so the two front doors can never diverge (`PushScoreError`, `run_push_score`).
+- **`src/bi_evals/sdk.py`** — `bi_evals.Runner`: `golden_cases()` yields `Case`s honoring `filter`; `submit()` records exactly one of `generated_sql`/`response_text`/`error` per case (duplicate-submission guarded); `score()` writes a kept `results/sdk_<ts>.jsonl`, runs the push pipeline, and returns `RunReport` (`pass_rate`, `failures: list[TestResult]`, `__bool__` true iff no failures). `Runner(verbose=True)` attaches an idempotent stderr handler for progress heartbeats (loaded/submitted/done) independent of the caller's own logging config.
+- README restructured SDK-first: "Getting started with the SDK" now leads onboarding; the old adapter-only "Two modes" framing became "Adapters: how your agent's answers reach the scorer" (push/api_endpoint/dev all documented as adapters, not top-level modes).
+- **`tests/test_sdk.py`**, **`tests/test_runner_core.py`**.
+- PR #40 review fixes folded in directly (no separate follow-up PR needed).
+
+### Housekeeping
+
+- **v0.1.0 tagged** (2026-06-16) — first versioned baseline; `CHANGELOG.md` added (Keep a Changelog format); `pyproject.toml` version now dynamic via `hatch.version`.
+- **Promptfoo research** (PRs #30/#33/#35) — `docs/plans/pivot-phase-1-integration-analysis.md` (the thesis) + verbatim-sourced findings in `docs/plans/pivot-phases-overview.md` validating response-evaluation and settling the "should bi-evals orchestrate the agent?" question (no — OTel/observe the real agent).
 
 **Validated end-to-end:** the push path was run against `mock-bi-agent` (a FastAPI TPCH agent) + real Snowflake `SNOWFLAKE_SAMPLE_DATA.TPCH_SF10`; that run is what surfaced the PR #37 scorer bug. All three real goldens now pass.
 
-**Total: 410 unit tests passing, 0 warnings.**
+**Total: 427 unit tests passing, 0 warnings.**
 
 ---
 
-## Remaining
+## Remaining — Build Stages
 
-### Pivot Phase 4: Capability check (open-envelope trace)
+One ordered backlog. Earlier stages are prerequisites for later ones only where noted; otherwise the order reflects priority against the MVP north star, not a hard dependency chain.
+
+### Build Stage 1: CI regression gating
+
+- `docs/plans/build-stage-1-regression-gating.md` (new, unreleased) — a shared `compare/gate.py` engine (`evaluate_gate`) consumed by **both** `bi-evals compare` (nonzero exit code — today it never fails the build) and the SDK (`Runner` gains baseline/regression awareness beyond today's absolute-only `report.pass_rate >= 0.9`). Two independent knobs: absolute floor (`min_pass_rate`) and baseline regression (reusing `compare/diff.py`'s existing `Verdict`/`classify_pairs`). **Design is complete and verified against current code; implementation not started. Next up.**
+
+### Build Stage 2: Capability check (open-envelope trace)
 
 - Treat `trace` as an open envelope (customer over-captures; scorer reads what it understands).
-- At score time, report which dimensions can be scored given what the submission contains; absent fields → `unknown`/skipped, surfaced explicitly, never silently failed. (Motivated firsthand: a `skill_path_correctness` failure in the demo was really "no trace submitted" — Phase 4 would say so up front.) Doubles as the adoption ladder.
+- At score time, report which dimensions can be scored given what the submission contains; absent fields → `unknown`/skipped, surfaced explicitly, never silently failed. (Motivated firsthand: a `skill_path_correctness` failure in the demo was really "no trace submitted" — this stage would say so up front.) Doubles as the adoption ladder.
+- Not started. **Blocks Build Stages 3 and 4.**
 
-### Pivot Phase 5: Model-as-request honesty marker
+### Build Stage 3: Model-as-request honesty marker
 
-- `requested_model` / `actual_model` on the contract; report flags honored / violated / **unverifiable** so model A/B comparisons are never silently assumed faithful. A special case of Pivot Phase 4.
-- Fold in the latent bridge cleanup (model fan-out should be adapter-aware in `bridge.py`, matching the `run` fix from Pivot Phase 2).
+- `requested_model` / `actual_model` on the contract; report flags honored / violated / **unverifiable** so model A/B comparisons are never silently assumed faithful. A special case of Build Stage 2's capability-check idea.
+- Fold in the latent bridge cleanup (model fan-out should be adapter-aware in `bridge.py`).
+- Not started. Depends on Build Stage 2.
 
-### Pivot Phase 6: OTel adapter (ingest spans the real agent emits)
+### Build Stage 4: OTel adapter (ingest spans the real agent emits)
 
 - Lowest-customer-effort, highest-fidelity adapter; the path the research flagged as ecosystem-aligned. The real agent emits OTel GenAI spans; bi-evals consumes them onto the canonical contract. May lean on Promptfoo's existing OTLP receiver + `trajectory:` assertions rather than net-new infra. Reference SQL still executes on bi-evals' own connection.
+- Not started. Depends on Build Stage 2.
 
-### Onboarding polish (deferred from Pivot Phase 3)
+### Build Stage 5: Onboarding polish
 
 - `init push` scaffold (today push uses an `api_endpoint`/hand-written config; `score` forces push regardless).
-- Make push the documented default on-ramp; rework the README "Two modes" section (still describes the pre-pivot world).
-- `submit()` SDK helper (a `Runner` that yields golden questions and collects submissions).
 - Promote `demo-bi-evals-snowflake` (now a proven, working end-to-end demo) into a committed `examples/` reference project.
+- Not started.
 
-### Follow-ups surfaced from recent reviews
+### Build Stage 6: Semantic-layer scoring
 
-- "9 dimensions" → "10 dimensions" inconsistency in `README.md` (pre-existing).
-- `generated_sql` (trace JSON key) vs `extracted_sql` (Python field) naming inconsistency (deferred from PR #28 — touches the scorer/ingest contract).
+- `docs/plans/build-stage-6-semantic-layer-scoring.md` (new, unreleased) — closes the "right for the right reason" gap: today's dimensions can pass on a coincidentally-correct result even when the wrong metric/dimension/grain was selected. Proposes a canonical `SemanticQuery` envelope + per-vendor `SemanticLayerParser` (dbt Semantic Layer / Snowflake Semantic Views / Cube), new opt-in golden field `expected_semantic`, and four new dimensions (`metric_selection`, `dimension_selection`, `semantic_grain_correctness`, `semantic_filter_correctness`) plus `metric_definition_integrity` for semantic-drift detection. Sequencing starts with Snowflake (semantic selection parseable straight out of `generated_sql`, zero new agent instrumentation).
+- Design only — no code yet. Builds on Build Stage 2's open envelope. Explicitly out of MVP scope per `CLAUDE.md` — lowest priority of the numbered stages.
+
+### Build Stage 7: Small fixes and cleanups
+
+- "9 dimensions" → "10 dimensions" inconsistency in `README.md` (pre-existing; re-check — README has since been substantially rewritten SDK-first, may already be resolved).
+- `generated_sql` (trace JSON key) vs `extracted_sql` (Python field) naming inconsistency (touches the scorer/ingest contract).
 - Migrate `api_endpoint.py`'s manual `_get_nested` parsing to schema-based validation.
 
-### Deferred (no committed phase yet)
+### Build Stage 8: Deferred / unscheduled
 
-- DuckDB as a built-in `database.type` (zero-cred demo target); `bi-evals init --from <dir>`; Snowflake SSO; additional warehouses (Postgres/BigQuery/Redshift/Databricks); `mcp-server` adapter; SPA viewer rebuild; production-traffic golden import; OpenAI tool-loop adapter; in-process Python wrap adapter (for importable agents, à la Promptfoo's ADK pattern).
+No committed order yet within this stage; pull items forward into Stages 1–7 as they become priorities:
 
-### Pillars 2 & 3 (post-MVP — see `docs/mvp-eval-platform.md`)
+- DuckDB as a built-in `database.type` (zero-cred demo target)
+- `bi-evals init --from <dir>`
+- Snowflake SSO
+- additional warehouses (Postgres/BigQuery/Redshift/Databricks)
+- `mcp-server` adapter
+- SPA viewer rebuild
+- production-traffic golden import
+- OpenAI tool-loop adapter
+- in-process Python wrap adapter (for importable agents, à la Promptfoo's ADK pattern)
 
-Pillar 1 (Accuracy + Explainability) is fully shipped; the next two pillars are out of MVP scope and not yet planned.
+### Build Stage 9: Pillars 2 & 3 (post-MVP — see `docs/mvp-eval-platform.md`)
+
+Pillar 1 (Accuracy + Explainability) is fully shipped; the next two pillars are out of MVP scope and not yet planned. Lowest priority overall — sequenced last deliberately.
 
 - **Pillar 2 Faithfulness** — LLM-as-judge decomposing NL responses into atomic claims and verifying each against the data. Trace capture (shipped) is the prerequisite.
 - **Pillar 3 Confidence** — multi-trial pass@k/pass^k (groundwork from 6a), composite reliability score, graduation model, trust dashboard.
@@ -143,18 +179,20 @@ Pillar 1 (Accuracy + Explainability) is fully shipped; the next two pillars are 
 
 | Decision | Rationale |
 |----------|-----------|
-| **bi-evals is an offline eval tool** | It scores a curated golden suite in CI to gate regressions before ship — not live production traffic. Online eval (scoring real traffic) needs a reference-free scorer (Pillar 2 Faithfulness) we haven't built, and live SQL questions have no ground truth. The buying wedge is the CI gate, not production monitoring. See `docs/eval-landscape.md` |
+| **bi-evals is an offline eval tool** | It scores a curated golden suite in CI to gate regressions before ship — not live production traffic. Online eval (scoring real traffic) needs a reference-free scorer (Pillar 2 Faithfulness) we haven't built, and live SQL questions have no ground truth. The buying wedge is the CI gate, not production monitoring. See `docs/plans/eval-landscape-strategy.md` |
 | **Golden ground truth is hand-authored by SMEs** | The `reference_sql` that makes a golden trustworthy must be written and verified by a human — you can't harvest a verified-correct answer from production, because production is the agent's *output* (the thing under suspicion). Production can suggest *which questions* are worth testing; it can never hand you the answer key. So the friction to attack is **fast hand-authoring** (scaffolders, reference-SQL validation, clear errors), not auto-generating goldens. Production-trace harvesting (scrape candidate questions from logs) is a *future convenience*, not a way to remove the human |
-| **Response-evaluation, not reconstruction** | bi-evals scores the real agent's *response*; never rebuilds or drives the agent. Fidelity ("score the agent users hit") and "plug into any stack" are the same constraint. `docs/bi-eval-integration-analysis.md` |
+| **Response-evaluation, not reconstruction** | bi-evals scores the real agent's *response*; never rebuilds or drives the agent. Fidelity ("score the agent users hit") and "plug into any stack" are the same constraint. `docs/plans/pivot-phase-1-integration-analysis.md` |
 | **One contract, many adapters** | The contract is `{generated_sql, trace}`; the scorer executes the SQL itself, so customers never send result sets. `push`/`api_endpoint`/`anthropic_tool_loop` are adapters, not top-level "modes" |
 | **Push reuses Promptfoo, doesn't bypass it** | `PushReplayAdapter` replays submitted rows through the existing provider→scorer→ingest path, so the whole downstream pipeline (scorer, report, ui) is unchanged |
 | **Accept `response_text`, not just clean SQL** | Real agents emit SQL fenced/in prose; the contract is a *target shape* and the customer's mapping to it is the work. `generated_sql` wins on conflict; `response_text` is extracted; no-SQL fails the row clearly |
 | **Position-tolerant row matching** | A correct answer with differently-named output columns must not fail. The scorer matches by name when columns align, else by ordinal position — scoring substance (values, in order) not surface (labels). The thing the agent controls (naming) can't be a false-failure source |
 | **Driving (`anthropic_tool_loop`) is dev-only** | Kept for authoring goldens before a real agent exists; not a public feature — it evaluates a local rebuild. Verbatim Promptfoo research confirms the field's pattern is observe-the-real-agent, never reconstruct |
-| **The `submit()` SDK is the default on-ramp (planned)** | Sorted by *adoption friction*, raw-file push is actually the highest-effort build-it path (hand-build the loop + reshape + JSONL). The `bi_evals.Runner` SDK makes that plumbing the framework's job — the customer writes one `ask()` call — so it's the front door. Raw-file `score --input` is the logs-only/non-Python fallback; `api_endpoint` suits agents already exposed as a clean HTTP service; OTel is the high-fidelity future path. See `docs/eval-landscape.md` |
+| **The `submit()` SDK is the default on-ramp** | Sorted by *adoption friction*, raw-file push is actually the highest-effort build-it path (hand-build the loop + reshape + JSONL). `bi_evals.Runner` makes that plumbing the framework's job — the customer writes one `ask()` call — so it's the front door (shipped in Pivot Phase 3.5). Raw-file `score --input` is the logs-only/non-Python fallback; `api_endpoint` suits agents already exposed as a clean HTTP service; OTel (Build Stage 4) is the high-fidelity future path. See `docs/plans/eval-landscape-strategy.md` |
+| **One shared core behind CLI and SDK** | `runner_core.py` extracts the write-config → run → ingest tail so `bi-evals score`/`run` and `Runner.score()` can never diverge — the same principle the regression-gating plan reuses for `compare/gate.py` |
 | **Clean schema break over back-compat shim** | Old flat `agent:` configs fail loudly with a migration hint rather than silently mis-parsing |
 | **`agent.adapter` is a `Literal`** | A typo'd adapter fails at config-load with a clear pydantic error, not later at dispatch |
 | **Back-compat property accessors on `AgentConfig`** | `.type`/`.model`/`.endpoint`/`.tools` delegate into nested blocks so reader modules stay adapter-agnostic through the schema break |
+| **Semantic-layer scoring is a canonical-query problem** | dbt Semantic Layer / Snowflake Semantic Views / Cube share one vocabulary (metrics/dimensions/grain/filters) and differ only in query surface dialect — same "normalize once, score once" move as the adapter contract pivot. Proposal only; see `docs/plans/build-stage-6-semantic-layer-scoring.md` |
 | Framework, not hardcoded project | Users bring their own skill files, golden tests, DB credentials |
 | Python over original JS design | MVP doc described JS; Python chosen for consistency with data tooling |
 | File-based trace communication | Adapter writes JSON, scorer reads it — handles Promptfoo process isolation |
