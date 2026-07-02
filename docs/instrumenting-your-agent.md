@@ -118,7 +118,7 @@ every `tool_input.path` from the steps. If your file-reading tool's argument isn
 
 ## Why structured emission pays twice
 
-The planned OTel adapter (Pivot Phase 6, [`pivot-phases.md`](./pivot-phases.md)) will
+The planned OTel adapter (Build Stage 4, [`plans/pivot-phases-overview.md`](./plans/pivot-phases-overview.md)) will
 consume OpenTelemetry GenAI spans straight off the agent — the lowest-effort, highest-fidelity
 integration. An agent that already emits structured per-question records (Tier 1/2) is one
 small mapping away from that; a prose-only agent will face the same instrumentation work
