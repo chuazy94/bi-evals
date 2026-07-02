@@ -2,7 +2,7 @@
 
 > The pivot reframes the agent layer as **one canonical contract `{generated_sql, trace}`,
 > many adapters** — bi-evals scores the real agent's response and never rebuilds the agent.
-> Full thesis: `docs/bi-eval-integration-analysis.md`.
+> Full thesis: `docs/plans/pivot-phase-1-integration-analysis.md`.
 >
 > **Phase numbering.** The original MVP phases (Phase 1–7.8) are historical and shipped. This
 > pivot is numbered separately as **Pivot Phase 1, 2, …** so the two schemes never collide.
@@ -11,9 +11,9 @@
 
 | Phase | What | Status |
 |-------|------|--------|
-| **Pivot Phase 1** | Contract + adapter registry | ✅ merged (PR #28) — `docs/refactor-step1.md` |
+| **Pivot Phase 1** | Contract + adapter registry | ✅ merged (PR #28) — `docs/plans/pivot-phase-1-refactor-step1.md` |
 | **Pivot Phase 2** | Adapter-nested config schema (clean break) | ✅ merged (PR #29) — `docs/migration-adapter-schema.md` |
-| **Pivot Phase 3** | Push adapter (replay) + `score --input` | ✅ merged (PR #34) — `docs/pivot-phase-3-design.md` |
+| **Pivot Phase 3** | Push adapter (replay) + `score --input` | ✅ merged (PR #34) — `docs/plans/pivot-phase-3-push-adapter-design.md` |
 | **Pivot Phase 4** | Capability check (open-envelope trace) | ⬜ |
 | **Pivot Phase 5** | Model-as-request honesty marker | ⬜ |
 | **Pivot Phase 6** | OTel adapter — ingest spans the real agent emits | ⬜ (see "Why response-evaluation is the right approach" below) |
@@ -31,7 +31,7 @@
 Extracted the canonical `{generated_sql, trace}` contract into `provider/contract.py`, introduced
 an `Adapter` protocol + registry (`provider/registry.py`), and reversed the import direction so
 adapters depend on the contract rather than each other. The two-mode `if/elif` dispatch became a
-registry lookup. Behavior-neutral. Detail: `docs/refactor-step1.md`.
+registry lookup. Behavior-neutral. Detail: `docs/plans/pivot-phase-1-refactor-step1.md`.
 
 ## Pivot Phase 2 — Adapter-nested config schema ✅
 
@@ -97,7 +97,7 @@ canonical contract. No orchestration, no reconstruction, and the trace is clean 
   OTLP receiver with a `trajectory:` assertion family (see below), so a chunk of this may be
   configuration rather than net-new infrastructure.
 - The reference SQL must still execute on bi-evals' own connection (the independence caveat in
-  `docs/bi-eval-integration-analysis.md` — never route the yardstick through the agent's tools).
+  `docs/plans/pivot-phase-1-integration-analysis.md` — never route the yardstick through the agent's tools).
 
 ---
 

@@ -1,7 +1,7 @@
 # Pivot Phase 3 — Push adapter (design)
 
-> Part of the response-evaluation pivot. See `docs/pivot-phases.md` for the phase map and
-> `docs/bi-eval-integration-analysis.md` for the thesis.
+> Part of the response-evaluation pivot. See `docs/plans/pivot-phases-overview.md` for the phase map and
+> `docs/plans/pivot-phase-1-integration-analysis.md` for the thesis.
 
 ## Goal
 

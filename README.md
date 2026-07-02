@@ -205,8 +205,8 @@ src/bi_evals/
 - [`docs/instrumenting-your-agent.md`](docs/instrumenting-your-agent.md) -- for agent builders: what your agent should emit so bi-evals scores it with zero massaging
 - [`docs/push-limitations.md`](docs/push-limitations.md) -- what the push adapter requires; the push-ready checklist
 - [`docs/byo-response-contract.md`](docs/byo-response-contract.md) -- the `api_endpoint` response shape
-- [`docs/eval-landscape.md`](docs/eval-landscape.md) -- where bi-evals sits in the eval-tool landscape and why the SDK is the on-ramp
-- [`docs/pivot-phases.md`](docs/pivot-phases.md) -- the adapter architecture and where it's heading
+- [`docs/plans/eval-landscape-strategy.md`](docs/plans/eval-landscape-strategy.md) -- where bi-evals sits in the eval-tool landscape and why the SDK is the on-ramp
+- [`docs/plans/pivot-phases-overview.md`](docs/plans/pivot-phases-overview.md) -- the adapter architecture and where it's heading
 - [`STATUS.md`](STATUS.md) -- what works today
 - [`CLAUDE.md`](CLAUDE.md) -- architecture reference and development commands
 

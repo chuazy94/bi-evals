@@ -10,7 +10,7 @@ these are called out under a **Breaking** heading.
 ## [Unreleased]
 
 ### Added
-- Regression-gating plan for CI (`docs/regression-gating-plan.md`): shared gate
+- Regression-gating plan for CI (`docs/plans/build-stage-1-regression-gating.md`): shared gate
   engine, absolute floor + baseline regression, CLI + SDK surfaces, multi-trial
   aggregation. _Design only — not yet implemented._
 
