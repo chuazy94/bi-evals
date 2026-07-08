@@ -8,8 +8,9 @@ import logging
 # INFO = milestones; DEBUG = payloads (extracted SQL, etc.).
 logging.getLogger("bi_evals").addHandler(logging.NullHandler())
 
+from bi_evals.compare.gate import GateResult
 from bi_evals.sdk import Case, RunReport, Runner, TestResult
 
 __version__ = "0.1.0"
 
-__all__ = ["Runner", "Case", "RunReport", "TestResult", "__version__"]
+__all__ = ["Runner", "Case", "RunReport", "TestResult", "GateResult", "__version__"]

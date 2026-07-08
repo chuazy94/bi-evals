@@ -375,6 +375,15 @@ class CompareConfig(BaseModel):
     # 0.2 means "needs to drop by at least 20 percentage points". For single-trial
     # runs (rate ∈ {0, 1}) any flip clears 0.2, so legacy semantics are preserved.
     regression_threshold: float = 0.2
+    # CI gate (all opt-in; the defaults never fail a build).
+    # Absolute floor on the candidate run's pass rate; None = floor off.
+    min_pass_rate: float | None = None
+    # Tolerate up to N regressed tests before the gate fails (flaky-suite valve).
+    max_regressions_allowed: int = 0
+    # Which verdict level fails the build: "red" (regressions), "amber" (any
+    # delta), "never" (report-only). None = gating disabled — `bi-evals compare`
+    # exits 0 as before; the CLI --fail-on flag overrides per invocation.
+    fail_on: Literal["red", "amber", "never"] | None = None
 
 
 class GoldenTestsConfig(BaseModel):

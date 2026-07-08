@@ -116,7 +116,7 @@ One ordered backlog. Earlier stages are prerequisites for later ones only where 
 
 ### Build Stage 1: CI regression gating
 
-- `docs/plans/build-stage-1-regression-gating.md` (new, unreleased) — a shared `compare/gate.py` engine (`evaluate_gate`) consumed by **both** `bi-evals compare` (nonzero exit code — today it never fails the build) and the SDK (`Runner` gains baseline/regression awareness beyond today's absolute-only `report.pass_rate >= 0.9`). Two independent knobs: absolute floor (`min_pass_rate`) and baseline regression (reusing `compare/diff.py`'s existing `Verdict`/`classify_pairs`). **Design is complete and verified against current code; implementation not started. Next up.**
+- `docs/plans/build-stage-1-regression-gating.md` — a shared `compare/gate.py` engine (`evaluate_gate`) consumed by **both** `bi-evals compare --fail-on [red|amber|never]` (exit 1 on gate failure; informational exit-0 without opt-in) and the SDK (`report.passed_gate` absolute floor + `report.compare_to("prev") → GateResult`). Config knobs on `compare:`: `min_pass_rate`, `max_regressions_allowed`, `fail_on` (unset = gating off; defaults are no-ops). Compare argument order fixed in docs (`compare prev latest` — baseline first). Multi-trial flakiness recipe (`scoring.repeats` + rate-based threshold + regression budget) documented in `getting-started.md` Step 8. **Implemented (CLI + SDK); 452 unit tests passing.**
 
 ### Build Stage 2: Capability check (open-envelope trace)
 

@@ -1,9 +1,13 @@
 # Plan: Regression gating for CI (CLI + SDK)
 
-> **Status:** proposed — not yet implemented. This is the design we agreed on
-> before coding. Scope decided with the user: **CLI first**, capability =
-> **absolute floor + baseline regression**, with the SDK surface designed now so
-> the CLI work doesn't paint us into a corner.
+> **Status:** implemented (CLI + SDK together — the SDK surface turned out to be
+> a thin reuse of the shared engine, so splitting it wasn't worth a second PR).
+> One deviation from the config block below: `fail_on` defaults to **unset
+> (`None`) = gating disabled**, not `"red"` — the plan's own Decisions section
+> requires defaults to be strict no-ops, and a `red` default would have made
+> every already-red `compare` start failing builds. `"red"` is the effective
+> level once gating is enabled (by setting `compare.fail_on` or passing
+> `--fail-on`).
 
 ## Goal
 
@@ -273,15 +277,43 @@ later.** The pipeline works today via `repeats`; the plan should (a) document th
    `regression_threshold`) — no code, since the pipeline already works; this is
    the "expose what exists" half of the multi-trial section.
 
-## Open questions for the user
+## Decisions (resolved 2026-07-08, re-verified against code before implementation)
 
-- **Default for `min_pass_rate`** — keep `null` (off; opt-in) as planned, or ship
-  a non-null default so new projects get an absolute floor out of the box?
+- **`min_pass_rate` default: `null`/off.** Existing users and fresh `init` scaffolds
+  see zero behavior change until they opt in — consistent with the rest of this
+  plan's "defaults are no-ops" design.
+- **Verdict vs. gate in HTML: HTML stays report-verdict only.** The gate (budget,
+  floor, `fail_on`) affects only the exit code / SDK return value. Report-reading
+  and CI-gating remain conceptually separate — a human reading the HTML sees the
+  raw 🔴/🟡/🟢 verdict; the gate is a CI-only concern layered on top.
+
+## Open question still outstanding
+
 - **`compare_to` config plumbing** — acceptable for `RunReport` to hold a
   reference to the config/Runner so `compare_to` can open the store, or prefer
-  `Runner.compare(report, ref)` to keep `RunReport` a pure data object?
-- **Verdict vs. gate in HTML** — should the compare HTML show the *gate* outcome
-  (with the budget/floor applied) too, or stay purely the report verdict and let
-  the gate live only in the exit code / SDK return? (Plan currently: HTML stays
-  report-verdict; gate is CI-only.)
+  `Runner.compare(report, ref)` to keep `RunReport` a pure data object? Decide at
+  implementation time in `sdk.py` (step 5 below) — doesn't block starting step 1.
+
+## Pre-implementation verification (2026-07-08)
+
+Re-checked every claim in "Where things stand today" against the current code
+(nothing in this plan has shipped since it was written; SDK/v0.1.0/docs work in
+the interim didn't touch `compare/diff.py`, `CompareConfig`, or `sdk.py`'s
+`RunReport`/`Runner` shape):
+
+- `compare/diff.py` still exposes exactly `Verdict`, `classify_pairs`,
+  `compute_verdict` as described.
+- `CompareConfig` still has exactly one field, `regression_threshold: float = 0.2`.
+- `bi-evals compare` still never sets a nonzero exit code (only raises
+  `ClickException` on setup errors, e.g. no runs found — not on a red verdict).
+- `sdk.py` has zero references to `compare`/gating today.
+- `_resolve_run_ref` exists in `cli.py` but is module-private, not on a shared
+  class — implementation will need to either export it or duplicate the small
+  ref-resolution logic for `RunReport.compare_to`.
+- `RunReport` still has exactly the fields listed (`run_id`, `total`, `passed`,
+  `failed`, `pass_rate`, `report_path`, `failures`).
+- `ScoringConfig.repeats: int = 1` and the bridge's `--repeat` wiring are
+  unchanged.
+
+No drift. Plan is safe to implement as written.
 ```

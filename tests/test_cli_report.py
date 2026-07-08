@@ -98,3 +98,62 @@ def test_compare_rejects_unknown_run_id(tmp_path: Path) -> None:
         ],
     )
     assert result.exit_code != 0
+
+
+def test_compare_gate_fail_on_red_exits_nonzero(tmp_path: Path) -> None:
+    """The fixture pair has a known regression: --fail-on red must fail the build."""
+    workdir = _prepare_workspace(tmp_path)
+    runner = CliRunner()
+    for src in (RUN_A_JSON, RUN_B_JSON):
+        result = runner.invoke(
+            cli,
+            [
+                "--config",
+                str(workdir / "bi-evals.yaml"),
+                "ingest",
+                str(workdir / "results" / src.name),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+
+    result = runner.invoke(
+        cli,
+        [
+            "--config",
+            str(workdir / "bi-evals.yaml"),
+            "compare",
+            "prev",
+            "latest",
+            "--fail-on",
+            "red",
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert "Verdict: red" in result.output
+    assert "Gate: FAILED" in result.output
+    # The HTML is still written even when the gate fails.
+    assert list((workdir / "reports").glob("compare_*.html"))
+
+    # Report-only mode never fails the build.
+    result = runner.invoke(
+        cli,
+        [
+            "--config",
+            str(workdir / "bi-evals.yaml"),
+            "compare",
+            "prev",
+            "latest",
+            "--fail-on",
+            "never",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    # No flag and no compare.fail_on config: informational verdict, exit 0.
+    result = runner.invoke(
+        cli,
+        ["--config", str(workdir / "bi-evals.yaml"), "compare", "prev", "latest"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Verdict: red" in result.output
+    assert "Gate:" not in result.output

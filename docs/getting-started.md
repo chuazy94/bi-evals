@@ -246,8 +246,57 @@ pass/fail and reason, files read, and the full trace.
 - **push:** re-run your agent, regenerate `results.jsonl`, `bi-evals score --input` again.
   Idempotent — re-scoring overwrites that run's rows.
 - **api_endpoint:** change your agent, `bi-evals run` again.
-- Compare two runs for regressions: `bi-evals compare latest prev`.
+- Compare two runs for regressions: `bi-evals compare prev latest` (baseline
+  first, candidate second — "did `latest` get worse than `prev`?").
 - Add a golden for every production failure you find — the dataset grows from real misses.
+
+---
+
+## Step 8 — Gate CI on it
+
+The gate answers two independent questions, each opt-in in `bi-evals.yaml`:
+
+```yaml
+compare:
+  min_pass_rate: 0.85 # absolute: is this run good enough on its own?
+  fail_on: red # relative: fail when tests regressed vs the baseline
+  max_regressions_allowed: 0 # tolerate N regressed tests (flaky-suite valve)
+```
+
+**CLI** — score the new run, then gate it against the previous one; a failed
+gate exits 1, which fails the CI job:
+
+```bash
+bi-evals score --input results.jsonl
+bi-evals compare prev latest --fail-on red    # exit 1 on regression or floor breach
+```
+
+(`--fail-on` also works without config; without either, `compare` prints the
+verdict but always exits 0.)
+
+**SDK** — the same gate, as assertions:
+
+```python
+report = runner.score()
+assert report.passed_gate                    # absolute floor — works on a first run
+gate = report.compare_to("prev")             # regression gate vs the previous run
+assert gate.passed, gate.reasons
+```
+
+**Flaky agents:** a single-trial run turns one unlucky answer into a full
+pass→fail flip, which reads as a regression. Two remedies, best combined:
+
+```yaml
+scoring:
+  repeats: 5 # run each golden 5×; scores become pass *rates*
+compare:
+  regression_threshold: 0.2 # now a 20-point rate drop, not one flipped trial
+  max_regressions_allowed: 1 # budget for what still leaks through
+```
+
+With `repeats: 5`, one unlucky trial moves a test's rate by 0.2 instead of 1.0,
+so real regressions still trip the gate but noise doesn't. Mind the cost:
+`repeats: N` multiplies agent + warehouse spend for that run by N.
 
 ---
 
