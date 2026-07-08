@@ -12,10 +12,10 @@ from bi_evals.compare.diff import (
     Verdict,
     bucket_counts,
     category_deltas,
-    classify_pairs,
     compute_verdict,
     dimension_deltas,
 )
+from bi_evals.compare.gate import ComparedRuns, classify_runs
 from bi_evals.config import DEFAULT_CRITICAL_DIMENSIONS
 from bi_evals.store import queries as q
 
@@ -387,16 +387,19 @@ def build_compare_html(
     run_b_id: str,
     *,
     regression_threshold: float = 0.2,
+    compared: ComparedRuns | None = None,
 ) -> str:
-    """Render the compare HTML for two runs."""
-    diff = q.test_diff(conn, run_a_id, run_b_id)
-    critical = q.critical_dimensions(conn, run_b_id) or q.critical_dimensions(
-        conn, run_a_id
-    )
+    """Render the compare HTML for two runs.
 
-    classified = classify_pairs(
-        diff.pairs, critical, regression_threshold=regression_threshold
-    )
+    ``compared`` lets a caller that already classified the pair (e.g. the CLI
+    gate) reuse that work instead of re-querying.
+    """
+    if compared is None:
+        compared = classify_runs(
+            conn, run_a_id, run_b_id, regression_threshold=regression_threshold
+        )
+    diff = compared.diff
+    classified = compared.classified
     verdict = compute_verdict(classified)
     meta = VERDICT_META[verdict]
 

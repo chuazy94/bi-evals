@@ -195,6 +195,19 @@ def previous_run_id(conn: duckdb.DuckDBPyConnection) -> str | None:
     return row[0] if row else None
 
 
+def resolve_run_ref(conn: duckdb.DuckDBPyConnection, ref: str) -> str | None:
+    """Translate 'latest' / 'prev' shortcuts to run_ids; other refs pass through.
+
+    Returns None when the shortcut has no run to point at (empty store, or no
+    second run for 'prev'). Callers surface their own error (ClickException on
+    the CLI, PushScoreError in the SDK)."""
+    if ref == "latest":
+        return latest_run_id(conn)
+    if ref in ("prev", "previous"):
+        return previous_run_id(conn)
+    return ref
+
+
 def get_run(conn: duckdb.DuckDBPyConnection, run_id: str) -> RunRow:
     row = conn.execute(
         """

@@ -32,6 +32,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar, Iterator
 
+from bi_evals.compare.gate import GateResult, classify_runs, evaluate_gate
 from bi_evals.config import BiEvalsConfig
 from bi_evals.golden.loader import load_golden_tests_with_paths
 from bi_evals.promptfoo.bridge import filter_tests
@@ -92,9 +93,79 @@ class RunReport:
     pass_rate: float
     report_path: str
     failures: list[TestResult] = field(default_factory=list)
+    # Set by Runner.score() so the gate methods can read `compare:` config and
+    # open the store. Not part of the report's data surface.
+    _config: BiEvalsConfig | None = field(default=None, repr=False, compare=False)
 
     def __bool__(self) -> bool:
         return self.failed == 0  # truthy when all passed: `if not runner.score(): ...`
+
+    def _require_config(self) -> BiEvalsConfig:
+        if self._config is None:
+            raise PushScoreError(
+                "This RunReport was constructed without config — gate methods "
+                "are only available on reports returned by Runner.score()."
+            )
+        return self._config
+
+    @property
+    def passed_gate(self) -> bool:
+        """Absolute-floor gate: does this run clear ``compare.min_pass_rate``?
+
+        Needs no baseline, so it is safe on a very first run. With no
+        ``min_pass_rate`` configured (or ``fail_on: never``) it is always True.
+        For the baseline-relative gate, use :meth:`compare_to`.
+        """
+        cfg = self._require_config().compare
+        gate = evaluate_gate(
+            [],  # no baseline: evaluate only the absolute floor
+            suite_pass_rate=self.pass_rate,
+            min_pass_rate=cfg.min_pass_rate,
+            max_regressions_allowed=cfg.max_regressions_allowed,
+            fail_on=cfg.fail_on or "red",
+        )
+        return gate.passed
+
+    def compare_to(self, ref: str = "prev") -> GateResult:
+        """Gate this run against a baseline run: ``"prev"``, ``"latest"``, or a
+        pinned run_id. Returns a :class:`GateResult` (truthy when the gate
+        passed) instead of writing HTML or exiting — assert it in CI:
+
+            gate = report.compare_to("prev")
+            assert gate.passed, gate.reasons
+        """
+        config = self._require_config()
+        db_path = config.resolve_path(config.storage.db_path)
+        with store_connect(db_path, read_only=True) as conn:
+            baseline = store_queries.resolve_run_ref(conn, ref)
+            if baseline is None:
+                raise PushScoreError(f"No baseline run in the store for {ref!r}.")
+            if baseline == self.run_id:
+                raise PushScoreError(
+                    f"Baseline {ref!r} resolves to this run itself "
+                    f"({self.run_id}) — use 'prev' or a pinned run_id."
+                )
+            compared = classify_runs(
+                conn,
+                baseline,
+                self.run_id,
+                regression_threshold=config.compare.regression_threshold,
+            )
+        gate = evaluate_gate(
+            compared.classified,
+            suite_pass_rate=self.pass_rate,
+            min_pass_rate=config.compare.min_pass_rate,
+            max_regressions_allowed=config.compare.max_regressions_allowed,
+            fail_on=config.compare.fail_on or "red",
+        )
+        log.info(
+            "Gate vs %s (%s): %s — %s",
+            ref,
+            baseline,
+            "passed" if gate.passed else "FAILED",
+            "; ".join(gate.reasons),
+        )
+        return gate
 
 
 class Runner:
@@ -315,4 +386,5 @@ class Runner:
                 for t in tests
                 if not t.passed
             ],
+            _config=self._config,
         )

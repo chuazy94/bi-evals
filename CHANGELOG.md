@@ -10,9 +10,21 @@ these are called out under a **Breaking** heading.
 ## [Unreleased]
 
 ### Added
-- Regression-gating plan for CI (`docs/plans/build-stage-1-regression-gating.md`): shared gate
-  engine, absolute floor + baseline regression, CLI + SDK surfaces, multi-trial
-  aggregation. _Design only — not yet implemented._
+- **CI regression gating** (Build Stage 1, per
+  `docs/plans/build-stage-1-regression-gating.md`) — one shared gate engine
+  (`compare/gate.py: evaluate_gate`) behind both surfaces:
+  - `bi-evals compare BASELINE CANDIDATE --fail-on [red|amber|never]` exits 1
+    when the gate fails (flag overrides the new `compare.fail_on` config; with
+    neither set, compare stays informational and always exits 0).
+  - SDK: `report.passed_gate` (absolute floor, no baseline needed) and
+    `report.compare_to("prev")` → `GateResult` (baseline regression gate,
+    assertable in CI). `GateResult` is exported from `bi_evals`.
+  - New `compare:` config knobs, all opt-in: `min_pass_rate` (absolute floor),
+    `max_regressions_allowed` (flaky-suite budget), `fail_on` (gate level;
+    unset = no gating). Defaults preserve pre-gate behavior exactly.
+  - `compare` CLI output now prints the verdict + reasons; the CLI recipe is
+    `bi-evals compare prev latest --fail-on red` (baseline first, candidate
+    second).
 
 ## [0.1.0] - 2026-06-16
 

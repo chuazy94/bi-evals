@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 import yaml
 
+from bi_evals.compare.gate import classify_runs, evaluate_gate
 from bi_evals.config import BiEvalsConfig
 from bi_evals.golden.loader import load_golden_tests_with_paths
 from bi_evals.promptfoo.bridge import (
@@ -553,9 +554,30 @@ def report(ctx: click.Context, run_id: str | None, out_path: str | None) -> None
 @click.option(
     "--out", "out_path", type=click.Path(dir_okay=False), help="Output HTML path."
 )
+@click.option(
+    "--fail-on",
+    "fail_on",
+    type=click.Choice(["red", "amber", "never"]),
+    default=None,
+    help=(
+        "Gate: exit 1 when the gate fails at this level (overrides "
+        "compare.fail_on). Without this flag or compare.fail_on in config, "
+        "compare never fails the build."
+    ),
+)
 @click.pass_context
-def compare(ctx: click.Context, run_a: str, run_b: str, out_path: str | None) -> None:
-    """Compare two runs (by run-id, or shortcuts 'latest' / 'prev')."""
+def compare(
+    ctx: click.Context,
+    run_a: str,
+    run_b: str,
+    out_path: str | None,
+    fail_on: str | None,
+) -> None:
+    """Compare two runs: RUN_A is the baseline, RUN_B the candidate.
+
+    Accepts run-ids or the shortcuts 'latest' / 'prev' — for CI, gate the
+    newest run against the one before it with: compare prev latest --fail-on red
+    """
     config = BiEvalsConfig.load(ctx.obj["config_path"])
     db_path = config.resolve_path(config.storage.db_path)
 
@@ -564,18 +586,22 @@ def compare(ctx: click.Context, run_a: str, run_b: str, out_path: str | None) ->
             "No runs in the DuckDB store. Run `bi-evals run` or `bi-evals ingest <path>` first."
         )
 
+    effective_fail_on = fail_on or config.compare.fail_on
+
     with store_connect(db_path, read_only=True) as conn:
         a_id = _resolve_run_ref(conn, run_a)
         b_id = _resolve_run_ref(conn, run_b)
         try:
-            html = build_compare_html(
+            compared = classify_runs(
                 conn,
                 a_id,
                 b_id,
                 regression_threshold=config.compare.regression_threshold,
             )
+            html = build_compare_html(conn, a_id, b_id, compared=compared)
         except KeyError as e:
             raise click.ClickException(str(e))
+        candidate_tests = store_queries.list_tests(conn, b_id)
 
     filename = (
         f"compare_{sanitize_for_filename(a_id)}__vs__{sanitize_for_filename(b_id)}.html"
@@ -585,20 +611,36 @@ def compare(ctx: click.Context, run_a: str, run_b: str, out_path: str | None) ->
     out.write_text(html)
     click.echo(f"Compare: {out}")
 
+    suite_pass_rate = (
+        sum(1 for t in candidate_tests if t.passed) / len(candidate_tests)
+        if candidate_tests
+        else None
+    )
+    gate = evaluate_gate(
+        compared.classified,
+        suite_pass_rate=suite_pass_rate,
+        min_pass_rate=config.compare.min_pass_rate,
+        max_regressions_allowed=config.compare.max_regressions_allowed,
+        fail_on=effective_fail_on or "red",
+    )
+    click.echo(f"Verdict: {gate.verdict.value} — {'; '.join(gate.reasons)}")
+    if effective_fail_on is not None and not gate.passed:
+        click.echo("Gate: FAILED", err=True)
+        raise SystemExit(1)
+    if effective_fail_on is not None:
+        click.echo("Gate: passed")
+
 
 def _resolve_run_ref(conn, ref: str) -> str:
     """Translate 'latest' / 'prev' to actual run_ids; otherwise return as-is."""
-    if ref == "latest":
-        rid = store_queries.latest_run_id(conn)
-        if rid is None:
-            raise click.ClickException("No runs in DB for 'latest'.")
-        return rid
-    if ref in ("prev", "previous"):
-        rid = store_queries.previous_run_id(conn)
-        if rid is None:
-            raise click.ClickException("No previous run in DB.")
-        return rid
-    return ref
+    rid = store_queries.resolve_run_ref(conn, ref)
+    if rid is None:
+        raise click.ClickException(
+            f"No run in DB for {ref!r}."
+            if ref == "latest"
+            else "No previous run in DB."
+        )
+    return rid
 
 
 def _resolve_report_output(

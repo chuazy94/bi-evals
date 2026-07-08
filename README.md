@@ -102,7 +102,8 @@ for case in runner.golden_cases():
 
 report = runner.score()                           # executes SQL, scores, writes HTML report
 print(f"{report.passed}/{report.total} passed → {report.report_path}")
-assert report.pass_rate >= 0.9                    # gate CI on it
+assert report.passed_gate                         # gate CI: pass-rate floor (compare.min_pass_rate)
+assert report.compare_to("prev").passed           # gate CI: no regressions vs the previous run
 ```
 
 `submit()` takes `generated_sql` **or** `response_text` (raw answer — SQL is extracted) **or**
@@ -113,7 +114,7 @@ assert report.pass_rate >= 0.9                    # gate CI on it
 ```bash
 uv run bi-evals report                 # self-contained HTML scorecard
 uv run bi-evals ui                     # interactive viewer with per-test drilldown
-uv run bi-evals compare latest prev    # regression diff between two runs
+uv run bi-evals compare prev latest    # regression diff (baseline first, candidate second)
 ```
 
 ## Adapters: how your agent's answers reach the scorer

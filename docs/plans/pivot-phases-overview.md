@@ -14,12 +14,17 @@
 
 ## At a glance
 
+**This table covers only the pivot's own phases — it is not the project's overall priority
+order.** `STATUS.md`'s "Remaining — Build Stages" interleaves these with unrelated work (e.g.
+CI regression gating, sequenced *ahead* of the phases below because it has no dependency on them
+and is fully designed) and is the doc that says what's actually next.
+
 | Phase | What | Status |
 |-------|------|--------|
 | **Pivot Phase 1** | Contract + adapter registry | ✅ merged (PR #28) — `docs/plans/pivot-phase-1-refactor-step1.md` |
 | **Pivot Phase 2** | Adapter-nested config schema (clean break) | ✅ merged (PR #29) — `docs/migration-adapter-schema.md` |
 | **Pivot Phase 3** | Push adapter (replay) + `score --input` | ✅ merged (PR #34) — `docs/plans/pivot-phase-3-push-adapter-design.md` |
-| **Pivot Phase 4** (Build Stage 2) | Capability check (open-envelope trace) | ⬜ |
+| **Pivot Phase 4** (Build Stage 2) | Capability check (open-envelope trace) | ⬜ not started — see `STATUS.md` for priority relative to other stages |
 | **Pivot Phase 5** (Build Stage 3) | Model-as-request honesty marker | ⬜ |
 | **Pivot Phase 6** (Build Stage 4) | OTel adapter — ingest spans the real agent emits | ⬜ (see "Why response-evaluation is the right approach" below) |
 
