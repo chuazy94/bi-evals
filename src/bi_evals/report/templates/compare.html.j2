@@ -15,6 +15,24 @@
   </div>
 </div>
 
+{# `is not none`, not truthiness — GateResult.__bool__ is `passed`, which would
+   hide the strip exactly when the gate failed. #}
+{% if gate is not none %}
+<div class="card">
+  <span class="pill {{ 'pass' if gate.passed else 'fail' }}">CI gate: {{ 'passed' if gate.passed else 'FAILED' }}</span>
+  <span class="mono muted">(fail_on: {{ gate.fail_on }})</span>
+  <p style="margin:8px 0 0;">{{ gate.reasons | join('; ') }}</p>
+  {% if gate_regressed %}
+  <p style="margin:8px 0 0;">Regressed:
+    {% for t in gate_regressed %}
+      <span class="mono">{{ t.test_id }}</span>{% if t.model %} <span class="muted">[{{ t.model }}]</span>{% endif %}{% if t.dims %} ({{ t.dims | join(', ') }}){% endif %}{{ ", " if not loop.last }}
+    {% endfor %}
+    — details in the transitions table below.</p>
+  {% endif %}
+  <p class="muted" style="margin:8px 0 0;">The banner above is the report verdict (what changed); this strip is the CI gate (whether that fails the build, per the <span class="mono">compare:</span> config).</p>
+</div>
+{% endif %}
+
 <h2>Summary</h2>
 <div class="summary-grid">
   <div class="stat"><div class="label">Regressed</div><div class="value">{{ counts.regressed }}</div></div>

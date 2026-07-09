@@ -25,6 +25,11 @@ these are called out under a **Breaking** heading.
   - `compare` CLI output now prints the verdict + reasons; the CLI recipe is
     `bi-evals compare prev latest --fail-on red` (baseline first, candidate
     second).
+  - **Gate strip on the compare page** — when gating is enabled, the compare
+    HTML (both the CLI artifact and the `bi-evals ui` compare view) shows the
+    gate outcome under the verdict banner: passed/FAILED, the policy level,
+    the reasons (floor/budget arithmetic), and the regressed tests by name.
+    Non-gating compares render unchanged.
 
 ## [0.1.0] - 2026-06-16
 

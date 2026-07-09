@@ -131,8 +131,13 @@ def test_compare_gate_fail_on_red_exits_nonzero(tmp_path: Path) -> None:
     assert result.exit_code == 1, result.output
     assert "Verdict: red" in result.output
     assert "Gate: FAILED" in result.output
-    # The HTML is still written even when the gate fails.
-    assert list((workdir / "reports").glob("compare_*.html"))
+    # The HTML is still written even when the gate fails — and for a gating
+    # invocation it carries the gate strip with the failure reasons.
+    [compare_html] = (workdir / "reports").glob("compare_*.html")
+    html = compare_html.read_text()
+    assert "CI gate: FAILED" in html
+    assert "fail_on: red" in html
+    assert "regressed" in html
 
     # Report-only mode never fails the build.
     result = runner.invoke(
@@ -149,7 +154,8 @@ def test_compare_gate_fail_on_red_exits_nonzero(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.output
 
-    # No flag and no compare.fail_on config: informational verdict, exit 0.
+    # No flag and no compare.fail_on config: informational verdict, exit 0,
+    # and the page (rewritten to the same path) carries no gate strip.
     result = runner.invoke(
         cli,
         ["--config", str(workdir / "bi-evals.yaml"), "compare", "prev", "latest"],
@@ -157,3 +163,4 @@ def test_compare_gate_fail_on_red_exits_nonzero(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "Verdict: red" in result.output
     assert "Gate:" not in result.output
+    assert "CI gate" not in compare_html.read_text()

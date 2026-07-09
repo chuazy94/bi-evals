@@ -73,6 +73,23 @@ def test_compare_view_renders(client: TestClient) -> None:
     assert res.status_code == 200
     # Compare template emits a verdict block; the fixture pair is a known regression.
     assert "verdict" in res.text
+    # Gating is not configured on the fixture, so no gate strip appears.
+    assert "CI gate" not in res.text
+
+
+def test_compare_view_shows_gate_strip_when_gating_configured(
+    eval_sample_config: BiEvalsConfig,
+) -> None:
+    eval_sample_config.compare.fail_on = "red"
+    _seed(eval_sample_config)
+    app = create_app(eval_sample_config)
+    res = TestClient(app).get(f"/compare?a={RUN_A_ID}&b={RUN_B_ID}")
+    assert res.status_code == 200
+    # The fixture pair has a known regression: the strip must say the gate
+    # failed and name the regressed test inline.
+    assert "CI gate: FAILED" in res.text
+    assert "regressed" in res.text
+    assert "fail_on: red" in res.text
 
 
 def test_compare_unknown_run_redirects_with_error(client: TestClient) -> None:

@@ -286,6 +286,17 @@ later.** The pipeline works today via `repeats`; the plan should (a) document th
   floor, `fail_on`) affects only the exit code / SDK return value. Report-reading
   and CI-gating remain conceptually separate — a human reading the HTML sees the
   raw 🔴/🟡/🟢 verdict; the gate is a CI-only concern layered on top.
+  - **Revised 2026-07-10, after the first live demo:** the person debugging a red
+    CI job opens the compare HTML — and couldn't see why the build failed (an
+    amber banner next to a floor-failed build reads as a contradiction; the
+    reasons lived only in the CI log). The compare page now renders a **gate
+    strip** (outcome, `fail_on` level, reasons, regressed tests by name) under
+    the verdict banner — but *only for gating invocations* (CLI with gating
+    enabled; ui when `compare.fail_on` is set), so the original separation
+    still holds for everyone not using the gate. The verdict banner itself is
+    unchanged. The CLI artifact freezes the gate as CI saw it; the ui view
+    recomputes from current config; gate outcomes are still not persisted in
+    the store.
 
 ## Open question still outstanding
 
