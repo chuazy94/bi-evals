@@ -598,10 +598,30 @@ def compare(
                 b_id,
                 regression_threshold=config.compare.regression_threshold,
             )
-            html = build_compare_html(conn, a_id, b_id, compared=compared)
         except KeyError as e:
             raise click.ClickException(str(e))
         candidate_tests = store_queries.list_tests(conn, b_id)
+        suite_pass_rate = (
+            sum(1 for t in candidate_tests if t.passed) / len(candidate_tests)
+            if candidate_tests
+            else None
+        )
+        gate = evaluate_gate(
+            compared.classified,
+            suite_pass_rate=suite_pass_rate,
+            min_pass_rate=config.compare.min_pass_rate,
+            max_regressions_allowed=config.compare.max_regressions_allowed,
+            fail_on=effective_fail_on or "red",
+        )
+        # The gate strip is baked into the artifact only for gating invocations,
+        # so a plain informational compare keeps producing today's page.
+        html = build_compare_html(
+            conn,
+            a_id,
+            b_id,
+            compared=compared,
+            gate=gate if effective_fail_on is not None else None,
+        )
 
     filename = (
         f"compare_{sanitize_for_filename(a_id)}__vs__{sanitize_for_filename(b_id)}.html"
@@ -610,19 +630,6 @@ def compare(
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html)
     click.echo(f"Compare: {out}")
-
-    suite_pass_rate = (
-        sum(1 for t in candidate_tests if t.passed) / len(candidate_tests)
-        if candidate_tests
-        else None
-    )
-    gate = evaluate_gate(
-        compared.classified,
-        suite_pass_rate=suite_pass_rate,
-        min_pass_rate=config.compare.min_pass_rate,
-        max_regressions_allowed=config.compare.max_regressions_allowed,
-        fail_on=effective_fail_on or "red",
-    )
     click.echo(f"Verdict: {gate.verdict.value} — {'; '.join(gate.reasons)}")
     if effective_fail_on is not None and not gate.passed:
         click.echo("Gate: FAILED", err=True)

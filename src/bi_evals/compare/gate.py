@@ -71,6 +71,7 @@ class GateResult:
     reasons: list[str]  # human-readable why, for CLI output and assert messages
     regression_count: int
     suite_pass_rate: float | None  # the candidate run's absolute pass rate
+    fail_on: FailOn = "red"  # the policy level this result was evaluated under
 
     def __bool__(self) -> bool:
         return self.passed
@@ -145,4 +146,5 @@ def evaluate_gate(
         reasons=reasons,
         regression_count=regression_count,
         suite_pass_rate=suite_pass_rate,
+        fail_on=fail_on,
     )

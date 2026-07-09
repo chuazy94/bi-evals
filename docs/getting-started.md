@@ -274,6 +274,11 @@ bi-evals compare prev latest --fail-on red    # exit 1 on regression or floor br
 (`--fail-on` also works without config; without either, `compare` prints the
 verdict but always exits 0.)
 
+When gating is enabled, the compare page — the HTML artifact and the
+`bi-evals ui` compare view — shows a **gate strip** under the verdict banner:
+passed/FAILED, the reasons (floor/budget arithmetic), and the regressed tests
+by name. That's the page to attach to CI failures.
+
 **SDK** — the same gate, as assertions:
 
 ```python

@@ -15,7 +15,7 @@ from bi_evals.compare.diff import (
     compute_verdict,
     dimension_deltas,
 )
-from bi_evals.compare.gate import ComparedRuns, classify_runs
+from bi_evals.compare.gate import ComparedRuns, GateResult, classify_runs
 from bi_evals.config import DEFAULT_CRITICAL_DIMENSIONS
 from bi_evals.store import queries as q
 
@@ -388,11 +388,14 @@ def build_compare_html(
     *,
     regression_threshold: float = 0.2,
     compared: ComparedRuns | None = None,
+    gate: GateResult | None = None,
 ) -> str:
     """Render the compare HTML for two runs.
 
     ``compared`` lets a caller that already classified the pair (e.g. the CLI
-    gate) reuse that work instead of re-querying.
+    gate) reuse that work instead of re-querying. ``gate`` adds a CI-gate strip
+    under the verdict banner — pass it only when gating is enabled, so the
+    report of a non-gating compare is unchanged.
     """
     if compared is None:
         compared = classify_runs(
@@ -445,6 +448,22 @@ def build_compare_html(
         culprits = sorted(f for f in files if f in changed_set)
         transition_views.append({"c": c, "culprits": culprits})
 
+    # CI-gate strip: which tests made the gate red, named right in the strip so
+    # the build decision links to the evidence in the transitions table.
+    gate_regressed = (
+        [
+            {
+                "test_id": c.pair.test_id,
+                "model": c.pair.model,
+                "dims": c.regressed_dims,
+            }
+            for c in classified
+            if c.bucket == "regressed"
+        ]
+        if gate is not None
+        else []
+    )
+
     env = _env()
     return env.get_template("compare.html.j2").render(
         run_a=diff.run_a,
@@ -458,6 +477,8 @@ def build_compare_html(
         category_deltas=cat_deltas,
         dimension_deltas=dim_deltas,
         prompt_changes=prompt_changes,
+        gate=gate,
+        gate_regressed=gate_regressed,
     )
 
 

@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from bi_evals.compare.gate import classify_runs, evaluate_gate
 from bi_evals.config import BiEvalsConfig
 from bi_evals.report.builder import (
     build_compare_html,
@@ -146,12 +147,32 @@ def create_app(config: BiEvalsConfig) -> FastAPI:
         cfg: BiEvalsConfig = app.state.config
         try:
             with store_connect(app.state.db_path, read_only=True) as conn:
-                return build_compare_html(
+                compared = classify_runs(
                     conn,
                     a,
                     b,
                     regression_threshold=cfg.compare.regression_threshold,
                 )
+                # Same rule as the CLI: the gate strip appears only when gating
+                # is enabled. Recomputed from *current* config — the CLI's HTML
+                # artifact is the frozen record of what a CI invocation saw.
+                gate = None
+                if cfg.compare.fail_on is not None:
+                    candidate_tests = q.list_tests(conn, b)
+                    suite_pass_rate = (
+                        sum(1 for t in candidate_tests if t.passed)
+                        / len(candidate_tests)
+                        if candidate_tests
+                        else None
+                    )
+                    gate = evaluate_gate(
+                        compared.classified,
+                        suite_pass_rate=suite_pass_rate,
+                        min_pass_rate=cfg.compare.min_pass_rate,
+                        max_regressions_allowed=cfg.compare.max_regressions_allowed,
+                        fail_on=cfg.compare.fail_on,
+                    )
+                return build_compare_html(conn, a, b, compared=compared, gate=gate)
         except KeyError as e:
             return RedirectResponse(
                 url=f"/?error={_quote(str(e))}",
