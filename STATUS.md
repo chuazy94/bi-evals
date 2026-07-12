@@ -2,7 +2,7 @@
 
 ## Summary
 
-bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is the test runner; all custom logic (provider/adapters, tools, scoring, storage, reporting, viewer) is Python. The MVP (Pillar 1: Accuracy + Explainability per `docs/mvp-eval-platform.md`) is complete and exceeded. The project has completed the **response-evaluation architecture pivot** (`docs/plans/pivot-phase-1-integration-analysis.md`, `docs/plans/pivot-phases-overview.md`): the agent layer is **one canonical contract `{generated_sql, trace}`, many adapters** — bi-evals scores the real agent's response and never rebuilds the agent. The framework tagged its first release, **v0.1.0** (2026-06-16), and the README now leads with the SDK on-ramp.
+bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is the test runner; all custom logic (provider/adapters, tools, scoring, storage, reporting, viewer) is Python. The MVP (Pillar 1: Accuracy + Explainability per `docs/mvp-eval-platform.md`) is complete and exceeded. The project has completed the **response-evaluation architecture pivot** (`docs/plans/pivot-phase-1-integration-analysis.md`, `docs/plans/pivot-phases-overview.md`): the agent layer is **one canonical contract `{generated_sql, trace}`, many adapters** — bi-evals scores the real agent's response and never rebuilds the agent. The framework tagged its first release, **v0.1.0** (2026-06-16), the README leads with the SDK on-ramp, and **Build Stage 1 (CI regression gating) is implemented (PR #46, merged)** — `compare` and the SDK can now fail a build on regressions or a pass-rate floor.
 
 > **Phase numbering.** The original MVP phases (Phase 1–7.8) are historical and shipped. The response-evaluation architecture work is numbered separately as **Pivot Phase 1, 2, …** to avoid colliding with them.
 
@@ -10,18 +10,19 @@ What works today:
 
 - **`bi_evals.Runner` SDK** (`import bi_evals`) — the primary on-ramp. `runner.golden_cases()` yields questions, `runner.submit(case, generated_sql=..., trace=...)` records answers, `runner.score()` runs the push pipeline and returns an assertable `RunReport` (`pass_rate`, `failures`, truthy iff `failed == 0`). `Runner(verbose=True)` streams progress (loaded/submitted/scored heartbeats) to stderr — no logging setup required.
 - **`bi-evals score --input results.jsonl`** — score a submission the customer's own agent produced (push adapter), no live agent and no API spend. Each row is `{golden_file, generated_sql | response_text, trace?}`; `response_text` (the agent's raw prose answer) is accepted and the SQL extracted from it. Validates the JSONL up front (per-row errors, missing/duplicate-golden detection). The SDK's `score()` is a thin wrapper over the same `runner_core.run_push_score` the CLI uses — one pipeline, two front doors.
-- `bi-evals init api_endpoint` (default on-ramp) / `bi-evals init dev` (dev-only driving adapter) scaffold projects with the adapter-nested config shape; bare `bi-evals init` errors with a hint. The api_endpoint scaffold ships `adapter_example.py` (a FastAPI shim demonstrating the response contract).
+- `bi-evals init push` (the default on-ramp; Snowflake-only `.env`, next steps point at the SDK) / `init api_endpoint` (ships `adapter_example.py`, a FastAPI shim demonstrating the response contract) / `init dev` (dev-only driving adapter) scaffold projects with the adapter-nested config shape; bare `bi-evals init` errors with a hint listing push first.
 - `bi-evals doctor` validates a project's runtime setup before a paid eval run. **api_endpoint**: synthetic POST + JSON Schema validation + scoring-coverage report. **push**: warehouse reachable + Promptfoo on PATH + submission file parses. **dev (anthropic_tool_loop)**: Anthropic API key reachable, system prompt + tool `base_dir`s exist, Snowflake `SELECT 1`, `npx` on PATH.
 - `bi-evals run` runs the full eval end-to-end (live adapters) and auto-ingests into DuckDB; `--filter`, `--dry-run`, `--repeats N`, `--no-cache`, `--yes`, `--verbose`.
 - `bi-evals ingest <path>` backfills existing eval JSON.
 - `bi-evals report [--run-id ID]` writes a self-contained HTML report (filter strip, per-dimension failure reasons, category dashboard, weakest dimensions, weighted-score rule + per-test verdict, model summary + cost-vs-quality scatter, stability, freshness, cost alerts, all-tests table).
-- `bi-evals compare A B` writes an HTML regression diff with tiered verdict (🟢/🟡/🔴) and prompt-drift annotations; supports `latest` / `prev`. **No CI exit-code gate yet** — see Remaining.
+- `bi-evals compare BASELINE CANDIDATE` writes an HTML regression diff with tiered verdict (🟢/🟡/🔴) and prompt-drift annotations; supports `prev` / `latest` (baseline first: `compare prev latest`).
+- **CI regression gating** (PR #46, merged) — `compare --fail-on [red|amber|never]` exits 1 on gate failure; SDK `report.passed_gate` (absolute `min_pass_rate` floor, no baseline needed) and `report.compare_to("prev") → GateResult` for CI assertions. Knobs on `compare:` config (`min_pass_rate`, `max_regressions_allowed` flaky budget, `fail_on`; unset = gating off, defaults are no-ops). When gating is enabled, the compare page (CLI artifact + ui view) renders a **gate strip**: passed/FAILED, the policy level, the floor/budget reasons, and the regressed tests by name. One shared engine (`compare/gate.py: evaluate_gate`) behind both surfaces.
 - `bi-evals ui` starts a local FastAPI + Jinja viewer: runs list (project filter, meta refresh, compare shortcuts, triage filters + "regressed since" badge), single-run view, per-test drilldown (generated SQL, reference SQL, per-dimension reasons, files-read, full trace JSON).
 - `bi-evals cost [--last-n N]`, `bi-evals flakiness [--last-n N] [--limit N]`, `bi-evals view` (Promptfoo web UI).
 - **Adapter architecture**: `agent.adapter` selects an adapter from a registry — `push` (replay submitted results), `api_endpoint` (POST to the live agent), `anthropic_tool_loop` (dev-only; runs Claude + skill files locally). All normalise into the canonical `AgentResult` the scorer consumes; the scorer is adapter-agnostic.
 - **10-dimension scorer** with tiered/weighted pass-fail. Row matching is **position-tolerant**: when the agent names output columns differently from the golden's reference, rows match by ordinal position rather than falsely failing (the values are what matter, not the labels).
 - Multi-model evaluation (dev adapter), repeat-run variance, `FileReaderTool` + `DescribeTableTool`, `SnowflakeClient`, `GoldenTest` with `last_verified_at` and `anti_patterns`.
-- **427 unit tests passing, 0 warnings.** Strict YAML loading; old flat `agent:` configs rejected at load with a migration hint.
+- **453 unit tests passing, 0 warnings.** Strict YAML loading; old flat `agent:` configs rejected at load with a migration hint.
 
 ---
 
@@ -99,6 +100,18 @@ What works today:
 - **`tests/test_sdk.py`**, **`tests/test_runner_core.py`**.
 - PR #40 review fixes folded in directly (no separate follow-up PR needed).
 
+### Build Stage 1 — CI regression gating (PR #46, merged)
+
+Implements `docs/plans/build-stage-1-regression-gating.md` — one shared gate engine behind both surfaces, so CLI and SDK verdicts cannot diverge (the `runner_core` principle applied to gating).
+
+- **`src/bi_evals/compare/gate.py`** — `evaluate_gate` (pure): absolute floor (`min_pass_rate`, works with no baseline — safe on a first-ever run), baseline regression with a `max_regressions_allowed` flaky-suite budget, `fail_on` level (`red`/`amber`/`never` report-only). `GateResult` records the policy it was evaluated under (`fail_on` field); truthy iff passed. `classify_runs` shares one `classify_pairs` computation between the HTML report and the gate.
+- **CLI** — `compare BASELINE CANDIDATE --fail-on [...]` prints verdict + reasons, exits 1 on gate failure; flag overrides `compare.fail_on` config; no gating configured → informational exit-0 (strict no-op defaults — deviation from the plan's config block, per its own Decisions section). Run-ref resolution moved to `store/queries.resolve_run_ref` (shared with the SDK).
+- **SDK** — `report.passed_gate` (floor only) + `report.compare_to("prev") → GateResult` (rejects a baseline resolving to the run itself). `GateResult` exported from `bi_evals`.
+- **Gate strip on the compare page** — when gating is enabled, the CLI artifact and the `bi-evals ui` `/compare` view render the gate outcome under the verdict banner (passed/FAILED, `fail_on` level, floor/budget reasons, regressed tests by name). Decision "HTML stays report-verdict only" amended in the plan doc after the first live demo (an amber banner next to a floor-failed build was unreadable). Non-gating compares render byte-identical. The artifact freezes what CI saw; the ui recomputes from current config; gate outcomes are not persisted in the store.
+- **Docs** — `getting-started.md` Step 8 (CI recipe + the multi-trial `scoring.repeats` flakiness recipe); fixed the inverted `compare latest prev` examples (the diff engine treats run A as baseline — the old order reported improvements as regressions).
+- **Verified live** — `tmp/my-evals` (floor breach → exit 1) and `demo-bi-evals-snowflake` (real regression pair → red gate; healthy pair → green), both with `compare:` blocks demoing the knobs.
+- **`tests/test_gate.py`** (floor/budget/fail_on matrix + SDK gate surface) + CLI exit-code and ui gate-strip tests.
+
 ### Housekeeping
 
 - **v0.1.0 tagged** (2026-06-16) — first versioned baseline; `CHANGELOG.md` added (Keep a Changelog format); `pyproject.toml` version now dynamic via `hatch.version`.
@@ -106,7 +119,7 @@ What works today:
 
 **Validated end-to-end:** the push path was run against `mock-bi-agent` (a FastAPI TPCH agent) + real Snowflake `SNOWFLAKE_SAMPLE_DATA.TPCH_SF10`; that run is what surfaced the PR #37 scorer bug. All three real goldens now pass.
 
-**Total: 427 unit tests passing, 0 warnings.**
+**Total: 453 unit tests passing, 0 warnings.**
 
 ---
 
@@ -114,9 +127,9 @@ What works today:
 
 One ordered backlog. Earlier stages are prerequisites for later ones only where noted; otherwise the order reflects priority against the MVP north star, not a hard dependency chain.
 
-### Build Stage 1: CI regression gating
+### Build Stage 1: CI regression gating — ✅ implemented (PR #46, merged)
 
-- `docs/plans/build-stage-1-regression-gating.md` — a shared `compare/gate.py` engine (`evaluate_gate`) consumed by **both** `bi-evals compare --fail-on [red|amber|never]` (exit 1 on gate failure; informational exit-0 without opt-in) and the SDK (`report.passed_gate` absolute floor + `report.compare_to("prev") → GateResult`). Config knobs on `compare:`: `min_pass_rate`, `max_regressions_allowed`, `fail_on` (unset = gating off; defaults are no-ops). Compare argument order fixed in docs (`compare prev latest` — baseline first). Multi-trial flakiness recipe (`scoring.repeats` + rate-based threshold + regression budget) documented in `getting-started.md` Step 8. **Implemented (CLI + SDK); 452 unit tests passing.**
+- Done; see the "Build Stage 1" entry under **Completed**. Deferred from its plan doc (still open): `stddev`-based significance testing, per-test `repeats`, a shared remote store for CI baselines, and a committed GitHub Actions workflow example.
 
 ### Build Stage 2: Capability check (open-envelope trace)
 
@@ -137,8 +150,9 @@ One ordered backlog. Earlier stages are prerequisites for later ones only where 
 
 ### Build Stage 5: Onboarding polish
 
-- `init push` scaffold (today push uses an `api_endpoint`/hand-written config; `score` forces push regardless).
-- Promote `demo-bi-evals-snowflake` (now a proven, working end-to-end demo) into a committed `examples/` reference project.
+- ~~`init push` scaffold~~ — already shipped (Pivot Phase 3.5); `init push` is the listed default on-ramp today.
+- Promote `demo-bi-evals-snowflake` (now a proven, working end-to-end demo — including the CI gate) into a committed `examples/` reference project.
+- CI recipes doc + committed GitHub Actions workflow example (baseline-via-cache pattern; surfaced by user questions after Build Stage 1 shipped).
 - Not started.
 
 ### Build Stage 6: Semantic-layer scoring
@@ -148,9 +162,10 @@ One ordered backlog. Earlier stages are prerequisites for later ones only where 
 
 ### Build Stage 7: Small fixes and cleanups
 
-- "9 dimensions" → "10 dimensions" inconsistency in `README.md` (pre-existing; re-check — README has since been substantially rewritten SDK-first, may already be resolved).
+- ~~"9 dimensions" → "10 dimensions" inconsistency in `README.md`~~ — resolved in the SDK-first README rewrite (verified: README says 10, lists 10).
 - `generated_sql` (trace JSON key) vs `extracted_sql` (Python field) naming inconsistency (touches the scorer/ingest contract).
 - Migrate `api_endpoint.py`'s manual `_get_nested` parsing to schema-based validation.
+- `push-limitations.md` §D slightly overstates cost handling ("unless your submission carries them" — the push adapter zeroes cost/tokens regardless; one-word fix).
 
 ### Build Stage 8: Deferred / unscheduled
 
@@ -188,7 +203,10 @@ Pillar 1 (Accuracy + Explainability) is fully shipped; the next two pillars are 
 | **Position-tolerant row matching** | A correct answer with differently-named output columns must not fail. The scorer matches by name when columns align, else by ordinal position — scoring substance (values, in order) not surface (labels). The thing the agent controls (naming) can't be a false-failure source |
 | **Driving (`anthropic_tool_loop`) is dev-only** | Kept for authoring goldens before a real agent exists; not a public feature — it evaluates a local rebuild. Verbatim Promptfoo research confirms the field's pattern is observe-the-real-agent, never reconstruct |
 | **The `submit()` SDK is the default on-ramp** | Sorted by *adoption friction*, raw-file push is actually the highest-effort build-it path (hand-build the loop + reshape + JSONL). `bi_evals.Runner` makes that plumbing the framework's job — the customer writes one `ask()` call — so it's the front door (shipped in Pivot Phase 3.5). Raw-file `score --input` is the logs-only/non-Python fallback; `api_endpoint` suits agents already exposed as a clean HTTP service; OTel (Build Stage 4) is the high-fidelity future path. See `docs/plans/eval-landscape-strategy.md` |
-| **One shared core behind CLI and SDK** | `runner_core.py` extracts the write-config → run → ingest tail so `bi-evals score`/`run` and `Runner.score()` can never diverge — the same principle the regression-gating plan reuses for `compare/gate.py` |
+| **One shared core behind CLI and SDK** | `runner_core.py` extracts the write-config → run → ingest tail so `bi-evals score`/`run` and `Runner.score()` can never diverge — the same principle `compare/gate.py` applies to gating |
+| **Gate ≠ verdict** | The verdict is *descriptive* (what changed — same for everyone) and unconfigurable; the gate is *policy* (should this fail the build — floor, budget, `fail_on`) and per-team. They can legitimately disagree (amber verdict + floor-failed gate; red verdict + budget-passed gate). The compare page shows both, visually distinct, only when gating is enabled |
+| **Gating defaults are strict no-ops** | `fail_on` unset = gating disabled; `min_pass_rate` null; budget 0. A `red` default would have made every already-red `compare` start failing builds. Opting in is one config line or one CLI flag |
+| **Gate outcomes are computed, not persisted** | The gate derives from (run diff + config at evaluation time); the CLI artifact freezes what a CI invocation saw, the ui recomputes from current config. Persisting per-run gate history becomes relevant only if a shared/hosted store materializes |
 | **Clean schema break over back-compat shim** | Old flat `agent:` configs fail loudly with a migration hint rather than silently mis-parsing |
 | **`agent.adapter` is a `Literal`** | A typo'd adapter fails at config-load with a clear pydantic error, not later at dispatch |
 | **Back-compat property accessors on `AgentConfig`** | `.type`/`.model`/`.endpoint`/`.tools` delegate into nested blocks so reader modules stay adapter-agnostic through the schema break |
