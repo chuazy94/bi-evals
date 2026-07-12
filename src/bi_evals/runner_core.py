@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,8 @@ from bi_evals.promptfoo.bridge import (
 from bi_evals.store import connect as store_connect
 from bi_evals.store import queries as store_queries
 from bi_evals.store.ingest import ingest_run
+
+log = logging.getLogger("bi_evals.runner")
 
 
 class PushScoreError(Exception):
@@ -98,6 +101,45 @@ def validate_push_submissions(
     return sorted(set(submitted) - selected)
 
 
+def preflight_capability_warnings(
+    config: BiEvalsConfig, pf_config: dict[str, Any], input_file: str
+) -> list[str]:
+    """Capability warnings computable before scoring (Build Stage 2).
+
+    Currently: trace coverage over the selected submissions, when a
+    trace-dependent dimension (e.g. ``skill_path_correctness``) is enabled.
+    Returns human-readable warning lines; empty list = nothing to warn about.
+    """
+    from bi_evals.scorer.capability import (
+        TRACE_DEPENDENT_DIMENSIONS,
+        coverage_warning,
+        trace_coverage,
+    )
+
+    enabled_trace_dims = TRACE_DEPENDENT_DIMENSIONS & set(config.scoring.dimensions)
+    if not enabled_trace_dims:
+        return []
+
+    selected = {t["vars"]["golden_file"] for t in pf_config.get("tests", [])}
+    rows: list[dict[str, Any]] = []
+    with Path(input_file).open() as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)  # validate_push_submissions already ran
+            if row.get("golden_file") in selected:
+                rows.append(row)
+
+    usable, total = trace_coverage(rows)
+    warnings: list[str] = []
+    for dim in sorted(enabled_trace_dims):
+        line_ = coverage_warning(usable, total, dim)
+        if line_:
+            warnings.append(line_)
+    return warnings
+
+
 def run_push_score(
     config: BiEvalsConfig,
     config_path: str,
@@ -131,6 +173,13 @@ def run_push_score(
         )
 
     extra = validate_push_submissions(config, pf_config, input_file)
+
+    # Pre-flight capability check (Build Stage 2): warn about dimensions that
+    # will not be evaluable *before* any warehouse spend. Shared by the CLI
+    # and the SDK, so the warning can't diverge between front doors.
+    for warning in preflight_capability_warnings(config, pf_config, input_file):
+        log.warning(warning)
+        echo(f"warning: {warning}")
 
     results_dir = config.resolve_path(config.reporting.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)

@@ -310,9 +310,11 @@ so real regressions still trip the gate but noise doesn't. Mind the cost:
 - **"No SQL found / could be extracted"** — your agent's answer didn't contain the SQL in a
   scorable form. Submit `generated_sql` directly, or ensure the SQL is fenced/bare-SELECT in
   `response_text`. (push)
-- **`skill_path_correctness` fails though the agent read the files** — you didn't submit a
-  `trace`, or it lacks `tool_name`/`tool_input`. Capture the trace, or drop the dimension if
-  your agent has no tools. (push)
+- **`skill_path_correctness` shows "not evaluated"** — you didn't submit a `trace`, or it
+  lacks `tool_name`/`tool_input`. bi-evals doesn't fail the dimension (it can't know what the
+  agent did) — it excludes it from the score, warns before scoring ("0 of N rows contain a
+  usable trace"), and the report's Capability panel says what to submit to unlock it. Capture
+  the trace, or drop the dimension if your agent has no tools. (push)
 - **A correct answer fails `value_accuracy`/`row_completeness`** — usually column
   order/count or `required_columns` listing output aliases. See Step 4's gotchas.
 - **Old flat `agent:` config rejected at load** — configs from before the adapter pivot must

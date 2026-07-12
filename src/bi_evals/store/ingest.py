@@ -23,6 +23,7 @@ import yaml
 
 from bi_evals.config import BiEvalsConfig
 from bi_evals.golden.loader import load_golden_test
+from bi_evals.scorer.capability import status_from_reason
 
 
 MAX_TRACE_BYTES = 1_000_000  # 1 MB guardrail per trial
@@ -107,8 +108,8 @@ def ingest_run(
                 """
                 INSERT INTO dimension_results (
                     run_id, test_id, model, trial_ix, dimension, passed, score,
-                    reason, is_critical, weight
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    reason, status, is_critical, weight
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 dr,
             )
@@ -264,6 +265,12 @@ def _build_rows(
                 dim_name = _dimension_name(d)
                 if dim_name is None:
                     continue
+                # Prefer the scorer's explicit status; fall back to sniffing
+                # the reason prefix if a Promptfoo version drops unknown keys.
+                status = (
+                    d.get("status")
+                    or status_from_reason(d.get("reason"), bool(d.get("pass"))).value
+                )
                 dim_rows.append(
                     [
                         run_id,
@@ -274,6 +281,7 @@ def _build_rows(
                         bool(d.get("pass")),
                         float(d.get("score") or 0.0),
                         d.get("reason"),
+                        status,
                         dim_name in critical,
                         float(weights.get(dim_name, 1.0)),
                     ]

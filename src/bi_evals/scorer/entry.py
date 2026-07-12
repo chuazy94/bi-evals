@@ -18,6 +18,15 @@ from bi_evals.db.factory import create_db_client
 log = logging.getLogger("bi_evals.scorer")
 from bi_evals.golden.loader import load_golden_test
 from bi_evals.trace_paths import make_test_id_slug, slugify_model
+from bi_evals.scorer.capability import (
+    DimensionStatus,
+    TraceUsability,
+    cascade_failed_upstream,
+    classify_trace,
+    critical_not_evaluated,
+    ne1_no_trace,
+    ne2_unusable_trace,
+)
 from bi_evals.scorer.dimensions import (
     DimensionResult,
     check_anti_pattern_compliance,
@@ -30,6 +39,7 @@ from bi_evals.scorer.dimensions import (
     check_skill_path_correctness,
     check_table_alignment,
     check_value_accuracy,
+    not_evaluated,
 )
 from bi_evals.db.client import QueryResult
 
@@ -201,115 +211,93 @@ def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
     if "filter_correctness" in enabled and reference_sql:
         results.append(check_filter_correctness(generated_sql, reference_sql))
 
+    def _cascade(name: str) -> DimensionResult:
+        # Upstream execution failure: a genuine FAIL (the agent's SQL never
+        # produced rows to compare), with a reason that says so honestly
+        # instead of the old misleading "skipped:" wording.
+        return DimensionResult(
+            name=name,
+            passed=False,
+            score=0.0,
+            reason=cascade_failed_upstream(name),
+        )
+
     if "row_completeness" in enabled:
-        if execution_passed:
-            results.append(
-                check_row_completeness(
-                    generated_result, reference_result, golden, config.scoring
-                )
+        results.append(
+            check_row_completeness(
+                generated_result, reference_result, golden, config.scoring
             )
-        else:
-            results.append(
-                DimensionResult(
-                    name="row_completeness",
-                    passed=False,
-                    score=0.0,
-                    reason="skipped: SQL execution failed",
-                )
-            )
+            if execution_passed
+            else _cascade("row_completeness")
+        )
 
     if "row_precision" in enabled:
-        if execution_passed:
-            results.append(
-                check_row_precision(
-                    generated_result, reference_result, golden, config.scoring
-                )
+        results.append(
+            check_row_precision(
+                generated_result, reference_result, golden, config.scoring
             )
-        else:
-            results.append(
-                DimensionResult(
-                    name="row_precision",
-                    passed=False,
-                    score=0.0,
-                    reason="skipped: SQL execution failed",
-                )
-            )
+            if execution_passed
+            else _cascade("row_precision")
+        )
 
     if "value_accuracy" in enabled:
-        if execution_passed:
-            results.append(
-                check_value_accuracy(
-                    generated_result, reference_result, golden, config.scoring
-                )
+        results.append(
+            check_value_accuracy(
+                generated_result, reference_result, golden, config.scoring
             )
-        else:
-            results.append(
-                DimensionResult(
-                    name="value_accuracy",
-                    passed=False,
-                    score=0.0,
-                    reason="skipped: SQL execution failed",
-                )
-            )
+            if execution_passed
+            else _cascade("value_accuracy")
+        )
 
     if "no_hallucinated_columns" in enabled and reference_sql:
         results.append(check_no_hallucinated_columns(generated_sql, reference_sql))
 
     if "skill_path_correctness" in enabled:
-        results.append(check_skill_path_correctness(trace_steps, golden))
+        # Capability check first (Build Stage 2): distinguish "can't know"
+        # (nothing usable submitted) from "know it failed" (usable trace,
+        # wrong tools). Golden-side vacuous skip still wins — nothing to
+        # check means the trace's presence is irrelevant.
+        if not golden.expected_skill_path.required_skills:
+            results.append(check_skill_path_correctness(trace_steps, golden))
+        else:
+            trace_cap = classify_trace(trace_steps)
+            if trace_cap.usability is TraceUsability.ABSENT:
+                results.append(
+                    not_evaluated(
+                        "skill_path_correctness",
+                        ne1_no_trace("skill_path_correctness"),
+                    )
+                )
+            elif trace_cap.usability is TraceUsability.UNUSABLE:
+                results.append(
+                    not_evaluated(
+                        "skill_path_correctness",
+                        ne2_unusable_trace(
+                            "skill_path_correctness", trace_cap.total_entries
+                        ),
+                    )
+                )
+            else:
+                results.append(check_skill_path_correctness(trace_steps, golden))
 
     if "anti_pattern_compliance" in enabled:
         results.append(check_anti_pattern_compliance(generated_sql, golden))
 
-    # Convert to Promptfoo GradingResult with componentResults
+    # Convert to Promptfoo GradingResult with componentResults. The explicit
+    # `status` key is the primary channel to ingest; the reason-string prefix
+    # is the fallback if a Promptfoo version drops unknown keys.
     component_results = [
         {
             "pass": r.passed,
             "score": r.score,
             "reason": r.reason,
+            "status": r.status.value,
             "namedScores": {r.name: r.score},
         }
         for r in results
     ]
 
-    # Tiered scoring:
-    #   1. All critical dimensions must pass (e.g. execution, row_completeness,
-    #      value_accuracy). If any critical dimension fails, the test fails.
-    #   2. Otherwise, compute a weighted score across all dimensions and require
-    #      it to be >= pass_threshold.
-    weights = config.scoring.dimension_weights
-    critical = set(config.scoring.critical_dimensions)
-
-    total_weight = sum(weights.get(r.name, 1.0) for r in results)
-    weighted_score = (
-        sum(weights.get(r.name, 1.0) * r.score for r in results) / total_weight
-        if total_weight
-        else 0.0
-    )
-
-    failed_critical = [r.name for r in results if r.name in critical and not r.passed]
-    passed_dims = sum(1 for r in results if r.passed)
-    total_dims = len(results)
-
-    if failed_critical:
-        overall_pass = False
-        reason = (
-            f"Failed critical dimension(s): {failed_critical} "
-            f"({passed_dims}/{total_dims} dimensions passed, "
-            f"weighted score {weighted_score:.2f})"
-        )
-    elif weighted_score >= config.scoring.pass_threshold:
-        overall_pass = True
-        reason = (
-            f"Passed: {passed_dims}/{total_dims} dimensions, "
-            f"weighted score {weighted_score:.2f} >= {config.scoring.pass_threshold:.2f}"
-        )
-    else:
-        overall_pass = False
-        reason = (
-            f"Weighted score {weighted_score:.2f} below threshold "
-            f"{config.scoring.pass_threshold:.2f} ({passed_dims}/{total_dims} dimensions passed)"
-        )
+    overall_pass, weighted_score, reason = aggregate_results(results, config.scoring)
 
     return {
         "pass": overall_pass,
@@ -317,3 +305,81 @@ def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
         "reason": reason,
         "componentResults": component_results,
     }
+
+
+def aggregate_results(
+    results: list[DimensionResult],
+    scoring: Any,
+) -> tuple[bool, float, str]:
+    """Tiered scoring over honest dimension statuses (Build Stage 2).
+
+    1. A critical dimension that could NOT be evaluated fails the test — a
+       critical dimension must be *verifiable* to pass (decision D1).
+    2. All evaluated critical dimensions must pass.
+    3. Otherwise the weighted score over **evaluated** dimensions (PASS/FAIL
+       only — `skipped` and `not_evaluated` are excluded from numerator and
+       denominator, decision D2) must reach ``pass_threshold``.
+    """
+    weights = scoring.dimension_weights
+    critical = set(scoring.critical_dimensions)
+
+    countable = [
+        r for r in results if r.status in (DimensionStatus.PASS, DimensionStatus.FAIL)
+    ]
+    ne_count = sum(1 for r in results if r.status is DimensionStatus.NOT_EVALUATED)
+    ne_suffix = f", {ne_count} not evaluated" if ne_count else ""
+
+    total_weight = sum(weights.get(r.name, 1.0) for r in countable)
+    weighted_score = (
+        sum(weights.get(r.name, 1.0) * r.score for r in countable) / total_weight
+        if total_weight
+        else 0.0
+    )
+
+    passed_dims = sum(1 for r in countable if r.passed)
+    total_dims = len(countable)
+
+    critical_ne = sorted(
+        r.name
+        for r in results
+        if r.name in critical and r.status is DimensionStatus.NOT_EVALUATED
+    )
+    failed_critical = [r.name for r in countable if r.name in critical and not r.passed]
+
+    if critical_ne:
+        return (
+            False,
+            weighted_score,
+            f"FAIL: {critical_not_evaluated(critical_ne)} "
+            f"({passed_dims}/{total_dims} evaluated dimensions passed{ne_suffix})",
+        )
+    if failed_critical:
+        return (
+            False,
+            weighted_score,
+            f"Failed critical dimension(s): {failed_critical} "
+            f"({passed_dims}/{total_dims} dimensions passed, "
+            f"weighted score {weighted_score:.2f}{ne_suffix})",
+        )
+    if not countable:
+        return (
+            False,
+            0.0,
+            f"No dimension could be evaluated for this submission{ne_suffix} — "
+            f"nothing to score.",
+        )
+    if weighted_score >= scoring.pass_threshold:
+        return (
+            True,
+            weighted_score,
+            f"Passed: {passed_dims}/{total_dims} dimensions, "
+            f"weighted score {weighted_score:.2f} >= {scoring.pass_threshold:.2f}"
+            f"{ne_suffix}",
+        )
+    return (
+        False,
+        weighted_score,
+        f"Weighted score {weighted_score:.2f} below threshold "
+        f"{scoring.pass_threshold:.2f} ({passed_dims}/{total_dims} dimensions "
+        f"passed{ne_suffix})",
+    )

@@ -31,6 +31,11 @@ from urllib.request import Request, urlopen
 
 from bi_evals.config import ApiEndpointConfig, BiEvalsConfig
 from bi_evals.db.factory import create_db_client
+from bi_evals.scorer.capability import (
+    TRACE_DEPENDENT_DIMENSIONS,
+    coverage_warning,
+    trace_coverage,
+)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -243,6 +248,7 @@ def check_push_setup(config: BiEvalsConfig) -> list[CheckResult]:
         return results
     try:
         rows = 0
+        parsed_rows: list[dict[str, Any]] = []
         with path.open() as f:
             for lineno, line in enumerate(f, start=1):
                 line = line.strip()
@@ -251,10 +257,28 @@ def check_push_setup(config: BiEvalsConfig) -> list[CheckResult]:
                 row = json.loads(line)
                 if not row.get("golden_file"):
                     raise ValueError(f"line {lineno}: missing 'golden_file'")
+                parsed_rows.append(row)
                 rows += 1
         results.append(
             CheckResult("Submission file", "ok", f"{input_file} ({rows} row(s))")
         )
+        # Build Stage 2: capability coverage — say up front which dimensions
+        # won't be evaluable, before any warehouse spend.
+        trace_dims = TRACE_DEPENDENT_DIMENSIONS & set(config.scoring.dimensions)
+        if trace_dims and parsed_rows:
+            usable, total = trace_coverage(parsed_rows)
+            for dim in sorted(trace_dims):
+                warning = coverage_warning(usable, total, dim)
+                if warning:
+                    results.append(CheckResult("Trace coverage", "warn", warning))
+            if not any(coverage_warning(usable, total, d) for d in sorted(trace_dims)):
+                results.append(
+                    CheckResult(
+                        "Trace coverage",
+                        "ok",
+                        f"usable trace in {usable}/{total} submission(s).",
+                    )
+                )
     except (json.JSONDecodeError, ValueError, OSError) as e:
         results.append(CheckResult("Submission file", "fail", f"{input_file}: {e}"))
     return results

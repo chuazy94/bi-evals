@@ -1,8 +1,12 @@
 # Plan: Build Stage 2 — Capability check (open-envelope trace)
 
-> **Status: proposed — not yet implemented.** Design under discussion with the
-> user; the outcome classification and user-facing messages below are the core
-> of the stage and were specified first, before any code.
+> **Status: implemented** (same branch as this doc's decisions). Two small
+> deviations from the message specs below, discovered at implementation:
+> NE-2 cannot echo the submitter's original keys (`{observed_keys}`) because
+> the adapter normalises entries into TraceStep dicts before the scorer sees
+> them — the message names the expected keys instead; and NE-3 folded into
+> NE-2 (steps without usable `tool_input` classify as unusable) rather than
+> being a separate message.
 
 ## Goal
 
