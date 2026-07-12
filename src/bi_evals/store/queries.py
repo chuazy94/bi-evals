@@ -58,6 +58,9 @@ class DimRow:
     reason: str | None
     is_critical: bool
     weight: float | None
+    # Build Stage 2: pass | fail | skipped | not_evaluated; None on rows
+    # ingested before the column existed (plain pass/fail semantics).
+    status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -259,7 +262,8 @@ def list_dimensions(
                AVG(score) AS mean_score,
                ANY_VALUE(reason) AS reason,
                BOOL_OR(is_critical) AS is_critical,
-               ANY_VALUE(weight) AS weight
+               ANY_VALUE(weight) AS weight,
+               ANY_VALUE(status) AS status
         FROM dimension_results
         WHERE run_id = ? AND test_id = ?
     """
@@ -306,6 +310,8 @@ def aggregate_by_category(
 
 
 def dimension_pass_rates(conn: duckdb.DuckDBPyConnection, run_id: str) -> list[DimAgg]:
+    # not_evaluated rows are excluded: "couldn't know" must not read as a
+    # failure in the aggregates. NULL status = pre-Stage-2 row, included.
     rows = conn.execute(
         """
         SELECT dimension,
@@ -313,7 +319,7 @@ def dimension_pass_rates(conn: duckdb.DuckDBPyConnection, run_id: str) -> list[D
                COUNT(*) AS total,
                BOOL_OR(is_critical) AS is_critical
         FROM dimension_results
-        WHERE run_id = ?
+        WHERE run_id = ? AND COALESCE(status, '') != 'not_evaluated'
         GROUP BY dimension
         ORDER BY (SUM(CASE WHEN passed THEN 1 ELSE 0 END)::DOUBLE / COUNT(*)) ASC,
                  dimension ASC
@@ -396,13 +402,18 @@ def test_diff(conn: duckdb.DuckDBPyConnection, run_a_id: str, run_b_id: str) -> 
 def _dims_by_test(
     conn: duckdb.DuckDBPyConnection, run_id: str
 ) -> dict[tuple[str, str], dict[str, float]]:
-    """Aggregate per-trial dimension pass rates, keyed by (test_id, model)."""
+    """Aggregate per-trial dimension pass rates, keyed by (test_id, model).
+
+    not_evaluated rows are excluded so an unknown dimension is *absent* from
+    the compare diff (rate None on that side) — adding a trace later must not
+    read as a "fix", nor dropping one as a regression.
+    """
     rows = conn.execute(
         """
         SELECT test_id, model, dimension,
                AVG(CASE WHEN passed THEN 1.0 ELSE 0.0 END) AS pass_rate
         FROM dimension_results
-        WHERE run_id = ?
+        WHERE run_id = ? AND COALESCE(status, '') != 'not_evaluated'
         GROUP BY test_id, model, dimension
         """,
         [run_id],

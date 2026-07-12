@@ -77,6 +77,26 @@
   </p>
 </div>
 
+{% if capability %}
+<h2>Capability</h2>
+<div class="card">
+  <p style="margin-top: 0;">
+    ⚠ Some dimensions could not be evaluated — the submission carried no data
+    for them. Not-evaluated dimensions are <strong>excluded from scores</strong>:
+    they are neither passes nor failures.
+  </p>
+  <ul style="margin-bottom: 0;">
+    {% for c in capability %}
+    <li>
+      <span class="mono">{{ c.dimension }}</span> — evaluated for
+      {{ c.evaluated }}/{{ c.total }} case(s), not evaluated for {{ c.not_evaluated }}.
+      <div class="muted" style="margin-top: 4px;">{{ c.sample_reason }}</div>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 {% if failures %}
 <h2>Failures{% if failures_total > failures|length %} ({{ failures|length }} of {{ failures_total }} shown){% endif %}</h2>
 <div class="card">

@@ -10,6 +10,36 @@ these are called out under a **Breaking** heading.
 ## [Unreleased]
 
 ### Added
+- **Capability check** (Build Stage 2, per
+  `docs/plans/build-stage-2-capability-check.md`) — when bi-evals cannot score
+  a dimension it now says "I can't know", never "I know it failed":
+  - Dimension results carry a first-class status: `pass` | `fail` | `skipped`
+    (golden declares nothing to check) | `not_evaluated` (submission lacks the
+    data). `skill_path_correctness` with no usable trace is **not evaluated**
+    (with an unlock hint naming the exact shape to submit) instead of failing.
+  - Pre-flight warning before any warehouse spend (`score` CLI, SDK, and
+    `doctor`): "0 of N submissions contain a usable trace — X will not be
+    evaluated this run."
+  - Report gains a **Capability panel** (rendered only when something wasn't
+    evaluable): per-dimension evaluated/not-evaluated counts + the unlock hint.
+  - Compare/gating treats `not_evaluated` as absent, not zero — adding a trace
+    later doesn't read as a "fix", dropping one doesn't read as a regression.
+  - A **critical** dimension that cannot be evaluated fails the test with a
+    distinct reason ("must be verifiable to pass") — never silently.
+  - `dimension_results` gains a nullable `status` column (auto-migrated on
+    connect; historical rows keep boolean-only semantics, no backfill).
+
+### Changed
+- **Vacuous skips no longer pad the weighted score.** A dimension the golden
+  declares nothing for (e.g. `anti_pattern_compliance` with no `anti_patterns`)
+  used to contribute a free `1.0 × weight`; it is now excluded from the score
+  entirely (numerator and denominator). Weighted scores can shift slightly on
+  unchanged submissions — re-baseline before comparing across this version;
+  pass/fail flips are possible for tests sitting near `pass_threshold`.
+- Upstream-cascade reasons are honest: row dimensions blocked by an execution
+  failure now say "failed upstream: the generated SQL did not execute" instead
+  of the misleading "skipped: SQL execution failed". (Still counted as
+  failures — the agent caused them.)
 - **CI regression gating** (Build Stage 1, per
   `docs/plans/build-stage-1-regression-gating.md`) — one shared gate engine
   (`compare/gate.py: evaluate_gate`) behind both surfaces:

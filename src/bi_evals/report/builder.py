@@ -199,9 +199,14 @@ def build_report_html(
         else list(DEFAULT_CRITICAL_DIMENSIONS)
     )
 
+    # Build Stage 2: capability panel — which dimensions had cases the
+    # submission carried no data for ("couldn't know", not "failed").
+    capability = _capability_summary(conn, run_id)
+
     env = _env()
     return env.get_template("report.html.j2").render(
         run=run,
+        capability=capability,
         categories=categories,
         dimensions=dimensions,
         models=models,
@@ -262,7 +267,9 @@ def _build_failure_view(
     out: list[dict[str, Any]] = []
     for t in failed_tests[:FAILURES_SECTION_LIMIT]:
         dims = q.list_dimensions(conn, run_id, t.test_id, model=t.model)
-        failed_dims = [d for d in dims if not d.passed]
+        # A not_evaluated dimension is "couldn't know", not "failed" — it
+        # belongs in the capability panel, not the failure list.
+        failed_dims = [d for d in dims if not d.passed and d.status != "not_evaluated"]
         # Sort: critical failures first, then alphabetical
         failed_dims.sort(key=lambda d: (not d.is_critical, d.dimension))
         out.append(
@@ -276,6 +283,42 @@ def _build_failure_view(
             }
         )
     return out
+
+
+def _capability_summary(
+    conn: duckdb.DuckDBPyConnection, run_id: str
+) -> list[dict[str, Any]]:
+    """Per-dimension counts of cases that could not be evaluated.
+
+    One entry per dimension that has at least one ``not_evaluated`` row:
+    how many (test, model) cases lacked the data vs. were evaluated, plus a
+    sample reason (the NE-x message carries the unlock instructions).
+    Empty list → the panel doesn't render.
+    """
+    rows = conn.execute(
+        """
+        SELECT dimension,
+               SUM(CASE WHEN status = 'not_evaluated' THEN 1 ELSE 0 END) AS ne,
+               COUNT(*) AS total,
+               ANY_VALUE(CASE WHEN status = 'not_evaluated' THEN reason END) AS sample_reason
+        FROM dimension_results
+        WHERE run_id = ?
+        GROUP BY dimension
+        HAVING SUM(CASE WHEN status = 'not_evaluated' THEN 1 ELSE 0 END) > 0
+        ORDER BY dimension
+        """,
+        [run_id],
+    ).fetchall()
+    return [
+        {
+            "dimension": r[0],
+            "not_evaluated": int(r[1]),
+            "evaluated": int(r[2]) - int(r[1]),
+            "total": int(r[2]),
+            "sample_reason": r[3] or "",
+        }
+        for r in rows
+    ]
 
 
 def _drop_vacuous_dimensions(

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from bi_evals.config import ScoringConfig
 from bi_evals.db.client import QueryResult
 from bi_evals.golden.model import AntiPatterns, GoldenTest
+from bi_evals.scorer.capability import DimensionStatus
 from bi_evals.scorer.sql_utils import (
     extract_columns_with_tables,
     extract_filter_columns,
@@ -19,18 +20,52 @@ from bi_evals.scorer.sql_utils import (
 
 @dataclass
 class DimensionResult:
-    """Result of a single dimension evaluation."""
+    """Result of a single dimension evaluation.
+
+    ``status`` is the honest interpretation (Build Stage 2): PASS/FAIL count
+    toward scores and gating; SKIPPED (golden declares nothing to check) and
+    NOT_EVALUATED (submission lacks the data) are excluded from both. When not
+    given explicitly it derives from ``passed``.
+    """
 
     name: str
     passed: bool
     score: float  # 1.0 or 0.0
     reason: str
+    status: DimensionStatus = field(default=None)  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.status is None:
+            self.status = DimensionStatus.PASS if self.passed else DimensionStatus.FAIL
 
 
 def _skip(name: str, reason: str) -> DimensionResult:
-    """Auto-pass a dimension that doesn't apply."""
+    """A dimension the golden declares nothing for — vacuously true.
+
+    ``passed=True`` is kept for back-compat display, but SKIPPED status means
+    it no longer contributes its weight to the score (Stage 2 decision D2).
+    """
     return DimensionResult(
-        name=name, passed=True, score=1.0, reason=f"skipped: {reason}"
+        name=name,
+        passed=True,
+        score=1.0,
+        reason=f"skipped: {reason}",
+        status=DimensionStatus.SKIPPED,
+    )
+
+
+def not_evaluated(name: str, reason: str) -> DimensionResult:
+    """A dimension the submission carries no data for — bi-evals cannot know.
+
+    Excluded from the weighted score entirely; fails the test only when the
+    dimension is critical (Stage 2 decision D1).
+    """
+    return DimensionResult(
+        name=name,
+        passed=False,
+        score=0.0,
+        reason=reason,
+        status=DimensionStatus.NOT_EVALUATED,
     )
 
 

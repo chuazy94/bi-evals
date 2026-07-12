@@ -102,6 +102,10 @@ CREATE TABLE IF NOT EXISTS dimension_results (
     passed       BOOLEAN NOT NULL,
     score        DOUBLE NOT NULL,
     reason       TEXT,
+    -- Build Stage 2: pass | fail | skipped | not_evaluated. NULL on rows
+    -- ingested before the column existed (no backfill by decision) —
+    -- readers treat NULL as plain pass/fail semantics.
+    status       VARCHAR,
     is_critical  BOOLEAN NOT NULL,
     weight       DOUBLE,
     PRIMARY KEY (run_id, test_id, model, trial_ix, dimension)
@@ -138,6 +142,8 @@ _LEGACY_MIGRATIONS = [
     # 6b
     ("runs", "prompt_snapshot", "JSON"),
     ("test_results", "last_verified_at", "DATE"),
+    # Build Stage 2 (capability check)
+    ("dimension_results", "status", "VARCHAR"),
 ]
 
 

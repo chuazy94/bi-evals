@@ -72,7 +72,8 @@ strategies, in order:
 If none match, the row **fails** ("no SQL could be extracted"). The failure mode to design
 against: an answer that *describes* the query ("I summed revenue by region from the fact
 table") without including it. Prose-mode agents usually also return no trace, so
-`skill_path_correctness` can't be scored — drop the dimension or move up a tier.
+`skill_path_correctness` is reported **not evaluated** (excluded from the score, with an
+unlock hint — never counted as a failure) — drop the dimension or move up a tier.
 
 ### Tier 4 — chart-only / prose-only (not scorable)
 
