@@ -40,8 +40,6 @@ jobs:
 
           # Temporary debug toggle: surface the full SDK output (incl. the real
           # auth/usage error text) in the Actions log. Remove once the token is fixed.
-          show_full_output: true
-
           # This is an optional setting that allows Claude to read CI results on PRs
           additional_permissions: |
             actions: read
