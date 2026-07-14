@@ -442,3 +442,48 @@ class TestDoctorPush:
         # the valid submission file should be an "ok" check
         sub = next(c for c in checks if c.name == "Submission file")
         assert sub.severity == "ok"
+
+
+CTE_SQL = (
+    "WITH totals AS (\n"
+    "SELECT region, SUM(v) AS t FROM revenue GROUP BY 1\n"
+    ")\n"
+    "SELECT region, t FROM totals ORDER BY t DESC\n"
+    "LIMIT 10"
+)
+
+
+class TestCteSqlNotMangled:
+    """Regression: extract_sql's bare-SELECT fallback used to strip the WITH
+    prefix off CTEs, producing broken SQL (orphaned closing paren)."""
+
+    def test_generated_sql_cte_used_verbatim(self) -> None:
+        sql, _, err = resolve_sql({"generated_sql": CTE_SQL}, "g")
+        assert err is None
+        assert sql == CTE_SQL.strip()
+        assert sql.startswith("WITH totals AS (")
+
+    def test_extract_sql_bare_cte_keeps_with_prefix(self) -> None:
+        from bi_evals.provider.contract import extract_sql
+
+        assert extract_sql(CTE_SQL) == CTE_SQL.strip()
+
+    def test_extract_sql_cte_in_prose(self) -> None:
+        from bi_evals.provider.contract import extract_sql
+
+        text = f"Here's the query I used:\n\n{CTE_SQL}\n"
+        assert extract_sql(text) == CTE_SQL.strip()
+
+    def test_extract_sql_english_with_does_not_glue_prose(self) -> None:
+        from bi_evals.provider.contract import extract_sql
+
+        # The English word "with" must not be mistaken for a CTE prefix.
+        text = "I answered with the following: SELECT 1 FROM t;"
+        assert extract_sql(text) == "SELECT 1 FROM t"
+
+    def test_generated_sql_fenced_cte_is_unwrapped(self) -> None:
+        sql, _, err = resolve_sql(
+            {"generated_sql": f"```sql\n{CTE_SQL}\n```"}, "g"
+        )
+        assert err is None
+        assert sql == CTE_SQL.strip()

@@ -96,8 +96,15 @@ def extract_sql(text: str) -> str | None:
         if re.search(r"\bSELECT\b", block, re.IGNORECASE):
             return block
 
-    # Strategy 3: bare SELECT statement
-    match = re.search(r"(SELECT\b.+?)(?:;|\Z)", text, re.DOTALL | re.IGNORECASE)
+    # Strategy 3: bare SELECT statement, including an optional CTE prefix —
+    # matching from SELECT alone would strip `WITH x AS (` off a CTE and leave
+    # broken SQL. The WITH branch requires the `WITH <name> AS (` shape so the
+    # English word "with" in surrounding prose can't match.
+    match = re.search(
+        r"((?:WITH\s+[\w\"]+\s+AS\s*\(.*?)?SELECT\b.+?)(?:;|\Z)",
+        text,
+        re.DOTALL | re.IGNORECASE,
+    )
     if match:
         return match.group(1).strip()
 
