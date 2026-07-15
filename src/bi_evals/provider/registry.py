@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -137,7 +136,10 @@ def resolve_sql(row: dict[str, Any], golden_file: str) -> tuple[str, str, str | 
       1. an ``error`` row is valid — the agent failed to answer; nothing to
          extract, and the adapter handles it as a failed `execution` outcome.
       2. ``generated_sql`` if present — trust the customer's explicit extraction
-         (still run ``extract_sql`` so a fenced/prose value is unwrapped).
+         (still run ``extract_sql`` so a fenced/prose value is unwrapped; a
+         value that's already clean SQL round-trips unchanged, since
+         ``extract_sql`` validates candidates with a real SQL parser rather
+         than a hand-written pattern).
       3. else ``response_text`` — extract the SQL from the raw answer.
       4. else error — nothing to score.
 
@@ -153,19 +155,13 @@ def resolve_sql(row: dict[str, Any], golden_file: str) -> tuple[str, str, str | 
 
     if generated_sql:
         raw = str(generated_sql)
-        if re.match(r"^\s*(WITH|SELECT)\b", raw, re.IGNORECASE):
-            # Already clean SQL — trust the customer's explicit extraction
-            # verbatim. Running extract_sql here mangled CTEs (the bare-SELECT
-            # fallback dropped the WITH prefix).
-            sql = raw.strip()
-        else:
-            extracted = extract_sql(raw)
-            sql = extracted or raw
-            if extracted is None:
-                # No fence/bare-SELECT found — the value was used verbatim.
-                log.debug(
-                    "%s: generated_sql used verbatim (no fence found)", golden_file
-                )
+        extracted = extract_sql(raw)
+        sql = extracted or raw
+        if extracted is None:
+            # No fence/parseable statement found — used verbatim. Usually
+            # fine (it was already clean SQL sqlglot happens not to parse,
+            # e.g. a dialect quirk); worth a debug breadcrumb regardless.
+            log.debug("%s: generated_sql used verbatim (no fence found)", golden_file)
         # Prefer the raw answer as final_text when the agent supplied one.
         final_text = str(response_text) if response_text else raw
         return sql, final_text, None
