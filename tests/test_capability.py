@@ -203,6 +203,31 @@ def _mutated_run(tmp_path: Path, *, status_key: bool) -> Path:
     return out
 
 
+def _partially_skipped_run(tmp_path: Path) -> Path:
+    """RUN_A with table_alignment turned into a vacuous skip on ONE test
+    only; the other 4 tests keep their genuine pass/fail on that dimension
+    untouched. The partial-skip case _drop_vacuous_dimensions never covered
+    (it only drops a dimension when *every* row is skipped) — exercises
+    whether the run-level aggregates (dimension_pass_rates/_dims_by_test)
+    exclude just the skipped row rather than folding it in as a free pass."""
+    data = json.loads(RUN_A_JSON.read_text())
+    results = data["results"]["results"]
+    mutated = False
+    for res in results:
+        outer = res["gradingResult"]["componentResults"][0]
+        for d in outer["componentResults"]:
+            if "table_alignment" in (d.get("namedScores") or {}) and not mutated:
+                d["pass"] = True
+                d["score"] = 1.0
+                d["reason"] = "skipped: no reference_sql to compare tables against"
+                d["status"] = "skipped"
+                mutated = True
+    assert mutated, "fixture must contain a table_alignment row"
+    out = tmp_path / "eval_partial_skip.json"
+    out.write_text(json.dumps(data))
+    return out
+
+
 class TestStoreStatus:
     @pytest.mark.parametrize("status_key", [True, False])
     def test_ingest_stores_status(
@@ -234,6 +259,36 @@ class TestStoreStatus:
             dims_by_test = _dims_by_test(conn, run_id)
             for dims in dims_by_test.values():
                 assert "skill_path_correctness" not in dims
+
+    def test_skipped_rows_excluded_from_run_level_aggregates(
+        self, eval_sample_config: BiEvalsConfig, tmp_path: Path
+    ) -> None:
+        """D2 applies to skipped, not just not_evaluated, in the run-level
+        aggregates the report and compare/gate read (not just the per-test
+        aggregate_results score)."""
+        run_json = _partially_skipped_run(tmp_path)
+        db = eval_sample_config.resolve_path(eval_sample_config.storage.db_path)
+        with store_connect(db) as conn:
+            run_id = ingest_run(conn, run_json, eval_sample_config)
+
+            aggs = {
+                a.dimension: a for a in store_queries.dimension_pass_rates(conn, run_id)
+            }
+            ta = aggs["table_alignment"]
+            # 5 tests total, 1 skipped: total/passes must reflect only the 4
+            # genuinely-evaluated rows, not the free vacuous pass folded in.
+            assert ta.total == 4
+            assert ta.pass_count == 4
+
+            dims_by_test = _dims_by_test(conn, run_id)
+            skipped_key = next(
+                k for k in dims_by_test if "daily-cases-filtered" in k[0]
+            )
+            assert "table_alignment" not in dims_by_test[skipped_key]
+            other_key = next(
+                k for k in dims_by_test if "daily-cases-filtered" not in k[0]
+            )
+            assert "table_alignment" in dims_by_test[other_key]
 
     def test_report_renders_capability_panel(
         self, eval_sample_config: BiEvalsConfig, tmp_path: Path

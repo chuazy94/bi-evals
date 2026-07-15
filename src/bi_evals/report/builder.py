@@ -335,6 +335,14 @@ def _drop_vacuous_dimensions(
 
     A dimension is vacuous when *every* row has ``passed=true`` AND a reason
     that starts with "skipped" (the marker emitted by ``_skip()``).
+
+    Since Stage 2, ``dimension_pass_rates()`` already excludes ``skipped``
+    rows from its own aggregate (decision D2), so an all-skipped dimension no
+    longer appears in ``dimensions`` at all by the time it reaches here — this
+    function is now a no-op for that case and only still matters for rows
+    ingested before the ``status`` column existed (NULL status, reason-prefix
+    only). Kept rather than removed so old runs still get the dimension
+    dropped from view.
     """
     if not dimensions:
         return dimensions

@@ -310,8 +310,11 @@ def aggregate_by_category(
 
 
 def dimension_pass_rates(conn: duckdb.DuckDBPyConnection, run_id: str) -> list[DimAgg]:
-    # not_evaluated rows are excluded: "couldn't know" must not read as a
-    # failure in the aggregates. NULL status = pre-Stage-2 row, included.
+    # not_evaluated AND skipped rows are excluded (Stage 2 decision D2): a
+    # dimension the submission couldn't know, or the golden declared nothing
+    # to check, must not read as a free "pass" in this run-level aggregate —
+    # matching aggregate_results()'s per-test exclusion. NULL status =
+    # pre-Stage-2 row, included (plain pass/fail semantics).
     rows = conn.execute(
         """
         SELECT dimension,
@@ -319,7 +322,7 @@ def dimension_pass_rates(conn: duckdb.DuckDBPyConnection, run_id: str) -> list[D
                COUNT(*) AS total,
                BOOL_OR(is_critical) AS is_critical
         FROM dimension_results
-        WHERE run_id = ? AND COALESCE(status, '') != 'not_evaluated'
+        WHERE run_id = ? AND COALESCE(status, '') NOT IN ('not_evaluated', 'skipped')
         GROUP BY dimension
         ORDER BY (SUM(CASE WHEN passed THEN 1 ELSE 0 END)::DOUBLE / COUNT(*)) ASC,
                  dimension ASC
@@ -404,16 +407,18 @@ def _dims_by_test(
 ) -> dict[tuple[str, str], dict[str, float]]:
     """Aggregate per-trial dimension pass rates, keyed by (test_id, model).
 
-    not_evaluated rows are excluded so an unknown dimension is *absent* from
-    the compare diff (rate None on that side) — adding a trace later must not
-    read as a "fix", nor dropping one as a regression.
+    not_evaluated AND skipped rows are excluded (Stage 2 decision D2) so an
+    unknown or vacuously-skipped dimension is *absent* from the compare diff
+    (rate None on that side) — adding a trace later must not read as a "fix",
+    nor dropping one as a regression; a vacuous skip must not read as a green
+    dimension in critical-dim regression detection either.
     """
     rows = conn.execute(
         """
         SELECT test_id, model, dimension,
                AVG(CASE WHEN passed THEN 1.0 ELSE 0.0 END) AS pass_rate
         FROM dimension_results
-        WHERE run_id = ? AND COALESCE(status, '') != 'not_evaluated'
+        WHERE run_id = ? AND COALESCE(status, '') NOT IN ('not_evaluated', 'skipped')
         GROUP BY test_id, model, dimension
         """,
         [run_id],
