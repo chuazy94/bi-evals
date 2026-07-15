@@ -2,7 +2,7 @@
 
 ## Summary
 
-bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is the test runner; all custom logic (provider/adapters, tools, scoring, storage, reporting, viewer) is Python. The MVP (Pillar 1: Accuracy + Explainability per `docs/mvp-eval-platform.md`) is complete and exceeded. The project has completed the **response-evaluation architecture pivot** (`docs/plans/pivot-phase-1-integration-analysis.md`, `docs/plans/pivot-phases-overview.md`): the agent layer is **one canonical contract `{generated_sql, trace}`, many adapters** — bi-evals scores the real agent's response and never rebuilds the agent. The framework tagged its first release, **v0.1.0** (2026-06-16), the README leads with the SDK on-ramp, and **Build Stage 1 (CI regression gating) is implemented (PR #46, merged)** — `compare` and the SDK can now fail a build on regressions or a pass-rate floor.
+bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is the test runner; all custom logic (provider/adapters, tools, scoring, storage, reporting, viewer) is Python. The MVP (Pillar 1: Accuracy + Explainability per `docs/mvp-eval-platform.md`) is complete and exceeded. The project has completed the **response-evaluation architecture pivot** (`docs/plans/pivot-phase-1-integration-analysis.md`, `docs/plans/pivot-phases-overview.md`): the agent layer is **one canonical contract `{generated_sql, trace}`, many adapters** — bi-evals scores the real agent's response and never rebuilds the agent. The framework tagged its first release, **v0.1.0** (2026-06-16), the README leads with the SDK on-ramp, **Build Stage 1 (CI regression gating) is implemented (PR #46, merged)** — `compare` and the SDK can now fail a build on regressions or a pass-rate floor — and **Build Stage 2 (capability check) is implemented (PR #47, open)** — the scorer now distinguishes "couldn't know" from "know it failed" for dimensions the submission lacks data for, with pre-flight warnings and a report Capability panel.
 
 > **Phase numbering.** The original MVP phases (Phase 1–7.8) are historical and shipped. The response-evaluation architecture work is numbered separately as **Pivot Phase 1, 2, …** to avoid colliding with them.
 
@@ -22,7 +22,7 @@ What works today:
 - **Adapter architecture**: `agent.adapter` selects an adapter from a registry — `push` (replay submitted results), `api_endpoint` (POST to the live agent), `anthropic_tool_loop` (dev-only; runs Claude + skill files locally). All normalise into the canonical `AgentResult` the scorer consumes; the scorer is adapter-agnostic.
 - **10-dimension scorer** with tiered/weighted pass-fail. Row matching is **position-tolerant**: when the agent names output columns differently from the golden's reference, rows match by ordinal position rather than falsely failing (the values are what matter, not the labels).
 - Multi-model evaluation (dev adapter), repeat-run variance, `FileReaderTool` + `DescribeTableTool`, `SnowflakeClient`, `GoldenTest` with `last_verified_at` and `anti_patterns`.
-- **453 unit tests passing, 0 warnings.** Strict YAML loading; old flat `agent:` configs rejected at load with a migration hint.
+- **486 unit tests passing, 0 warnings.** Strict YAML loading; old flat `agent:` configs rejected at load with a migration hint.
 
 ---
 
@@ -112,14 +112,26 @@ Implements `docs/plans/build-stage-1-regression-gating.md` — one shared gate e
 - **Verified live** — `tmp/my-evals` (floor breach → exit 1) and `demo-bi-evals-snowflake` (real regression pair → red gate; healthy pair → green), both with `compare:` blocks demoing the knobs.
 - **`tests/test_gate.py`** (floor/budget/fail_on matrix + SDK gate surface) + CLI exit-code and ui gate-strip tests.
 
+### Build Stage 2 — Capability check (PR #47, open)
+
+Implements `docs/plans/build-stage-2-capability-check.md`. Core principle: when bi-evals cannot score a dimension it says "I can't know" — never "I know it failed."
+
+- **`src/bi_evals/scorer/capability.py`** (new) — `DimensionStatus` (`pass`/`fail`/`skipped`/`not_evaluated`); a trace-usability classifier distinguishing *absent* / *present-but-unusable* / *usable*; the NE-1/NE-2/CASCADE-1 message catalogue (each names the exact unlock action); `trace_coverage`/`coverage_warning` for pre-flight. Pure — single source of truth for the scorer, pre-flight, `doctor`, and the report.
+- **Scorer** — `skill_path_correctness` with no usable trace is `NOT_EVALUATED` (not a failure); a usable trace with the wrong tools still genuinely fails. `aggregate_results` (extracted pure from `get_assert`) excludes `not_evaluated`/`skipped` from the weighted score entirely (**decision D2** — vacuous skips no longer pad the score, a behavior change); a **critical** dimension that cannot be evaluated fails the test with a distinct reason (**decision D1**). Upstream cascade failures (execution failed → row dims) now say so honestly ("failed upstream: …") instead of the old misleading "skipped: SQL execution failed".
+- **Store** — `dimension_results.status` column (auto-migrated, nullable, no backfill per **decision D3**: historical rows keep boolean-only semantics). `not_evaluated` **and** `skipped` rows are excluded from both `dimension_pass_rates()` and `_dims_by_test()` (fixed post-review — the first pass only excluded `not_evaluated`, leaving vacuous skips still padding the run-level dimension table and compare's regression detection; `tests/test_capability.py::test_skipped_rows_excluded_from_run_level_aggregates` covers the partial-skip case). Unknown dims are *absent* from the compare diff, not zero — adding/dropping a trace never misreads as a fix/regression.
+- **Report** — a **Capability panel** (only rendered when something wasn't evaluable) lists per-dimension evaluated/not-evaluated counts and the unlock hint; NE dims no longer appear in the failures section.
+- **Pre-flight** — `runner_core.preflight_capability_warnings`, shared by the `score` CLI and the SDK; `doctor`'s push checks gained a Trace-coverage line. All before any warehouse spend.
+- **Live-testing found and fixed a pre-existing bug**: `extract_sql`'s bare-SELECT fallback stripped the `WITH` prefix off CTEs, sending broken SQL to the warehouse whenever `generated_sql` was a CTE. Fixed at the root (`provider/contract.py`, `provider/registry.py`) — affects all adapters, not just push.
+- **`tests/test_capability.py`** (28 tests: classifier, D1/D2 aggregation, ingest status via explicit key and prefix fallback, run-level aggregate exclusion incl. partial-skip, capability panel render, pre-flight matrix, end-to-end `get_assert` NE-1/NE-2/genuine-fail) + 5 CTE regression tests in `test_push_adapter.py`.
+
 ### Housekeeping
 
 - **v0.1.0 tagged** (2026-06-16) — first versioned baseline; `CHANGELOG.md` added (Keep a Changelog format); `pyproject.toml` version now dynamic via `hatch.version`.
 - **Promptfoo research** (PRs #30/#33/#35) — `docs/plans/pivot-phase-1-integration-analysis.md` (the thesis) + verbatim-sourced findings in `docs/plans/pivot-phases-overview.md` validating response-evaluation and settling the "should bi-evals orchestrate the agent?" question (no — OTel/observe the real agent).
 
-**Validated end-to-end:** the push path was run against `mock-bi-agent` (a FastAPI TPCH agent) + real Snowflake `SNOWFLAKE_SAMPLE_DATA.TPCH_SF10`; that run is what surfaced the PR #37 scorer bug. All three real goldens now pass.
+**Validated end-to-end:** the push path was run against `mock-bi-agent` (a FastAPI TPCH agent) + real Snowflake `SNOWFLAKE_SAMPLE_DATA.TPCH_SF10`; that run is what surfaced the PR #37 scorer bug. All three real goldens now pass. Build Stage 2's capability check was validated the same way against `tmp/my-evals` (see plan doc + PR #47 for the scenario matrix).
 
-**Total: 453 unit tests passing, 0 warnings.**
+**Total: 486 unit tests passing, 0 warnings.**
 
 ---
 
@@ -131,11 +143,9 @@ One ordered backlog. Earlier stages are prerequisites for later ones only where 
 
 - Done; see the "Build Stage 1" entry under **Completed**. Deferred from its plan doc (still open): `stddev`-based significance testing, per-test `repeats`, a shared remote store for CI baselines, and a committed GitHub Actions workflow example.
 
-### Build Stage 2: Capability check (open-envelope trace)
+### Build Stage 2: Capability check (open-envelope trace) — ✅ implemented (PR #47, open)
 
-- Treat `trace` as an open envelope (customer over-captures; scorer reads what it understands).
-- At score time, report which dimensions can be scored given what the submission contains; absent fields → `unknown`/skipped, surfaced explicitly, never silently failed. (Motivated firsthand: a `skill_path_correctness` failure in the demo was really "no trace submitted" — this stage would say so up front.) Doubles as the adoption ladder.
-- Not started. **Blocks Build Stages 3 and 4.**
+- Done; see the "Build Stage 2" entry under **Completed**. Unblocks Build Stages 3 and 4 once merged.
 
 ### Build Stage 3: Model-as-request honesty marker
 
