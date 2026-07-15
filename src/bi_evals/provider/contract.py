@@ -23,6 +23,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+import sqlglot
+from sqlglot.errors import ParseError
+
 
 @dataclass
 class TraceStep:
@@ -77,13 +80,61 @@ class AgentResult:
         ]
 
 
-def extract_sql(text: str) -> str | None:
+_CANDIDATE_START = re.compile(r"\b(?:WITH|SELECT)\b", re.IGNORECASE)
+
+
+def _parses_cleanly(sql: str, dialect: str) -> bool:
+    if not sql:
+        return False
+    try:
+        sqlglot.parse_one(sql, dialect=dialect, error_level=sqlglot.ErrorLevel.RAISE)
+        return True
+    except ParseError:
+        return False
+    except Exception:
+        # sqlglot can raise its own non-ParseError exceptions (e.g.
+        # TokenizeError) on sufficiently malformed input — never let a
+        # parser hiccup crash extraction; just treat it as "not SQL".
+        return False
+
+
+def _longest_valid_statement(candidate: str, dialect: str) -> str | None:
+    """Find the longest prefix of ``candidate`` that is one parseable
+    SQL statement, trying the semicolon-terminated prefix first (the common
+    case: SQL followed by trailing prose) and the full remainder second (no
+    semicolon — SQL runs to the end, or is immediately followed by prose
+    sqlglot must reject rather than guess at).
+    """
+    end_hints: list[int] = []
+    semi = candidate.find(";")
+    if semi != -1:
+        end_hints.append(semi + 1)
+    end_hints.append(len(candidate))
+
+    for end in end_hints:
+        piece = candidate[:end].rstrip().rstrip(";").strip()
+        if piece and _parses_cleanly(piece, dialect):
+            return piece
+    return None
+
+
+def extract_sql(text: str, *, dialect: str = "snowflake") -> str | None:
     """Extract SQL from the agent's response.
 
     Tries in order:
     1. ```sql code fences
     2. ``` generic code fences containing SELECT
-    3. Bare SELECT ... ; pattern
+    3. A bare SQL statement found by locating every ``WITH``/``SELECT``
+       keyword and asking sqlglot whether the text from there is valid SQL —
+       whichever candidate parses first, wins.
+
+    Strategy 3 lets sqlglot's real grammar (not a hand-maintained regex)
+    decide what counts as a statement, so it isn't tied to one SQL shape:
+    plain SELECTs, CTEs, ``WITH RECURSIVE``, and multi-CTE queries all parse
+    the same way, with no special-casing per shape. It also means SQL that's
+    subtly broken (e.g. trailing prose glued onto a real clause, as in
+    "SELECT x FROM t because that's the total") is correctly rejected rather
+    than sent to the warehouse mangled.
     """
     # Strategy 1: ```sql fences
     match = re.search(r"```sql\s*\n(.*?)```", text, re.DOTALL | re.IGNORECASE)
@@ -96,17 +147,14 @@ def extract_sql(text: str) -> str | None:
         if re.search(r"\bSELECT\b", block, re.IGNORECASE):
             return block
 
-    # Strategy 3: bare SELECT statement, including an optional CTE prefix —
-    # matching from SELECT alone would strip `WITH x AS (` off a CTE and leave
-    # broken SQL. The WITH branch requires the `WITH <name> AS (` shape so the
-    # English word "with" in surrounding prose can't match.
-    match = re.search(
-        r"((?:WITH\s+[\w\"]+\s+AS\s*\(.*?)?SELECT\b.+?)(?:;|\Z)",
-        text,
-        re.DOTALL | re.IGNORECASE,
-    )
-    if match:
-        return match.group(1).strip()
+    # Strategy 3: sqlglot-validated bare statement. Candidates are tried in
+    # order of appearance; the first one whose text parses as one clean SQL
+    # statement wins (e.g. a false-start match on the English word "with"
+    # fails to parse and falls through to the real SELECT that follows).
+    for kw_match in _CANDIDATE_START.finditer(text):
+        stmt = _longest_valid_statement(text[kw_match.start() :], dialect)
+        if stmt:
+            return stmt
 
     return None
 

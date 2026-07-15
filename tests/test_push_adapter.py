@@ -487,3 +487,66 @@ class TestCteSqlNotMangled:
         )
         assert err is None
         assert sql == CTE_SQL.strip()
+
+
+RECURSIVE_CTE_SQL = (
+    "WITH RECURSIVE org_chart AS (\n"
+    "SELECT id, manager_id, 0 AS depth FROM employees WHERE manager_id IS NULL\n"
+    "UNION ALL\n"
+    "SELECT e.id, e.manager_id, o.depth + 1 FROM employees e "
+    "JOIN org_chart o ON e.manager_id = o.id\n"
+    ")\n"
+    "SELECT * FROM org_chart ORDER BY depth"
+)
+
+MULTI_CTE_SQL = (
+    "WITH a AS (SELECT 1 AS x), b AS (SELECT 2 AS y)\n"
+    "SELECT x, y FROM a, b"
+)
+
+
+class TestSqlglotValidatedExtraction:
+    """extract_sql's bare-statement strategy now asks sqlglot whether
+    candidate text is valid SQL, rather than pattern-matching one hand-picked
+    shape at a time (the source of the earlier WITH-stripping bug). These
+    cover shapes a regex-per-case approach doesn't generalize to."""
+
+    def test_with_recursive_cte_not_mangled(self) -> None:
+        from bi_evals.provider.contract import extract_sql
+
+        assert extract_sql(RECURSIVE_CTE_SQL) == RECURSIVE_CTE_SQL.strip()
+
+    def test_with_recursive_via_generated_sql(self) -> None:
+        sql, _, err = resolve_sql({"generated_sql": RECURSIVE_CTE_SQL}, "g")
+        assert err is None
+        assert sql == RECURSIVE_CTE_SQL.strip()
+        assert sql.startswith("WITH RECURSIVE org_chart AS (")
+
+    def test_multi_cte_not_mangled(self) -> None:
+        from bi_evals.provider.contract import extract_sql
+
+        assert extract_sql(MULTI_CTE_SQL) == MULTI_CTE_SQL.strip()
+
+    def test_trailing_prose_after_semicolon_is_trimmed(self) -> None:
+        from bi_evals.provider.contract import extract_sql
+
+        text = "SELECT COUNT(*) FROM orders WHERE status = 'active'; Hope that helps!"
+        assert (
+            extract_sql(text)
+            == "SELECT COUNT(*) FROM orders WHERE status = 'active'"
+        )
+
+    def test_prose_glued_onto_sql_without_semicolon_rejected(self) -> None:
+        """Text a permissive parser would silently mangle (e.g. treating
+        "because" as a column alias) is correctly rejected rather than
+        producing SQL that would fail at the warehouse anyway."""
+        from bi_evals.provider.contract import extract_sql
+
+        text = "SELECT x FROM t because that is the total"
+        assert extract_sql(text) is None
+
+    def test_prose_before_query_does_not_get_misparsed(self) -> None:
+        from bi_evals.provider.contract import extract_sql
+
+        text = "The SQL is: SELECT COUNT(*) FROM orders WHERE status = 'active';"
+        assert extract_sql(text) == "SELECT COUNT(*) FROM orders WHERE status = 'active'"
