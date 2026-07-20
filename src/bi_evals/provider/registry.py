@@ -137,9 +137,10 @@ def resolve_sql(row: dict[str, Any], golden_file: str) -> tuple[str, str, str | 
          extract, and the adapter handles it as a failed `execution` outcome.
       2. ``generated_sql`` if present — trust the customer's explicit extraction
          (still run ``extract_sql`` so a fenced/prose value is unwrapped; a
-         value that's already clean SQL round-trips unchanged, since
+         value that's already clean SQL parses through unchanged, since
          ``extract_sql`` validates candidates with a real SQL parser rather
-         than a hand-written pattern).
+         than a hand-written pattern — a trailing ``;``, if present, is
+         stripped, which every warehouse we support accepts either way).
       3. else ``response_text`` — extract the SQL from the raw answer.
       4. else error — nothing to score.
 
