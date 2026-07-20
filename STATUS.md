@@ -2,7 +2,7 @@
 
 ## Summary
 
-bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is the test runner; all custom logic (provider/adapters, tools, scoring, storage, reporting, viewer) is Python. The MVP (Pillar 1: Accuracy + Explainability per `docs/mvp-eval-platform.md`) is complete and exceeded. The project has completed the **response-evaluation architecture pivot** (`docs/plans/pivot-phase-1-integration-analysis.md`, `docs/plans/pivot-phases-overview.md`): the agent layer is **one canonical contract `{generated_sql, trace}`, many adapters** — bi-evals scores the real agent's response and never rebuilds the agent. The framework tagged its first release, **v0.1.0** (2026-06-16), the README leads with the SDK on-ramp, **Build Stage 1 (CI regression gating) is implemented (PR #46, merged)** — `compare` and the SDK can now fail a build on regressions or a pass-rate floor — and **Build Stage 2 (capability check) is implemented (PR #47, open)** — the scorer now distinguishes "couldn't know" from "know it failed" for dimensions the submission lacks data for, with pre-flight warnings and a report Capability panel.
+bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is the test runner; all custom logic (provider/adapters, tools, scoring, storage, reporting, viewer) is Python. The MVP (Pillar 1: Accuracy + Explainability per `docs/mvp-eval-platform.md`) is complete and exceeded. The project has completed the **response-evaluation architecture pivot** (`docs/plans/pivot-phase-1-integration-analysis.md`, `docs/plans/pivot-phases-overview.md`): the agent layer is **one canonical contract `{generated_sql, trace}`, many adapters** — bi-evals scores the real agent's response and never rebuilds the agent. The framework tagged its first release, **v0.1.0** (2026-06-16), the README leads with the SDK on-ramp, **Build Stage 1 (CI regression gating) is merged (PR #46)** — `compare` and the SDK can now fail a build on regressions or a pass-rate floor — and **Build Stage 2 (capability check) is merged (PR #47)** — the scorer now distinguishes "couldn't know" from "know it failed" for dimensions the submission lacks data for, with pre-flight warnings and a report Capability panel. A follow-on fix (**PR #48**) generalized the CTE-mangling bug Stage 2's live testing surfaced: SQL extraction from prose now validates candidates with sqlglot's real parser instead of shape-specific regexes.
 
 > **Phase numbering.** The original MVP phases (Phase 1–7.8) are historical and shipped. The response-evaluation architecture work is numbered separately as **Pivot Phase 1, 2, …** to avoid colliding with them.
 
@@ -22,7 +22,7 @@ What works today:
 - **Adapter architecture**: `agent.adapter` selects an adapter from a registry — `push` (replay submitted results), `api_endpoint` (POST to the live agent), `anthropic_tool_loop` (dev-only; runs Claude + skill files locally). All normalise into the canonical `AgentResult` the scorer consumes; the scorer is adapter-agnostic.
 - **10-dimension scorer** with tiered/weighted pass-fail. Row matching is **position-tolerant**: when the agent names output columns differently from the golden's reference, rows match by ordinal position rather than falsely failing (the values are what matter, not the labels).
 - Multi-model evaluation (dev adapter), repeat-run variance, `FileReaderTool` + `DescribeTableTool`, `SnowflakeClient`, `GoldenTest` with `last_verified_at` and `anti_patterns`.
-- **486 unit tests passing, 0 warnings.** Strict YAML loading; old flat `agent:` configs rejected at load with a migration hint.
+- **493 unit tests passing, 0 warnings.** Strict YAML loading; old flat `agent:` configs rejected at load with a migration hint.
 
 ---
 
@@ -112,7 +112,7 @@ Implements `docs/plans/build-stage-1-regression-gating.md` — one shared gate e
 - **Verified live** — `tmp/my-evals` (floor breach → exit 1) and `demo-bi-evals-snowflake` (real regression pair → red gate; healthy pair → green), both with `compare:` blocks demoing the knobs.
 - **`tests/test_gate.py`** (floor/budget/fail_on matrix + SDK gate surface) + CLI exit-code and ui gate-strip tests.
 
-### Build Stage 2 — Capability check (PR #47, open)
+### Build Stage 2 — Capability check (PR #47, merged)
 
 Implements `docs/plans/build-stage-2-capability-check.md`. Core principle: when bi-evals cannot score a dimension it says "I can't know" — never "I know it failed."
 
@@ -121,17 +121,23 @@ Implements `docs/plans/build-stage-2-capability-check.md`. Core principle: when 
 - **Store** — `dimension_results.status` column (auto-migrated, nullable, no backfill per **decision D3**: historical rows keep boolean-only semantics). `not_evaluated` **and** `skipped` rows are excluded from both `dimension_pass_rates()` and `_dims_by_test()` (fixed post-review — the first pass only excluded `not_evaluated`, leaving vacuous skips still padding the run-level dimension table and compare's regression detection; `tests/test_capability.py::test_skipped_rows_excluded_from_run_level_aggregates` covers the partial-skip case). Unknown dims are *absent* from the compare diff, not zero — adding/dropping a trace never misreads as a fix/regression.
 - **Report** — a **Capability panel** (only rendered when something wasn't evaluable) lists per-dimension evaluated/not-evaluated counts and the unlock hint; NE dims no longer appear in the failures section.
 - **Pre-flight** — `runner_core.preflight_capability_warnings`, shared by the `score` CLI and the SDK; `doctor`'s push checks gained a Trace-coverage line. All before any warehouse spend.
-- **Live-testing found and fixed a pre-existing bug**: `extract_sql`'s bare-SELECT fallback stripped the `WITH` prefix off CTEs, sending broken SQL to the warehouse whenever `generated_sql` was a CTE. Fixed at the root (`provider/contract.py`, `provider/registry.py`) — affects all adapters, not just push.
-- **`tests/test_capability.py`** (28 tests: classifier, D1/D2 aggregation, ingest status via explicit key and prefix fallback, run-level aggregate exclusion incl. partial-skip, capability panel render, pre-flight matrix, end-to-end `get_assert` NE-1/NE-2/genuine-fail) + 5 CTE regression tests in `test_push_adapter.py`.
+- **Live-testing found a pre-existing bug**: `extract_sql`'s bare-SELECT fallback stripped the `WITH` prefix off CTEs, sending broken SQL to the warehouse whenever `generated_sql` was a CTE. First patched narrowly (`provider/contract.py`, `provider/registry.py`), then generalized in PR #48 (below) after a second live-test pass found the narrow regex still missed `WITH RECURSIVE`.
+- **`tests/test_capability.py`** (28 tests: classifier, D1/D2 aggregation, ingest status via explicit key and prefix fallback, run-level aggregate exclusion incl. partial-skip, capability panel render, pre-flight matrix, end-to-end `get_assert` NE-1/NE-2/genuine-fail).
+
+### SQL extraction generalization (PR #48, merged)
+
+Follow-on to Stage 2's CTE bugfix. The first fix special-cased `WITH <name> AS (` — a second live-test pass found it still missed `WITH RECURSIVE` (two tokens between `WITH` and `AS`, not one). Rather than patch the regex again, `extract_sql` (`provider/contract.py`) was rewritten to separate concerns: find candidate start positions with a plain `WITH`/`SELECT` keyword search, then ask **sqlglot** (already a dependency, `error_level=RAISE`) whether the text from there parses as one clean statement — whichever candidate parses first, wins. This is a strict behavioral superset of the regex approach: `WITH RECURSIVE` and multi-CTE queries parse with no special-casing, and SQL subtly broken by prose glued onto a real clause (e.g. `"SELECT x FROM t because that's the total"`) is now correctly rejected rather than silently mangled and sent to the warehouse. Confirmed empirically that sqlglot's lenient `ErrorLevel.IGNORE` mode is unsafe for this (it silently misparses prose as SQL rather than rejecting it) — `RAISE` + trim-and-retry is the only safe combination, documented in-code. `registry.py`'s verbatim-SQL bypass (a workaround for the original bug) was deleted since clean SQL now round-trips through `extract_sql` on its own; one side effect, a trailing `;` on already-clean `generated_sql` is now stripped rather than preserved, noted in `resolve_sql`'s docstring (harmless — every supported warehouse accepts SQL either way).
+
+- **`tests/test_push_adapter.py`** — `TestSqlglotValidatedExtraction` (7 tests: `WITH RECURSIVE`, multi-CTE, trailing-prose trimming, prose-glued-without-semicolon rejection, prose-before-query, two-statements-only-first-extracted) alongside the 5 CTE regression tests from PR #47's fix (all still pass unchanged — confirms the rewrite is a superset, not a replacement).
 
 ### Housekeeping
 
 - **v0.1.0 tagged** (2026-06-16) — first versioned baseline; `CHANGELOG.md` added (Keep a Changelog format); `pyproject.toml` version now dynamic via `hatch.version`.
 - **Promptfoo research** (PRs #30/#33/#35) — `docs/plans/pivot-phase-1-integration-analysis.md` (the thesis) + verbatim-sourced findings in `docs/plans/pivot-phases-overview.md` validating response-evaluation and settling the "should bi-evals orchestrate the agent?" question (no — OTel/observe the real agent).
 
-**Validated end-to-end:** the push path was run against `mock-bi-agent` (a FastAPI TPCH agent) + real Snowflake `SNOWFLAKE_SAMPLE_DATA.TPCH_SF10`; that run is what surfaced the PR #37 scorer bug. All three real goldens now pass. Build Stage 2's capability check was validated the same way against `tmp/my-evals` (see plan doc + PR #47 for the scenario matrix).
+**Validated end-to-end:** the push path was run against `mock-bi-agent` (a FastAPI TPCH agent) + real Snowflake `SNOWFLAKE_SAMPLE_DATA.TPCH_SF10`; that run is what surfaced the PR #37 scorer bug. All three real goldens now pass. Build Stage 2's capability check was validated the same way against `tmp/my-evals` (see plan doc + PR #47 for the scenario matrix), and the same CTE golden was re-verified end-to-end against Snowflake after PR #48's generalized extraction fix.
 
-**Total: 486 unit tests passing, 0 warnings.**
+**Total: 493 unit tests passing, 0 warnings.**
 
 ---
 
@@ -143,20 +149,20 @@ One ordered backlog. Earlier stages are prerequisites for later ones only where 
 
 - Done; see the "Build Stage 1" entry under **Completed**. Deferred from its plan doc (still open): `stddev`-based significance testing, per-test `repeats`, a shared remote store for CI baselines, and a committed GitHub Actions workflow example.
 
-### Build Stage 2: Capability check (open-envelope trace) — ✅ implemented (PR #47, open)
+### Build Stage 2: Capability check (open-envelope trace) — ✅ implemented (PR #47, merged)
 
-- Done; see the "Build Stage 2" entry under **Completed**. Unblocks Build Stages 3 and 4 once merged.
+- Done; see the "Build Stage 2" entry under **Completed**. Unblocks Build Stages 3 and 4.
 
 ### Build Stage 3: Model-as-request honesty marker
 
 - `requested_model` / `actual_model` on the contract; report flags honored / violated / **unverifiable** so model A/B comparisons are never silently assumed faithful. A special case of Build Stage 2's capability-check idea.
 - Fold in the latent bridge cleanup (model fan-out should be adapter-aware in `bridge.py`).
-- Not started. Depends on Build Stage 2.
+- Not started. Build Stage 2 (its dependency) is merged — unblocked, next in line.
 
 ### Build Stage 4: OTel adapter (ingest spans the real agent emits)
 
 - Lowest-customer-effort, highest-fidelity adapter; the path the research flagged as ecosystem-aligned. The real agent emits OTel GenAI spans; bi-evals consumes them onto the canonical contract. May lean on Promptfoo's existing OTLP receiver + `trajectory:` assertions rather than net-new infra. Reference SQL still executes on bi-evals' own connection.
-- Not started. Depends on Build Stage 2.
+- Not started. Build Stage 2 (its dependency) is merged — unblocked.
 
 ### Build Stage 5: Onboarding polish
 
