@@ -482,9 +482,7 @@ class TestCteSqlNotMangled:
         assert extract_sql(text) == "SELECT 1 FROM t"
 
     def test_generated_sql_fenced_cte_is_unwrapped(self) -> None:
-        sql, _, err = resolve_sql(
-            {"generated_sql": f"```sql\n{CTE_SQL}\n```"}, "g"
-        )
+        sql, _, err = resolve_sql({"generated_sql": f"```sql\n{CTE_SQL}\n```"}, "g")
         assert err is None
         assert sql == CTE_SQL.strip()
 
@@ -499,10 +497,7 @@ RECURSIVE_CTE_SQL = (
     "SELECT * FROM org_chart ORDER BY depth"
 )
 
-MULTI_CTE_SQL = (
-    "WITH a AS (SELECT 1 AS x), b AS (SELECT 2 AS y)\n"
-    "SELECT x, y FROM a, b"
-)
+MULTI_CTE_SQL = "WITH a AS (SELECT 1 AS x), b AS (SELECT 2 AS y)\nSELECT x, y FROM a, b"
 
 
 class TestSqlglotValidatedExtraction:
@@ -532,8 +527,7 @@ class TestSqlglotValidatedExtraction:
 
         text = "SELECT COUNT(*) FROM orders WHERE status = 'active'; Hope that helps!"
         assert (
-            extract_sql(text)
-            == "SELECT COUNT(*) FROM orders WHERE status = 'active'"
+            extract_sql(text) == "SELECT COUNT(*) FROM orders WHERE status = 'active'"
         )
 
     def test_prose_glued_onto_sql_without_semicolon_rejected(self) -> None:
@@ -549,4 +543,14 @@ class TestSqlglotValidatedExtraction:
         from bi_evals.provider.contract import extract_sql
 
         text = "The SQL is: SELECT COUNT(*) FROM orders WHERE status = 'active';"
-        assert extract_sql(text) == "SELECT COUNT(*) FROM orders WHERE status = 'active'"
+        assert (
+            extract_sql(text) == "SELECT COUNT(*) FROM orders WHERE status = 'active'"
+        )
+
+    def test_two_statements_separated_by_semicolon_only_first_extracted(self) -> None:
+        """Only the first statement is returned — bi-evals scores one query
+        per golden, so a second statement (however valid) is not our SQL."""
+        from bi_evals.provider.contract import extract_sql
+
+        text = "SELECT a FROM t; SELECT b FROM u"
+        assert extract_sql(text) == "SELECT a FROM t"

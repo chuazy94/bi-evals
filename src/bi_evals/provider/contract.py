@@ -98,10 +98,10 @@ def _parses_cleanly(sql: str, dialect: str) -> bool:
         return False
 
 
-def _longest_valid_statement(candidate: str, dialect: str) -> str | None:
-    """Find the longest prefix of ``candidate`` that is one parseable
-    SQL statement, trying the semicolon-terminated prefix first (the common
-    case: SQL followed by trailing prose) and the full remainder second (no
+def _first_valid_statement(candidate: str, dialect: str) -> str | None:
+    """Find the first parseable SQL statement prefix of ``candidate``,
+    trying the semicolon-terminated prefix first (the common case: SQL
+    followed by trailing prose) and the full remainder second (no
     semicolon — SQL runs to the end, or is immediately followed by prose
     sqlglot must reject rather than guess at).
     """
@@ -152,7 +152,7 @@ def extract_sql(text: str, *, dialect: str = "snowflake") -> str | None:
     # statement wins (e.g. a false-start match on the English word "with"
     # fails to parse and falls through to the real SELECT that follows).
     for kw_match in _CANDIDATE_START.finditer(text):
-        stmt = _longest_valid_statement(text[kw_match.start() :], dialect)
+        stmt = _first_valid_statement(text[kw_match.start() :], dialect)
         if stmt:
             return stmt
 
