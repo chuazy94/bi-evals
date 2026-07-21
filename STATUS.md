@@ -153,10 +153,13 @@ One ordered backlog. Earlier stages are prerequisites for later ones only where 
 
 - Done; see the "Build Stage 2" entry under **Completed**. Unblocks Build Stage 3.
 
-### Build Stage 3: OTel adapter (ingest spans the real agent emits)
+### Build Stage 3: OTel — SDK trace correlation + batch-ingest adapter
 
-- Lowest-customer-effort, highest-fidelity adapter; the path the research flagged as ecosystem-aligned. The real agent emits OTel GenAI spans; bi-evals consumes them onto the canonical contract. May lean on Promptfoo's existing OTLP receiver + `trajectory:` assertions rather than net-new infra. Reference SQL still executes on bi-evals' own connection.
-- Not started. Build Stage 2 (its dependency) is merged — unblocked, next in line.
+- `docs/plans/build-stage-3-otel.md` (new, design-complete) — split into two independently-shippable parts after review found the original one-line framing overpromised ("zero customer changes") what an *offline* eval tool can actually deliver, since bi-evals never calls the agent and so can't tag a request's trace after the fact.
+  - **Part 1 — `Runner.traced_call()`**: a small SDK context manager tagging the customer's own OTel span with `bi_evals.golden_id`, for customers who already run OTel and want a failing bi-evals row to correlate back into their own trace dashboard. Reuses `submit(trace=...)` (already exists) for actually getting trace data to bi-evals — no scoring-path change at all.
+  - **Part 2 — file-based OTLP batch-ingest adapter** (`agent.adapter: otel`): for the narrower case of an agent that ran independently of any bi-evals-authored loop. Mirrors `PushReplayAdapter` exactly — new parser + new adapter, same canonical contract, scorer/report/compare untouched.
+  - A live-receiver design (bi-evals standing up an OTLP endpoint mid-run, mirroring Promptfoo's own tracing feature) was considered and rejected — it requires bi-evals to be in the agent's request path at call time, which breaks the "offline eval tool, not live traffic" decision below.
+- Not started (design only). Build Stage 2 (its dependency) is merged — unblocked, next in line. Ship Part 1 first; Part 2 only once real usage confirms the file-ingestion case is needed.
 
 ### Build Stage 4: Onboarding polish
 
