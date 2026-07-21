@@ -2,7 +2,7 @@
 
 > **Status: proposal, post-MVP.** `CLAUDE.md` lists "No semantic layer integration" as an explicit
 > MVP non-goal, and the north star is first-run setup speed. This is a genuinely valuable capability
-> but should be framed as **Build Stage 6, which builds on Build Stage 2 (open-envelope trace)** — see
+> but should be framed as **Build Stage 5, which builds on Build Stage 2 (open-envelope trace)** — see
 > `STATUS.md`'s "Remaining — Build Stages" — not as an MVP item. This doc records the review + research
 > from the discussion so the design is captured before any code.
 
@@ -164,7 +164,7 @@ pattern, recorded here so the work is scoped):
 
 ## Recommended sequencing
 
-- **Frame as Build Stage 6** that depends on Build Stage 2's open envelope — not MVP.
+- **Frame as Build Stage 5** that depends on Build Stage 2's open envelope — not MVP.
 - **Start with Snowflake end-to-end.** Cheapest first target for this stack: already on Snowflake,
   and the semantic selection is parseable straight out of the generated SQL — no new agent capture.
   Prove the canonical schema + dimensions + one parser, then add dbt/Cube as pure adapters.

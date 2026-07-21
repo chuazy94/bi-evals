@@ -6,11 +6,12 @@
 >
 > **Phase numbering.** The original MVP phases (Phase 1–7.8) are historical and shipped. This
 > pivot's shipped work is numbered separately as **Pivot Phase 1, 2, …** so the two schemes never
-> collide. The still-unbuilt phases (formerly Pivot Phase 4/5/6) are now tracked as **Build Stage
-> 2/3/4** in `STATUS.md`'s "Remaining — Build Stages" — the single ordered backlog that also covers
-> work outside this pivot (CI gating, semantic-layer scoring, etc). This doc keeps calling them by
-> their old Pivot Phase number in the narrative sections below for continuity with the research;
-> `STATUS.md` is the source of truth for current numbering and priority.
+> collide. The still-unbuilt phase (formerly Pivot Phase 6) is now tracked as **Build Stage 3** in
+> `STATUS.md`'s "Remaining — Build Stages" — the single ordered backlog that also covers work
+> outside this pivot (CI gating, semantic-layer scoring, etc). Pivot Phase 5 (model-as-request
+> honesty marker) was dropped after review — see the note in its section below. This doc keeps
+> calling shipped phases by their old Pivot Phase number in the narrative sections for continuity
+> with the research; `STATUS.md` is the source of truth for current numbering and priority.
 
 ## At a glance
 
@@ -24,9 +25,9 @@ and is fully designed) and is the doc that says what's actually next.
 | **Pivot Phase 1** | Contract + adapter registry | ✅ merged (PR #28) — `docs/plans/pivot-phase-1-refactor-step1.md` |
 | **Pivot Phase 2** | Adapter-nested config schema (clean break) | ✅ merged (PR #29) — `docs/migration-adapter-schema.md` |
 | **Pivot Phase 3** | Push adapter (replay) + `score --input` | ✅ merged (PR #34) — `docs/plans/pivot-phase-3-push-adapter-design.md` |
-| **Pivot Phase 4** (Build Stage 2) | Capability check (open-envelope trace) | ⬜ not started — see `STATUS.md` for priority relative to other stages |
-| **Pivot Phase 5** (Build Stage 3) | Model-as-request honesty marker | ⬜ |
-| **Pivot Phase 6** (Build Stage 4) | OTel adapter — ingest spans the real agent emits | ⬜ (see "Why response-evaluation is the right approach" below) |
+| **Pivot Phase 4** (Build Stage 2) | Capability check (open-envelope trace) | ✅ merged (PR #47) |
+| **Pivot Phase 5** | Model-as-request honesty marker | ❌ dropped — see note below |
+| **Pivot Phase 6** (Build Stage 3) | OTel adapter — ingest spans the real agent emits | ⬜ not started — see `STATUS.md` for priority (see "Why response-evaluation is the right approach" below) |
 
 **Settled architectural decisions:**
 - Push **reuses Promptfoo** — it does not bypass the runner. The replay adapter feeds submitted
@@ -87,15 +88,23 @@ needs no live agent or API spend.
   fields → `unknown`/skipped, surfaced explicitly, never silently failed. Uses the existing
   critical/important/diagnostic tiers. Doubles as the adoption ladder.
 
-## Pivot Phase 5 (Build Stage 3) — Model-as-request honesty marker ⬜
+## Pivot Phase 5 — Model-as-request honesty marker ❌ dropped
 
-- `requested_model` / `actual_model` on the contract; report flags honored / violated /
-  **unverifiable** so model A/B comparisons are never silently assumed faithful. A special case of
-  the Pivot Phase 4 capability check.
-- Fold in the latent bridge cleanup: model fan-out in `bridge.py` should be adapter-aware, matching
-  the `run` fix from Pivot Phase 2 (which only fans out models for the driving adapter).
+Proposed `requested_model` / `actual_model` on the contract, with the report flagging honored /
+violated / **unverifiable** so model A/B comparisons couldn't be silently assumed faithful.
 
-## Pivot Phase 6 (Build Stage 4) — OTel adapter (ingest spans the real agent emits) ⬜
+**Dropped on review (2026-07-21) rather than built.** bi-evals never issues a model request for
+the two adapters that matter — `push` and `api_endpoint` call *your* agent; bi-evals only receives
+`{generated_sql, trace}}`, so there's no "requested" side to compare against. The only adapter
+where a real request/response model pair exists is `anthropic_tool_loop`, which is dev-only and
+trivially honored by construction (bi-evals can't lie to itself about which model it just called).
+Building this would have meant inventing a new "model" config/contract concept for `push`/
+`api_endpoint` that doesn't exist today, to check something that's either unverifiable (agent
+doesn't report it — the common case) or moot (it does, but you already know what you configured).
+Model fidelity for a live agent is that agent's own observability problem, not a golden-SQL
+scoring concern.
+
+## Pivot Phase 6 (Build Stage 3) — OTel adapter (ingest spans the real agent emits) ⬜
 
 The lowest-customer-effort, highest-fidelity adapter, and — per the research below — the one the
 ecosystem has standardised on. The customer's **real, independently-running** agent emits
@@ -221,7 +230,7 @@ convention they add to their own loop), never a bi-evals orchestrator.
 
 ### Implication for adapter priority
 
-The research promotes the **OTel adapter (Pivot Phase 6 / Build Stage 4)** from "someday" toward strategically
+The research promotes the **OTel adapter (Pivot Phase 6 / Build Stage 3)** from "someday" toward strategically
 central: it is the lowest-customer-effort, highest-fidelity path, it is how the field gets clean
 traces, and the runner bi-evals already uses supports it natively (OTLP receiver + trajectory
 assertions) — so building it may be substantially configuration rather than new infrastructure.

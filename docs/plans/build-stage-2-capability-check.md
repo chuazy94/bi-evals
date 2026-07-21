@@ -220,9 +220,11 @@ a nice-to-have, listed out of scope.
 ## Out of scope (explicitly deferred)
 
 - Capability-ratio deltas in `compare`/gate (coverage-drop detection).
-- `requested_model`/`actual_model` honesty (Build Stage 3 — same machinery,
-  new field).
-- OTel ingestion (Build Stage 4 — new adapter feeding the same envelope).
+- `requested_model`/`actual_model` honesty — proposed as a same-machinery follow-on (formerly
+  Build Stage 3) but dropped on review: bi-evals never issues a model request for `push`/
+  `api_endpoint`, so there's no "requested" side to check. See `pivot-phases-overview.md`'s
+  Pivot Phase 5 note.
+- OTel ingestion (Build Stage 3 — new adapter feeding the same envelope).
 - Persisting gate outcomes / capability history as first-class store rows.
 - Any change to how genuine failures are scored.
 

@@ -151,41 +151,35 @@ One ordered backlog. Earlier stages are prerequisites for later ones only where 
 
 ### Build Stage 2: Capability check (open-envelope trace) — ✅ implemented (PR #47, merged)
 
-- Done; see the "Build Stage 2" entry under **Completed**. Unblocks Build Stages 3 and 4.
+- Done; see the "Build Stage 2" entry under **Completed**. Unblocks Build Stage 3.
 
-### Build Stage 3: Model-as-request honesty marker
-
-- `requested_model` / `actual_model` on the contract; report flags honored / violated / **unverifiable** so model A/B comparisons are never silently assumed faithful. A special case of Build Stage 2's capability-check idea.
-- Fold in the latent bridge cleanup (model fan-out should be adapter-aware in `bridge.py`).
-- Not started. Build Stage 2 (its dependency) is merged — unblocked, next in line.
-
-### Build Stage 4: OTel adapter (ingest spans the real agent emits)
+### Build Stage 3: OTel adapter (ingest spans the real agent emits)
 
 - Lowest-customer-effort, highest-fidelity adapter; the path the research flagged as ecosystem-aligned. The real agent emits OTel GenAI spans; bi-evals consumes them onto the canonical contract. May lean on Promptfoo's existing OTLP receiver + `trajectory:` assertions rather than net-new infra. Reference SQL still executes on bi-evals' own connection.
-- Not started. Build Stage 2 (its dependency) is merged — unblocked.
+- Not started. Build Stage 2 (its dependency) is merged — unblocked, next in line.
 
-### Build Stage 5: Onboarding polish
+### Build Stage 4: Onboarding polish
 
 - ~~`init push` scaffold~~ — already shipped (Pivot Phase 3.5); `init push` is the listed default on-ramp today.
 - Promote `demo-bi-evals-snowflake` (now a proven, working end-to-end demo — including the CI gate) into a committed `examples/` reference project.
 - CI recipes doc + committed GitHub Actions workflow example (baseline-via-cache pattern; surfaced by user questions after Build Stage 1 shipped).
 - Not started.
 
-### Build Stage 6: Semantic-layer scoring
+### Build Stage 5: Semantic-layer scoring
 
-- `docs/plans/build-stage-6-semantic-layer-scoring.md` (new, unreleased) — closes the "right for the right reason" gap: today's dimensions can pass on a coincidentally-correct result even when the wrong metric/dimension/grain was selected. Proposes a canonical `SemanticQuery` envelope + per-vendor `SemanticLayerParser` (dbt Semantic Layer / Snowflake Semantic Views / Cube), new opt-in golden field `expected_semantic`, and four new dimensions (`metric_selection`, `dimension_selection`, `semantic_grain_correctness`, `semantic_filter_correctness`) plus `metric_definition_integrity` for semantic-drift detection. Sequencing starts with Snowflake (semantic selection parseable straight out of `generated_sql`, zero new agent instrumentation).
+- `docs/plans/build-stage-5-semantic-layer-scoring.md` (new, unreleased) — closes the "right for the right reason" gap: today's dimensions can pass on a coincidentally-correct result even when the wrong metric/dimension/grain was selected. Proposes a canonical `SemanticQuery` envelope + per-vendor `SemanticLayerParser` (dbt Semantic Layer / Snowflake Semantic Views / Cube), new opt-in golden field `expected_semantic`, and four new dimensions (`metric_selection`, `dimension_selection`, `semantic_grain_correctness`, `semantic_filter_correctness`) plus `metric_definition_integrity` for semantic-drift detection. Sequencing starts with Snowflake (semantic selection parseable straight out of `generated_sql`, zero new agent instrumentation).
 - Design only — no code yet. Builds on Build Stage 2's open envelope. Explicitly out of MVP scope per `CLAUDE.md` — lowest priority of the numbered stages.
 
-### Build Stage 7: Small fixes and cleanups
+### Build Stage 6: Small fixes and cleanups
 
 - ~~"9 dimensions" → "10 dimensions" inconsistency in `README.md`~~ — resolved in the SDK-first README rewrite (verified: README says 10, lists 10).
 - `generated_sql` (trace JSON key) vs `extracted_sql` (Python field) naming inconsistency (touches the scorer/ingest contract).
 - Migrate `api_endpoint.py`'s manual `_get_nested` parsing to schema-based validation.
 - `push-limitations.md` §D slightly overstates cost handling ("unless your submission carries them" — the push adapter zeroes cost/tokens regardless; one-word fix).
 
-### Build Stage 8: Deferred / unscheduled
+### Build Stage 7: Deferred / unscheduled
 
-No committed order yet within this stage; pull items forward into Stages 1–7 as they become priorities:
+No committed order yet within this stage; pull items forward into Stages 1–6 as they become priorities:
 
 - DuckDB as a built-in `database.type` (zero-cred demo target)
 - `bi-evals init --from <dir>`
@@ -197,7 +191,7 @@ No committed order yet within this stage; pull items forward into Stages 1–7 a
 - OpenAI tool-loop adapter
 - in-process Python wrap adapter (for importable agents, à la Promptfoo's ADK pattern)
 
-### Build Stage 9: Pillars 2 & 3 (post-MVP — see `docs/mvp-eval-platform.md`)
+### Build Stage 8: Pillars 2 & 3 (post-MVP — see `docs/mvp-eval-platform.md`)
 
 Pillar 1 (Accuracy + Explainability) is fully shipped; the next two pillars are out of MVP scope and not yet planned. Lowest priority overall — sequenced last deliberately.
 
@@ -218,7 +212,7 @@ Pillar 1 (Accuracy + Explainability) is fully shipped; the next two pillars are 
 | **Accept `response_text`, not just clean SQL** | Real agents emit SQL fenced/in prose; the contract is a *target shape* and the customer's mapping to it is the work. `generated_sql` wins on conflict; `response_text` is extracted; no-SQL fails the row clearly |
 | **Position-tolerant row matching** | A correct answer with differently-named output columns must not fail. The scorer matches by name when columns align, else by ordinal position — scoring substance (values, in order) not surface (labels). The thing the agent controls (naming) can't be a false-failure source |
 | **Driving (`anthropic_tool_loop`) is dev-only** | Kept for authoring goldens before a real agent exists; not a public feature — it evaluates a local rebuild. Verbatim Promptfoo research confirms the field's pattern is observe-the-real-agent, never reconstruct |
-| **The `submit()` SDK is the default on-ramp** | Sorted by *adoption friction*, raw-file push is actually the highest-effort build-it path (hand-build the loop + reshape + JSONL). `bi_evals.Runner` makes that plumbing the framework's job — the customer writes one `ask()` call — so it's the front door (shipped in Pivot Phase 3.5). Raw-file `score --input` is the logs-only/non-Python fallback; `api_endpoint` suits agents already exposed as a clean HTTP service; OTel (Build Stage 4) is the high-fidelity future path. See `docs/plans/eval-landscape-strategy.md` |
+| **The `submit()` SDK is the default on-ramp** | Sorted by *adoption friction*, raw-file push is actually the highest-effort build-it path (hand-build the loop + reshape + JSONL). `bi_evals.Runner` makes that plumbing the framework's job — the customer writes one `ask()` call — so it's the front door (shipped in Pivot Phase 3.5). Raw-file `score --input` is the logs-only/non-Python fallback; `api_endpoint` suits agents already exposed as a clean HTTP service; OTel (Build Stage 3) is the high-fidelity future path. See `docs/plans/eval-landscape-strategy.md` |
 | **One shared core behind CLI and SDK** | `runner_core.py` extracts the write-config → run → ingest tail so `bi-evals score`/`run` and `Runner.score()` can never diverge — the same principle `compare/gate.py` applies to gating |
 | **Gate ≠ verdict** | The verdict is *descriptive* (what changed — same for everyone) and unconfigurable; the gate is *policy* (should this fail the build — floor, budget, `fail_on`) and per-team. They can legitimately disagree (amber verdict + floor-failed gate; red verdict + budget-passed gate). The compare page shows both, visually distinct, only when gating is enabled |
 | **Gating defaults are strict no-ops** | `fail_on` unset = gating disabled; `min_pass_rate` null; budget 0. A `red` default would have made every already-red `compare` start failing builds. Opting in is one config line or one CLI flag |
@@ -226,7 +220,7 @@ Pillar 1 (Accuracy + Explainability) is fully shipped; the next two pillars are 
 | **Clean schema break over back-compat shim** | Old flat `agent:` configs fail loudly with a migration hint rather than silently mis-parsing |
 | **`agent.adapter` is a `Literal`** | A typo'd adapter fails at config-load with a clear pydantic error, not later at dispatch |
 | **Back-compat property accessors on `AgentConfig`** | `.type`/`.model`/`.endpoint`/`.tools` delegate into nested blocks so reader modules stay adapter-agnostic through the schema break |
-| **Semantic-layer scoring is a canonical-query problem** | dbt Semantic Layer / Snowflake Semantic Views / Cube share one vocabulary (metrics/dimensions/grain/filters) and differ only in query surface dialect — same "normalize once, score once" move as the adapter contract pivot. Proposal only; see `docs/plans/build-stage-6-semantic-layer-scoring.md` |
+| **Semantic-layer scoring is a canonical-query problem** | dbt Semantic Layer / Snowflake Semantic Views / Cube share one vocabulary (metrics/dimensions/grain/filters) and differ only in query surface dialect — same "normalize once, score once" move as the adapter contract pivot. Proposal only; see `docs/plans/build-stage-5-semantic-layer-scoring.md` |
 | Framework, not hardcoded project | Users bring their own skill files, golden tests, DB credentials |
 | Python over original JS design | MVP doc described JS; Python chosen for consistency with data tooling |
 | File-based trace communication | Adapter writes JSON, scorer reads it — handles Promptfoo process isolation |
