@@ -1,9 +1,9 @@
 # Plan: OTel — SDK trace correlation + batch-ingest adapter
 
-> **Status:** design, not yet built. Two independently-shippable pieces; ship
-> Part 1 first (small, reuses the entire existing push pipeline unchanged),
-> Part 2 second (larger, new adapter) once Part 1's real-world usage confirms
-> the ingestion path is actually needed.
+> **Status:** Part 1 implemented (`Runner.traced_call()` — see `STATUS.md`'s
+> "Build Stage 3, Part 1" entry under Completed). Part 2 (file-based OTLP
+> batch-ingest adapter) is design-only, gated behind a real customer who fits
+> all three clauses in its "Who this is for" section below.
 
 ## Why (and why not more than this)
 
@@ -57,22 +57,42 @@ Because bi-evals never calls the agent in design B, it can't attach a
 correlation ID to a request after the fact — a span can't be labeled by
 something that wasn't there when it was created, and OTLP exports are
 effectively immutable by the time bi-evals reads them. Whoever drives the
-agent call is the only party that can tag it. Two required attributes:
+agent call is the only party that can tag it. Two required attributes — but
+**their acquisition costs are very different, and the gap is the crux of this
+whole stage**:
 
 1. **`bi_evals.golden_id`** — which golden this trace answers. Must be set on
-   the trace's root span (or any span in it) at call time.
+   the trace's root span (or any span in it) at call time. Trivial: a
+   correlation tag with no semantic judgment.
 2. **`bi_evals.generated_sql`** (config-nameable, default shown — mirrors
    `api_endpoint.response_sql_key`'s existing precedent of "customer names the
    field, config points at it" rather than sniffing) — there is no `gen_ai.*`
    or OpenLLMetry/OpenInference convention for "this tool call's result was
    this specific SQL string," so this one has to be explicit, not inferred.
+   **This is the real work, and it's on the exact artifact under evaluation.**
+   The final SQL is the load-bearing field the scorer *executes against the
+   warehouse* (`contract.py`: "`generated_sql` and `trace` are the load-bearing
+   fields"). Unlike the trace shape below, it can't be fuzzy-matched out of
+   existing spans — the customer must deliberately reach into their agent, find
+   the moment it has settled on its *final* SQL (not an intermediate draft, not
+   a raw tool-call argument, not one of several candidates), and emit that
+   specific string as a span attribute. In many agent architectures the final
+   SQL isn't a clean variable in one place, so this is genuine instrumentation
+   work — see Part 2's "Who this is for" for what that means for the audience.
 
-Tool-call spans for `skill_path_correctness` are the one part that's genuinely
-free *if* they already exist — Promptfoo's `trajectory:*` assertions already
-prove OTLP span attributes can be read generically via fuzzy key matching
+**These two are not equal, and the difference drives the sequencing.** The
+trace *shape* — which tools ran, in what order, reading which files, scored by
+`skill_path_correctness` — is genuinely nearly free *if* the spans already
+exist: Promptfoo's `trajectory:*` assertions already prove OTLP span attributes
+can be read generically via fuzzy key matching
 (`/tool.?name|function.?name/i`, `/(^|[._])(arguments|args|input)($|[._])/i`)
 rather than a hardcoded per-vendor allowlist, and this stage reuses that same
-approach rather than re-inventing it.
+approach rather than re-inventing it. So the trace path is a read-off-existing-
+instrumentation problem; the `generated_sql` attribute is a
+customer-adds-new-instrumentation problem. **Part 1 sidesteps the second
+problem entirely** (it carries the SQL as a plain Python value through
+`submit(generated_sql=...)`, never as a span attribute), which is a large part
+of why it's the primary path and Part 2 is gated behind real demand.
 
 ---
 
@@ -132,6 +152,12 @@ def traced_call(self, case: Case, tracer: "opentelemetry.trace.Tracer") -> Itera
   feature most first-time users won't touch.
 - No config surface, no new adapter, no scorer change. Purely additive to the
   SDK's public surface.
+- **Part 1 never touches the `generated_sql`-attribute problem.** It tags only
+  `bi_evals.golden_id` (a benign correlation tag) and gets the actual SQL to the
+  scorer through `submit(generated_sql=...)` — a clean Python value, no span-
+  attribute round-trip, no missing-convention extraction. The entire
+  correlation-attribute cost described above is *exclusively* a Part 2 concern.
+  This is the core reason Part 1 is the primary path.
 
 ### Testing
 
@@ -147,14 +173,25 @@ def traced_call(self, case: Case, tracer: "opentelemetry.trace.Tracer") -> Itera
 
 ### Who this is for
 
-A narrower audience than Part 1: a customer whose agent **already ran
-independently of any bi-evals-authored loop** — production traffic replayed
-against goldens, or a staging pass run by a harness bi-evals never touched —
-and the only thing available afterward is a directory of exported OTLP trace
-files. If the customer is willing to write a `Runner` loop at all, Part 1 +
-`submit()` already covers them with far less new code (no export files, no
-parser, no adapter). Ship Part 2 only once real usage shows this narrower
-case matters.
+A **much** narrower audience than Part 1 — narrower than "anyone with existing
+OTel exports," which is the tempting overstatement to avoid. The honest audience
+is: a customer who has *already committed to emitting `bi_evals.generated_sql`
+in their own instrumentation*, runs a batch pass that produces OTLP export
+files, and cannot or will not write a `Runner` loop to call `submit()`.
+
+That third clause is what makes it real (non-Python shops; teams whose eval pass
+is a separate CI job with nothing that could `import bi_evals`) — but the first
+clause is the catch. Because there is no convention for the SQL attribute (see
+"The correlation problem"), nobody's *existing* production spans carry it; a
+customer only has scoreable exports if they went back, added a bi-evals-shaped
+attribute to their agent, and re-ran to produce fresh exports. At that point
+they've done strictly *more* work than Part 1 + `submit()` — for a file-parsing
+pipeline instead of a function call. So "the agent already ran independently"
+does **not** by itself make a customer a Part 2 user; the pre-existing
+`generated_sql` instrumentation does. Ship Part 2 only once real usage shows a
+customer who genuinely fits all three clauses — and if the customer is willing
+to write a `Runner` loop at all, Part 1 + `submit()` already covers them with
+far less new code (no export files, no parser, no adapter).
 
 ### Shape (mirrors `PushReplayAdapter` exactly)
 
@@ -176,7 +213,7 @@ case matters.
    `{golden_id: AgentResult}` map `PushReplayAdapter` builds from JSONL — same
    canonical contract, different source format.
 3. **Adapter**: `OtelReplayAdapter` — structurally identical to
-   `PushReplayAdapter` (`registry.py:246`): pre-load the map once, `produce()`
+   `PushReplayAdapter` (`registry.py:247`): pre-load the map once, `produce()`
    looks up by golden ID and returns it. No new `Adapter` protocol shape;
    `produce()` stays synchronous, it just resolves instantly from memory.
 4. **Config** (new `OtelConfig` block, same nesting pattern as `PushConfig`):
@@ -188,7 +225,7 @@ case matters.
        golden_id_attribute: "bi_evals.golden_id"       # override if customer uses a different key
        generated_sql_attribute: "bi_evals.generated_sql"
    ```
-5. **Registry**: one new branch in `build_adapter()` (`registry.py:311`),
+5. **Registry**: one new branch in `build_adapter()` (`registry.py:312`),
    `adapter: Literal[..., "otel"]` added to `AgentConfig` (`config.py:209`).
 
 ### What's reused unchanged
@@ -200,14 +237,57 @@ same as today), ingest, report, compare. Only the ingestion/adapter layer is
 new — same principle as every prior adapter addition (`push`, `api_endpoint`):
 new front door, same pipeline.
 
+### Partial traces are the common case, not the exception (design point)
+
+Because there is no convention for the SQL attribute, the single most likely
+real-world OTel export is one that is **partially populated** — good tool-call
+spans (existing instrumentation) but a missing or malformed `generated_sql`
+attribute (new instrumentation the customer forgot, mis-keyed, or hasn't rolled
+out to every code path). Part 2 must treat this as an expected input, not an
+error. Two behaviors, both reusing machinery that already exists:
+
+- **Missing `generated_sql` attribute → `not_evaluated`, never a false
+  failure.** When a merged trace has a usable tool-path but no value at the
+  configured `generated_sql_attribute`, the ingestion produces an `AgentResult`
+  with `extracted_sql=None`. This is *exactly* the shape Build Stage 2 already
+  handles: `skill_path_correctness` still scores honestly off the tool spans,
+  and the SQL-dependent dimensions report `not_evaluated` with an unlock hint
+  ("no SQL found at attribute `bi_evals.generated_sql` on the trace for golden
+  X — set `agent.otel.generated_sql_attribute` or emit the attribute at your
+  call site"), rather than an empty-SQL failure or a hard ingest crash. This is
+  the strongest fit between this stage and Stage 2: the capability check was
+  built for precisely this "we have *some* signal but not all of it" situation,
+  and the OTel adapter is the case most likely to hit it. A missing
+  `golden_id` attribute is different — that trace can't be mapped to any golden
+  at all, so it's skipped with a warning (Decision below), not scored as
+  `not_evaluated`.
+
+- **Malformed / prose-wrapped attribute value → `extract_sql()` forgives it.**
+  Since no convention governs the attribute, customers will populate it
+  inconsistently: some clean SQL, some the agent's whole fenced prose response,
+  some with a trailing `;`. Routing the attribute value through the existing
+  `extract_sql()` (Decision 3) means the adapter gets the same prose-tolerant
+  extraction every other adapter gets — ```sql fences, generic fences, and
+  sqlglot-validated bare statements all resolve; genuinely-broken values are
+  rejected rather than sent to the warehouse mangled. **This should be stated
+  plainly in the customer-facing docs**, because it turns the missing-convention
+  problem into a forgiving, documented behavior: "put your final SQL in the
+  attribute; if it's wrapped in prose or fences, we'll extract it — the same
+  tolerance `push` and `api_endpoint` already give you." That framing is
+  squarely on the MVP north star (forgiving first-run, clear errors) where a
+  strict "the attribute must be exactly one clean SQL statement" rule would not
+  be.
+
 ### Testing
 
 - Unit: OTLP/JSON parsing (valid + malformed export), span→`TraceStep`
   mapping across a few realistic attribute-name shapes (raw OTel, OpenLLMetry-
   style, OpenInference-style — to prove the fuzzy matching genuinely isn't
   single-vendor), missing `golden_id_attribute` handling (skip + warn, don't
-  crash the whole ingest), missing `generated_sql_attribute` (same `not
-  evaluated`-style honesty as Stage 2, not a silent empty SQL).
+  crash the whole ingest), missing `generated_sql_attribute` → `not_evaluated`
+  with the unlock hint (not a silent empty SQL), and a prose/fenced attribute
+  value round-tripping through `extract_sql()` — the two behaviors from
+  "Partial traces are the common case" above.
 - `tmp/my-evals/` demo: one small OTLP export fixture exercising the adapter
   end-to-end, per `CLAUDE.md`'s live-project-sync rule (new adapter is
   user-visible config surface).

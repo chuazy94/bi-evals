@@ -52,6 +52,66 @@ class TestGoldenCases:
         assert [c.id for c in cases] == ["q2"]
 
 
+class TestTracedCall:
+    def _runner_with_case(self, tmp_path: Path) -> tuple[Runner, Case]:
+        runner = Runner(str(_project(tmp_path, 1)))
+        case = next(iter(runner.golden_cases()))
+        return runner, case
+
+    def _tracer_and_exporter(self):
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        return provider.get_tracer("test"), exporter
+
+    def test_opens_one_span_tagged_with_golden_id(self, tmp_path: Path) -> None:
+        runner, case = self._runner_with_case(tmp_path)
+        tracer, exporter = self._tracer_and_exporter()
+
+        with runner.traced_call(case, tracer):
+            pass
+
+        spans = exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].attributes["bi_evals.golden_id"] == case.id
+
+    def test_yields_the_span(self, tmp_path: Path) -> None:
+        runner, case = self._runner_with_case(tmp_path)
+        tracer, _ = self._tracer_and_exporter()
+
+        with runner.traced_call(case, tracer) as span:
+            assert span.is_recording()
+
+    def test_reraises_exceptions_from_the_body(self, tmp_path: Path) -> None:
+        runner, case = self._runner_with_case(tmp_path)
+        tracer, exporter = self._tracer_and_exporter()
+
+        with pytest.raises(RuntimeError, match="agent blew up"):
+            with runner.traced_call(case, tracer):
+                raise RuntimeError("agent blew up")
+
+        # The span still closes (and is exported) even though the body raised.
+        assert len(exporter.get_finished_spans()) == 1
+
+    def test_does_not_affect_submit_or_scoring(self, tmp_path: Path) -> None:
+        """traced_call is purely a courtesy to the caller's own OTel backend —
+        it must not add anything to the submission row `submit()` builds."""
+        runner, case = self._runner_with_case(tmp_path)
+        tracer, _ = self._tracer_and_exporter()
+
+        with runner.traced_call(case, tracer):
+            runner.submit(case, generated_sql="SELECT 1")
+
+        row = runner._submissions[case.golden_file]
+        assert row == {"golden_file": case.golden_file, "generated_sql": "SELECT 1"}
+
+
 class TestSubmit:
     def _runner_with_case(self, tmp_path: Path) -> tuple[Runner, Case]:
         runner = Runner(str(_project(tmp_path, 1)))
