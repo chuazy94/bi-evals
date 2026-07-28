@@ -26,11 +26,15 @@ gives a clean place to put them but cannot create them. See
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, ClassVar, Iterator
+from typing import TYPE_CHECKING, Any, ClassVar, Iterator
+
+if TYPE_CHECKING:
+    from opentelemetry.trace import Span, Tracer
 
 from bi_evals.compare.gate import GateResult, classify_runs, evaluate_gate
 from bi_evals.config import BiEvalsConfig
@@ -224,6 +228,36 @@ class Runner:
         if not cases and self._filter:
             log.warning("Filter %r matched no goldens", self._filter)
         yield from cases
+
+    @contextmanager
+    def traced_call(self, case: Case, tracer: "Tracer") -> Iterator["Span"]:
+        """Open a span tagged ``bi_evals.golden_id`` so this request correlates
+        in the caller's own OTel backend (Datadog/Langfuse/whatever you already
+        use) — so a failing bi-evals report row can be traced back to your own
+        full trace for that exact request.
+
+        Purely a courtesy to your tracing setup: it has no effect on how
+        bi-evals scores the submission. Use ``submit(trace=...)`` for that, same
+        as always — this does not carry ``generated_sql`` or ``trace`` data to
+        bi-evals, only the correlation tag.
+
+            import bi_evals
+            from opentelemetry import trace
+
+            runner = bi_evals.Runner("bi-evals.yaml")
+            tracer = trace.get_tracer("my-agent")      # your own OTel setup, untouched
+
+            for case in runner.golden_cases():
+                with runner.traced_call(case, tracer):
+                    answer = my_agent.ask(case.question)
+                    runner.submit(case, generated_sql=answer.sql, trace=answer.trace)
+
+        Requires ``opentelemetry-api`` (``uv add "bi-evals[otel]"``) — not a
+        base dependency, since most first-time users won't touch this.
+        """
+        with tracer.start_as_current_span(f"bi_evals.golden:{case.id}") as span:
+            span.set_attribute("bi_evals.golden_id", case.id)
+            yield span
 
     def submit(
         self,

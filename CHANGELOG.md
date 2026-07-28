@@ -10,6 +10,15 @@ these are called out under a **Breaking** heading.
 ## [Unreleased]
 
 ### Added
+- **`Runner.traced_call()`** (Build Stage 3 Part 1, per
+  `docs/plans/build-stage-3-otel.md`) — opt-in SDK helper for customers who
+  already run OpenTelemetry: wraps an `agent.ask()` call in a span tagged
+  `bi_evals.golden_id`, so a failing bi-evals report row can be traced back to
+  the customer's own trace dashboard (Datadog/Langfuse/etc). Purely a
+  correlation courtesy — `submit(generated_sql=..., trace=...)` remains the
+  only path data reaches the scorer through. Requires
+  `uv add "bi-evals[otel]"` (new optional extra); zero hard dependency
+  otherwise.
 - **Capability check** (Build Stage 2, per
   `docs/plans/build-stage-2-capability-check.md`) — when bi-evals cannot score
   a dimension it now says "I can't know", never "I know it failed":

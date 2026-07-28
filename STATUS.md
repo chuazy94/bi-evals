@@ -22,7 +22,7 @@ What works today:
 - **Adapter architecture**: `agent.adapter` selects an adapter from a registry — `push` (replay submitted results), `api_endpoint` (POST to the live agent), `anthropic_tool_loop` (dev-only; runs Claude + skill files locally). All normalise into the canonical `AgentResult` the scorer consumes; the scorer is adapter-agnostic.
 - **10-dimension scorer** with tiered/weighted pass-fail. Row matching is **position-tolerant**: when the agent names output columns differently from the golden's reference, rows match by ordinal position rather than falsely failing (the values are what matter, not the labels).
 - Multi-model evaluation (dev adapter), repeat-run variance, `FileReaderTool` + `DescribeTableTool`, `SnowflakeClient`, `GoldenTest` with `last_verified_at` and `anti_patterns`.
-- **493 unit tests passing, 0 warnings.** Strict YAML loading; old flat `agent:` configs rejected at load with a migration hint.
+- **497 unit tests passing, 0 warnings.** Strict YAML loading; old flat `agent:` configs rejected at load with a migration hint.
 
 ---
 
@@ -130,6 +130,16 @@ Follow-on to Stage 2's CTE bugfix. The first fix special-cased `WITH <name> AS (
 
 - **`tests/test_push_adapter.py`** — `TestSqlglotValidatedExtraction` (7 tests: `WITH RECURSIVE`, multi-CTE, trailing-prose trimming, prose-glued-without-semicolon rejection, prose-before-query, two-statements-only-first-extracted) alongside the 5 CTE regression tests from PR #47's fix (all still pass unchanged — confirms the rewrite is a superset, not a replacement).
 
+### Build Stage 3, Part 1 — `Runner.traced_call()` (SDK OTel correlation)
+
+Implements Part 1 of `docs/plans/build-stage-3-otel.md`. A thin context manager on `bi_evals.Runner` that opens one span tagged `bi_evals.golden_id` around the customer's own `agent.ask()` call, so a failing bi-evals report row can be traced back to the customer's own OTel dashboard (Datadog/Langfuse/whatever they already run) for that exact request. Deliberately narrow: it changes nothing about how bi-evals gets scored — `submit(generated_sql=..., trace=...)` remains the only path data reaches the scorer through, so `traced_call()` is a pure correlation courtesy, not a new data channel.
+
+- **`src/bi_evals/sdk.py`** — `Runner.traced_call(case, tracer)`: `@contextmanager` that opens `tracer.start_as_current_span(...)`, sets `bi_evals.golden_id`, yields the span. Zero hard dependency: `opentelemetry` is only imported under `TYPE_CHECKING` (string-quoted type hints), so `import bi_evals` succeeds even with `opentelemetry` entirely absent — verified directly (stubbed `sys.modules["opentelemetry"] = None`, re-imported, no error).
+- **`pyproject.toml`** — new `[project.optional-dependencies]` block, `otel = ["opentelemetry-api>=1.20"]` (first optional extra in the project); `opentelemetry-sdk` added to the `dev` group only (needed for `TracerProvider`/`InMemorySpanExporter` in tests, not for the shipped feature).
+- Span name/attribute key (`bi_evals.golden_id`) are fixed, not configurable — decision recorded in the plan doc: it's bi-evals' own internal correlation key, never matched against an external convention, so no config surface earns its cost yet.
+- Part 2 (file-based OTLP batch-ingest adapter) is **not built** — the plan doc gates it behind a real customer who has already committed to emitting a `generated_sql` span attribute (no OTel convention covers this) *and* can't write a `Runner` loop; that evidence doesn't exist yet.
+- **`tests/test_sdk.py`** (4 new tests, `TestTracedCall`): opens exactly one span tagged correctly, yields a live span, re-raises body exceptions without swallowing them (span still closes/exports), and confirms the submission row `submit()` builds is byte-identical with or without `traced_call()` wrapping it.
+
 ### Housekeeping
 
 - **v0.1.0 tagged** (2026-06-16) — first versioned baseline; `CHANGELOG.md` added (Keep a Changelog format); `pyproject.toml` version now dynamic via `hatch.version`.
@@ -137,7 +147,7 @@ Follow-on to Stage 2's CTE bugfix. The first fix special-cased `WITH <name> AS (
 
 **Validated end-to-end:** the push path was run against `mock-bi-agent` (a FastAPI TPCH agent) + real Snowflake `SNOWFLAKE_SAMPLE_DATA.TPCH_SF10`; that run is what surfaced the PR #37 scorer bug. All three real goldens now pass. Build Stage 2's capability check was validated the same way against `tmp/my-evals` (see plan doc + PR #47 for the scenario matrix), and the same CTE golden was re-verified end-to-end against Snowflake after PR #48's generalized extraction fix.
 
-**Total: 493 unit tests passing, 0 warnings.**
+**Total: 497 unit tests passing, 0 warnings.**
 
 ---
 
@@ -153,13 +163,11 @@ One ordered backlog. Earlier stages are prerequisites for later ones only where 
 
 - Done; see the "Build Stage 2" entry under **Completed**. Unblocks Build Stage 3.
 
-### Build Stage 3: OTel — SDK trace correlation + batch-ingest adapter
+### Build Stage 3, Part 2: File-based OTLP batch-ingest adapter (`agent.adapter: otel`)
 
-- `docs/plans/build-stage-3-otel.md` (new, design-complete) — split into two independently-shippable parts after review found the original one-line framing overpromised ("zero customer changes") what an *offline* eval tool can actually deliver, since bi-evals never calls the agent and so can't tag a request's trace after the fact.
-  - **Part 1 — `Runner.traced_call()`**: a small SDK context manager tagging the customer's own OTel span with `bi_evals.golden_id`, for customers who already run OTel and want a failing bi-evals row to correlate back into their own trace dashboard. Reuses `submit(trace=...)` (already exists) for actually getting trace data to bi-evals — no scoring-path change at all.
-  - **Part 2 — file-based OTLP batch-ingest adapter** (`agent.adapter: otel`): for the narrower case of an agent that ran independently of any bi-evals-authored loop. Mirrors `PushReplayAdapter` exactly — new parser + new adapter, same canonical contract, scorer/report/compare untouched.
-  - A live-receiver design (bi-evals standing up an OTLP endpoint mid-run, mirroring Promptfoo's own tracing feature) was considered and rejected — it requires bi-evals to be in the agent's request path at call time, which breaks the "offline eval tool, not live traffic" decision below.
-- Not started (design only). Build Stage 2 (its dependency) is merged — unblocked, next in line. Ship Part 1 first; Part 2 only once real usage confirms the file-ingestion case is needed.
+- `docs/plans/build-stage-3-otel.md` — Part 1 (`Runner.traced_call()`) is done; see the "Build Stage 3, Part 1" entry under **Completed**. Part 2 is a new adapter (`OtelReplayAdapter`, mirroring `PushReplayAdapter`) for the narrower case of an agent that ran independently of any bi-evals-authored loop and already emits a `bi_evals.generated_sql`-shaped span attribute — no OTel convention covers "the final SQL," so this is genuine new instrumentation on the customer's side, not a free read of existing spans.
+- Explicitly gated behind real demand in the plan doc: ship only once a customer shows up who (a) already emits the SQL attribute, (b) runs a batch pass producing OTLP exports, and (c) can't or won't write a `Runner` loop. If they'd write a `Runner` loop, Part 1 + `submit()` already covers them with far less new code.
+- Not started. Build Stage 2 (its dependency) is merged; Part 1 is merged. Waiting on demand signal, not blocked on anything technical.
 
 ### Build Stage 4: Onboarding polish
 
