@@ -95,10 +95,12 @@ def check_execution(generated: QueryResult) -> DimensionResult:
 # ---------------------------------------------------------------------------
 
 
-def check_table_alignment(generated_sql: str, reference_sql: str) -> DimensionResult:
+def check_table_alignment(
+    generated_sql: str, reference_sql: str, dialect: str
+) -> DimensionResult:
     try:
-        gen_tables = extract_tables(generated_sql)
-        ref_tables = extract_tables(reference_sql)
+        gen_tables = extract_tables(generated_sql, dialect)
+        ref_tables = extract_tables(reference_sql, dialect)
     except Exception as e:
         return DimensionResult(
             name="table_alignment",
@@ -131,7 +133,9 @@ def check_table_alignment(generated_sql: str, reference_sql: str) -> DimensionRe
 # ---------------------------------------------------------------------------
 
 
-def check_column_alignment(generated_sql: str, golden: GoldenTest) -> DimensionResult:
+def check_column_alignment(
+    generated_sql: str, golden: GoldenTest, dialect: str
+) -> DimensionResult:
     """Check that the generated SQL references the required source columns.
 
     Parses SELECT expressions to extract the underlying column names (ignoring
@@ -142,7 +146,7 @@ def check_column_alignment(generated_sql: str, golden: GoldenTest) -> DimensionR
         return _skip("column_alignment", "no required_columns defined")
 
     try:
-        gen_cols = extract_select_columns(generated_sql)
+        gen_cols = extract_select_columns(generated_sql, dialect)
     except Exception as e:
         return DimensionResult(
             name="column_alignment",
@@ -163,7 +167,7 @@ def check_column_alignment(generated_sql: str, golden: GoldenTest) -> DimensionR
     # names in the question's "output columns: ...") rather than the *source*
     # columns this dimension checks. Detect it and say so, rather than emitting
     # a confusing "missing source column" for a query that's otherwise correct.
-    alias_named = missing & extract_output_aliases(generated_sql)
+    alias_named = missing & extract_output_aliases(generated_sql, dialect)
     reason = f"Missing required source columns: {sorted(missing)}"
     if alias_named:
         reason += (
@@ -186,10 +190,12 @@ def check_column_alignment(generated_sql: str, golden: GoldenTest) -> DimensionR
 # ---------------------------------------------------------------------------
 
 
-def check_filter_correctness(generated_sql: str, reference_sql: str) -> DimensionResult:
+def check_filter_correctness(
+    generated_sql: str, reference_sql: str, dialect: str
+) -> DimensionResult:
     try:
-        gen_filters = extract_filter_columns(generated_sql)
-        ref_filters = extract_filter_columns(reference_sql)
+        gen_filters = extract_filter_columns(generated_sql, dialect)
+        ref_filters = extract_filter_columns(reference_sql, dialect)
     except Exception as e:
         return DimensionResult(
             name="filter_correctness",
@@ -511,14 +517,15 @@ def check_value_accuracy(
 def check_no_hallucinated_columns(
     generated_sql: str,
     reference_sql: str,
+    dialect: str,
 ) -> DimensionResult:
     """Check the generated SQL doesn't reference source columns absent from the reference.
 
     Compares the underlying column names in SELECT expressions (ignoring aliases).
     """
     try:
-        gen_cols = extract_select_columns(generated_sql)
-        ref_cols = extract_select_columns(reference_sql)
+        gen_cols = extract_select_columns(generated_sql, dialect)
+        ref_cols = extract_select_columns(reference_sql, dialect)
     except Exception as e:
         return DimensionResult(
             name="no_hallucinated_columns",
@@ -551,13 +558,13 @@ def check_no_hallucinated_columns(
 # ---------------------------------------------------------------------------
 
 
-def _check_anti_patterns(sql: str, patterns: AntiPatterns) -> list[str]:
+def _check_anti_patterns(sql: str, patterns: AntiPatterns, dialect: str) -> list[str]:
     """Return human-readable violation descriptions, empty list if compliant."""
     violations: list[str] = []
 
     if patterns.forbidden_tables:
         try:
-            used_tables = extract_tables(sql)
+            used_tables = extract_tables(sql, dialect)
         except Exception:
             used_tables = set()
         # Forbidden lists are written as users want to read them — match against
@@ -573,7 +580,7 @@ def _check_anti_patterns(sql: str, patterns: AntiPatterns) -> list[str]:
 
     if patterns.forbidden_columns:
         try:
-            used_pairs = extract_columns_with_tables(sql)
+            used_pairs = extract_columns_with_tables(sql, dialect)
         except Exception:
             used_pairs = set()
         for spec in patterns.forbidden_columns:
@@ -594,6 +601,7 @@ def _check_anti_patterns(sql: str, patterns: AntiPatterns) -> list[str]:
 def check_anti_pattern_compliance(
     generated_sql: str,
     golden: GoldenTest,
+    dialect: str,
 ) -> DimensionResult:
     """Fail when the generated SQL uses any forbidden table or column.
 
@@ -606,7 +614,7 @@ def check_anti_pattern_compliance(
     ):
         return _skip("anti_pattern_compliance", "no anti-patterns defined")
 
-    violations = _check_anti_patterns(generated_sql, patterns)
+    violations = _check_anti_patterns(generated_sql, patterns, dialect)
     if violations:
         return DimensionResult(
             name="anti_pattern_compliance",

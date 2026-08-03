@@ -135,6 +135,15 @@ def extract_sql(text: str, *, dialect: str = "snowflake") -> str | None:
     subtly broken (e.g. trailing prose glued onto a real clause, as in
     "SELECT x FROM t because that's the total") is correctly rejected rather
     than sent to the warehouse mangled.
+
+    NOTE (Build Stage 4, Part 1): ``dialect`` still defaults to ``"snowflake"``
+    here, unlike the scorer's ``sql_utils`` extractors which now require it. The
+    5 provider-layer callers (agent_loop/registry/api_endpoint) don't currently
+    have ``config.database.dialect`` in scope, and this function uses the dialect
+    only to *validate parseability* — a yes/no check most valid Spark/BigQuery
+    SQL also passes under Snowflake's grammar. Threading warehouse dialect here
+    is deferred to Part 2 (it touches adapter internals); see the plan doc's open
+    questions.
     """
     # Strategy 1: ```sql fences
     match = re.search(r"```sql\s*\n(.*?)```", text, re.DOTALL | re.IGNORECASE)

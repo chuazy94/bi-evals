@@ -299,10 +299,34 @@ class DatabaseConnection(BaseModel):
         return data
 
 
+# Maps a warehouse `database.type` to the sqlglot dialect the scorer parses
+# generated/reference SQL with. Keep this the single source of truth — the
+# scorer must never hardcode a dialect. New warehouses add one entry here.
+_TYPE_TO_DIALECT = {
+    "snowflake": "snowflake",
+    "databricks": "databricks",
+    "bigquery": "bigquery",
+    "postgres": "postgres",
+    "redshift": "redshift",
+    "duckdb": "duckdb",
+}
+
+
 class DatabaseConfig(BaseModel):
     type: str  # "snowflake" for MVP
     connection: DatabaseConnection = DatabaseConnection()
     query_timeout: int = 30
+
+    @property
+    def dialect(self) -> str:
+        """The sqlglot dialect for parsing SQL against this warehouse.
+
+        Falls back to the `type` string itself for warehouses not in the map
+        (sqlglot accepts many dialect names directly), so an unmapped-but-valid
+        dialect still works while a typo surfaces as a sqlglot parse error
+        rather than silently parsing as Snowflake.
+        """
+        return _TYPE_TO_DIALECT.get(self.type, self.type)
 
 
 class ScoringThresholds(BaseModel):

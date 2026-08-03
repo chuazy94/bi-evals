@@ -70,7 +70,7 @@ def test_golden_default_anti_patterns_is_none() -> None:
 
 def test_extract_columns_resolves_alias_to_physical_table() -> None:
     pairs = extract_columns_with_tables(
-        "SELECT o.amount FROM raw_orders AS o WHERE o.region = 'EU'"
+        "SELECT o.amount FROM raw_orders AS o WHERE o.region = 'EU'", "snowflake"
     )
     assert ("RAW_ORDERS", "AMOUNT") in pairs
     assert ("RAW_ORDERS", "REGION") in pairs
@@ -78,13 +78,15 @@ def test_extract_columns_resolves_alias_to_physical_table() -> None:
 
 def test_extract_columns_unresolved_when_multiple_tables_unqualified() -> None:
     """Bare ``amount`` in a multi-table query → owner unknown (None)."""
-    pairs = extract_columns_with_tables("SELECT amount FROM orders, customers")
+    pairs = extract_columns_with_tables(
+        "SELECT amount FROM orders, customers", "snowflake"
+    )
     # Owner cannot be resolved without a qualifier; should be None.
     assert (None, "AMOUNT") in pairs
 
 
 def test_extract_columns_resolves_when_single_table() -> None:
-    pairs = extract_columns_with_tables("SELECT amount FROM raw_orders")
+    pairs = extract_columns_with_tables("SELECT amount FROM raw_orders", "snowflake")
     assert ("RAW_ORDERS", "AMOUNT") in pairs
 
 
@@ -94,7 +96,7 @@ def test_extract_columns_cte_alias_collapses_to_none() -> None:
         WITH bad AS (SELECT amount FROM raw_orders)
         SELECT b.amount FROM bad b
     """
-    pairs = extract_columns_with_tables(sql)
+    pairs = extract_columns_with_tables(sql, "snowflake")
     # Inside the CTE, amount resolves to RAW_ORDERS.
     assert ("RAW_ORDERS", "AMOUNT") in pairs
     # The outer reference to ``bad`` collapses to None — laundered, but the
@@ -108,33 +110,33 @@ def test_extract_columns_cte_alias_collapses_to_none() -> None:
 
 def test_no_violations_when_sql_is_clean() -> None:
     patterns = AntiPatterns(forbidden_tables=["RAW_ORDERS"])
-    assert _check_anti_patterns("SELECT * FROM V_UNIFIED_REVENUE", patterns) == []
+    assert _check_anti_patterns("SELECT * FROM V_UNIFIED_REVENUE", patterns, "snowflake") == []
 
 
 def test_forbidden_table_flagged() -> None:
     patterns = AntiPatterns(forbidden_tables=["RAW_ORDERS"])
-    violations = _check_anti_patterns("SELECT amount FROM raw_orders", patterns)
+    violations = _check_anti_patterns("SELECT amount FROM raw_orders", patterns, "snowflake")
     assert len(violations) == 1
     assert "RAW_ORDERS" in violations[0]
 
 
 def test_forbidden_table_flagged_via_alias() -> None:
     patterns = AntiPatterns(forbidden_tables=["RAW_ORDERS"])
-    violations = _check_anti_patterns("SELECT o.amount FROM raw_orders AS o", patterns)
+    violations = _check_anti_patterns("SELECT o.amount FROM raw_orders AS o", patterns, "snowflake")
     assert len(violations) == 1
 
 
 def test_bare_forbidden_table_matches_schema_qualified() -> None:
     """A bare ``RAW_ORDERS`` entry should match ``FINANCE.RAW_ORDERS``."""
     patterns = AntiPatterns(forbidden_tables=["RAW_ORDERS"])
-    violations = _check_anti_patterns("SELECT * FROM FINANCE.RAW_ORDERS", patterns)
+    violations = _check_anti_patterns("SELECT * FROM FINANCE.RAW_ORDERS", patterns, "snowflake")
     assert len(violations) == 1
 
 
 def test_qualified_forbidden_column() -> None:
     patterns = AntiPatterns(forbidden_columns=["ACCOUNT_INVOICES.amount"])
     violations = _check_anti_patterns(
-        "SELECT a.amount FROM ACCOUNT_INVOICES a", patterns
+        "SELECT a.amount FROM ACCOUNT_INVOICES a", patterns, "snowflake"
     )
     assert len(violations) == 1
     assert "ACCOUNT_INVOICES.AMOUNT" in violations[0]
@@ -143,14 +145,14 @@ def test_qualified_forbidden_column() -> None:
 def test_qualified_forbidden_column_misses_other_table() -> None:
     """forbidden_columns: ['FOO.bar'] must NOT flag 'OTHER.bar'."""
     patterns = AntiPatterns(forbidden_columns=["RAW_ORDERS.amount"])
-    violations = _check_anti_patterns("SELECT amount FROM V_UNIFIED_REVENUE", patterns)
+    violations = _check_anti_patterns("SELECT amount FROM V_UNIFIED_REVENUE", patterns, "snowflake")
     assert violations == []
 
 
 def test_bare_forbidden_column_matches_anywhere() -> None:
     patterns = AntiPatterns(forbidden_columns=["gross_revenue"])
     violations = _check_anti_patterns(
-        "SELECT gross_revenue FROM revenue_view", patterns
+        "SELECT gross_revenue FROM revenue_view", patterns, "snowflake"
     )
     assert len(violations) == 1
 
@@ -162,7 +164,7 @@ def test_violation_via_cte_launder() -> None:
         WITH wrong AS (SELECT cases FROM JHU_COVID_19)
         SELECT SUM(cases) FROM wrong
     """
-    violations = _check_anti_patterns(sql, patterns)
+    violations = _check_anti_patterns(sql, patterns, "snowflake")
     assert len(violations) == 1
 
 
@@ -171,7 +173,7 @@ def test_violation_via_cte_launder() -> None:
 
 def test_dim_vacuous_pass_when_no_anti_patterns() -> None:
     g = GoldenTest(id="x", question="q?")
-    r = check_anti_pattern_compliance("SELECT * FROM raw_orders", g)
+    r = check_anti_pattern_compliance("SELECT * FROM raw_orders", g, "snowflake")
     assert r.passed is True
     assert r.score == 1.0
     assert r.reason.startswith("skipped:")
@@ -183,7 +185,7 @@ def test_dim_vacuous_pass_when_lists_empty() -> None:
         question="q?",
         anti_patterns=AntiPatterns(forbidden_tables=[], forbidden_columns=[]),
     )
-    r = check_anti_pattern_compliance("SELECT * FROM raw_orders", g)
+    r = check_anti_pattern_compliance("SELECT * FROM raw_orders", g, "snowflake")
     assert r.passed is True
     assert r.reason.startswith("skipped:")
 
@@ -194,7 +196,7 @@ def test_dim_fails_with_clear_reason() -> None:
         question="q?",
         anti_patterns=AntiPatterns(forbidden_tables=["RAW_ORDERS"]),
     )
-    r = check_anti_pattern_compliance("SELECT amount FROM raw_orders", g)
+    r = check_anti_pattern_compliance("SELECT amount FROM raw_orders", g, "snowflake")
     assert r.passed is False
     assert r.score == 0.0
     assert "RAW_ORDERS" in r.reason
@@ -206,7 +208,7 @@ def test_dim_passes_when_sql_is_clean() -> None:
         question="q?",
         anti_patterns=AntiPatterns(forbidden_tables=["RAW_ORDERS"]),
     )
-    r = check_anti_pattern_compliance("SELECT amount FROM V_UNIFIED_REVENUE", g)
+    r = check_anti_pattern_compliance("SELECT amount FROM V_UNIFIED_REVENUE", g, "snowflake")
     assert r.passed is True
 
 

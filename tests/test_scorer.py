@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bi_evals.config import ScoringConfig, ScoringThresholds
+from bi_evals.config import DatabaseConfig, ScoringConfig, ScoringThresholds
 from bi_evals.db.client import QueryResult
 from bi_evals.golden.model import (
     ExpectedResults,
@@ -89,24 +89,24 @@ def _qr(
 
 class TestExtractTables:
     def test_simple_select(self) -> None:
-        tables = extract_tables("SELECT a FROM my_table")
+        tables = extract_tables("SELECT a FROM my_table", "snowflake")
         assert "MY_TABLE" in tables
 
     def test_join(self) -> None:
         sql = "SELECT a FROM t1 JOIN t2 ON t1.id = t2.id"
-        tables = extract_tables(sql)
+        tables = extract_tables(sql, "snowflake")
         assert tables == {"T1", "T2"}
 
     def test_fully_qualified(self) -> None:
         sql = "SELECT a FROM db.schema.my_table"
-        tables = extract_tables(sql)
+        tables = extract_tables(sql, "snowflake")
         assert "DB.SCHEMA.MY_TABLE" in tables
 
     def test_cte(self) -> None:
         sql = (
             "WITH cte AS (SELECT a FROM t1) SELECT * FROM cte JOIN t2 ON cte.id = t2.id"
         )
-        tables = extract_tables(sql)
+        tables = extract_tables(sql, "snowflake")
         assert "T1" in tables
         assert "T2" in tables
 
@@ -115,28 +115,31 @@ class TestExtractTables:
         sql = """WITH MAX_ACROSS_REGIONS AS (
             SELECT x FROM db.schema.real_table
         ) SELECT * FROM MAX_ACROSS_REGIONS"""
-        tables = extract_tables(sql)
+        tables = extract_tables(sql, "snowflake")
         assert tables == {"DB.SCHEMA.REAL_TABLE"}
         assert "MAX_ACROSS_REGIONS" not in tables
 
     def test_subquery(self) -> None:
         sql = "SELECT * FROM (SELECT a FROM inner_t) sub"
-        tables = extract_tables(sql)
+        tables = extract_tables(sql, "snowflake")
         assert "INNER_T" in tables
 
 
 class TestExtractSelectColumns:
     def test_simple_column(self) -> None:
-        cols = extract_select_columns("SELECT COUNTRY FROM t")
+        cols = extract_select_columns("SELECT COUNTRY FROM t", "snowflake")
         assert cols == {"COUNTRY"}
 
     def test_aggregation_unwrapped(self) -> None:
-        cols = extract_select_columns("SELECT SUM(DIFFERENCE) AS TOTAL FROM t")
+        cols = extract_select_columns(
+            "SELECT SUM(DIFFERENCE) AS TOTAL FROM t", "snowflake"
+        )
         assert cols == {"DIFFERENCE"}
 
     def test_multiple_with_alias(self) -> None:
         cols = extract_select_columns(
-            "SELECT STATE, MAX(DEATHS) AS TOTAL_DEATHS FROM t GROUP BY STATE"
+            "SELECT STATE, MAX(DEATHS) AS TOTAL_DEATHS FROM t GROUP BY STATE",
+            "snowflake",
         )
         assert cols == {"STATE", "DEATHS"}
 
@@ -145,36 +148,90 @@ class TestExtractSelectColumns:
         sql = (
             "WITH cte AS (SELECT a, SUM(b) AS s FROM t GROUP BY a) SELECT a, s FROM cte"
         )
-        cols = extract_select_columns(sql)
+        cols = extract_select_columns(sql, "snowflake")
         assert "A" in cols
         assert "B" in cols
         assert "S" not in cols
 
     def test_window_function(self) -> None:
         sql = "SELECT CASES - LAG(CASES) OVER (PARTITION BY STATE ORDER BY DATE) AS DAILY FROM t"
-        cols = extract_select_columns(sql)
+        cols = extract_select_columns(sql, "snowflake")
         assert cols == {"CASES", "STATE", "DATE"}
 
 
 class TestExtractFilterColumns:
     def test_simple_where(self) -> None:
         sql = "SELECT a FROM t WHERE id = 1"
-        filters = extract_filter_columns(sql)
+        filters = extract_filter_columns(sql, "snowflake")
         assert ("ID", "EQ") in filters
 
     def test_multiple_conditions(self) -> None:
         sql = (
             "SELECT a FROM t WHERE id = 1 AND status != 'active' AND dt >= '2024-01-01'"
         )
-        filters = extract_filter_columns(sql)
+        filters = extract_filter_columns(sql, "snowflake")
         assert ("ID", "EQ") in filters
         assert ("STATUS", "NEQ") in filters
         assert ("DT", "GTE") in filters
 
     def test_no_where(self) -> None:
         sql = "SELECT a FROM t"
-        filters = extract_filter_columns(sql)
+        filters = extract_filter_columns(sql, "snowflake")
         assert filters == set()
+
+
+# ---------------------------------------------------------------------------
+# Multi-warehouse: dialect-aware parsing (Build Stage 4, Part 1)
+# ---------------------------------------------------------------------------
+
+
+class TestDialectMapping:
+    """`database.type` resolves to the sqlglot dialect the scorer parses with."""
+
+    def test_known_types_map_to_dialects(self) -> None:
+        assert DatabaseConfig(type="snowflake").dialect == "snowflake"
+        assert DatabaseConfig(type="databricks").dialect == "databricks"
+        assert DatabaseConfig(type="bigquery").dialect == "bigquery"
+
+    def test_unknown_type_falls_back_to_itself(self) -> None:
+        # An unmapped-but-valid sqlglot dialect still works; a typo surfaces
+        # later as a sqlglot parse error, not a silent Snowflake parse.
+        assert DatabaseConfig(type="trino").dialect == "trino"
+
+
+class TestDialectAwareExtraction:
+    """Spark/Databricks-dialect SQL parses correctly only with the right dialect.
+
+    Regression guard for the Build Stage 4 bug: the extractors used to hardcode
+    ``dialect="snowflake"``, so backtick-quoted Databricks SQL threw a parse
+    error and every structural dimension misfired (green where it should be red).
+    """
+
+    # Backtick-quoted identifiers are valid Databricks/Spark SQL but invalid
+    # under the Snowflake dialect (which quotes with double-quotes).
+    SPARK_SQL = (
+        "SELECT `user_id`, `event` FROM `analytics`.`events` WHERE `country` = 'US'"
+    )
+
+    def test_snowflake_dialect_cannot_parse_spark_sql(self) -> None:
+        # Documents the failure the fix prevents: the old hardcoded default
+        # would raise here for a Databricks agent's SQL.
+        with pytest.raises(Exception):
+            extract_tables(self.SPARK_SQL, "snowflake")
+
+    def test_databricks_dialect_extracts_tables(self) -> None:
+        assert extract_tables(self.SPARK_SQL, "databricks") == {"ANALYTICS.EVENTS"}
+
+    def test_databricks_dialect_extracts_columns(self) -> None:
+        assert extract_select_columns(self.SPARK_SQL, "databricks") == {
+            "USER_ID",
+            "EVENT",
+        }
+
+    def test_databricks_dialect_extracts_filters(self) -> None:
+        assert extract_filter_columns(self.SPARK_SQL, "databricks") == {
+            ("COUNTRY", "EQ")
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +261,7 @@ class TestTableAlignment:
         r = check_table_alignment(
             "SELECT a FROM t1 JOIN t2 ON t1.id = t2.id",
             "SELECT b FROM t1 JOIN t2 ON t1.id = t2.id",
+            "snowflake",
         )
         assert r.passed
 
@@ -211,6 +269,7 @@ class TestTableAlignment:
         r = check_table_alignment(
             "SELECT a FROM t1",
             "SELECT b FROM t1 JOIN t2 ON t1.id = t2.id",
+            "snowflake",
         )
         assert not r.passed
         assert "T2" in r.reason
@@ -226,6 +285,7 @@ class TestColumnAlignment:
         r = check_column_alignment(
             "SELECT NAME, SUM(VALUE) AS TOTAL FROM t GROUP BY NAME",
             _golden(required_columns=["NAME", "VALUE"]),
+            "snowflake",
         )
         assert r.passed
 
@@ -233,6 +293,7 @@ class TestColumnAlignment:
         r = check_column_alignment(
             "SELECT NAME FROM t",
             _golden(required_columns=["NAME", "VALUE"]),
+            "snowflake",
         )
         assert not r.passed
         assert "VALUE" in r.reason
@@ -242,11 +303,12 @@ class TestColumnAlignment:
         r = check_column_alignment(
             "SELECT SUM(DIFFERENCE) AS TOTAL_CASES FROM t",
             _golden(required_columns=["DIFFERENCE"]),
+            "snowflake",
         )
         assert r.passed
 
     def test_skip_no_required(self) -> None:
-        r = check_column_alignment("SELECT A FROM t", _golden())
+        r = check_column_alignment("SELECT A FROM t", _golden(), "snowflake")
         assert r.passed
         assert "skipped" in r.reason
 
@@ -258,6 +320,7 @@ class TestColumnAlignment:
             "SELECT C_NAME, SUM(L_EXTENDEDPRICE) AS GROSS_REVENUE "
             "FROM t GROUP BY C_NAME",
             _golden(required_columns=["C_NAME", "GROSS_REVENUE"]),
+            "snowflake",
         )
         assert not r.passed
         assert "GROSS_REVENUE" in r.reason
@@ -274,6 +337,7 @@ class TestFilterCorrectness:
         r = check_filter_correctness(
             "SELECT a FROM t WHERE id = 1 AND dt >= '2024-01-01'",
             "SELECT b FROM t WHERE id = 1 AND dt >= '2024-01-01'",
+            "snowflake",
         )
         assert r.passed
 
@@ -281,11 +345,12 @@ class TestFilterCorrectness:
         r = check_filter_correctness(
             "SELECT a FROM t WHERE id = 1",
             "SELECT b FROM t WHERE id = 1 AND status = 'active'",
+            "snowflake",
         )
         assert not r.passed
 
     def test_skip_no_where(self) -> None:
-        r = check_filter_correctness("SELECT a FROM t", "SELECT b FROM t")
+        r = check_filter_correctness("SELECT a FROM t", "SELECT b FROM t", "snowflake")
         assert r.passed
         assert "skipped" in r.reason
 
@@ -514,6 +579,7 @@ class TestNoHallucinatedColumns:
         r = check_no_hallucinated_columns(
             "SELECT A, SUM(B) AS TOTAL FROM t GROUP BY A",
             "SELECT A, SUM(B) AS DIFFERENT_ALIAS FROM t GROUP BY A",
+            "snowflake",
         )
         assert r.passed
 
@@ -521,6 +587,7 @@ class TestNoHallucinatedColumns:
         r = check_no_hallucinated_columns(
             "SELECT A FROM t",
             "SELECT A, B FROM t",
+            "snowflake",
         )
         assert r.passed
 
@@ -528,6 +595,7 @@ class TestNoHallucinatedColumns:
         r = check_no_hallucinated_columns(
             "SELECT A, B, PHANTOM FROM t",
             "SELECT A, B FROM t",
+            "snowflake",
         )
         assert not r.passed
         assert "PHANTOM" in r.reason
@@ -537,6 +605,7 @@ class TestNoHallucinatedColumns:
         r = check_no_hallucinated_columns(
             "SELECT SUM(DIFFERENCE) AS NEW_CONFIRMED_CASES FROM t",
             "SELECT SUM(DIFFERENCE) AS DAILY_NEW_CASES FROM t",
+            "snowflake",
         )
         assert r.passed
 
