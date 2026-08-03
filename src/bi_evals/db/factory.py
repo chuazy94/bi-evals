@@ -12,4 +12,8 @@ def create_db_client(config: DatabaseConfig) -> DatabaseClient:
         from bi_evals.db.snowflake import SnowflakeClient
 
         return SnowflakeClient(config)
+    if config.type == "databricks":
+        from bi_evals.db.databricks import DatabricksClient
+
+        return DatabricksClient(config)
     raise ValueError(f"Unknown database type: '{config.type}'")

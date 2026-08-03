@@ -281,6 +281,7 @@ class AgentConfig(BaseModel):
 
 
 class DatabaseConnection(BaseModel):
+    # Snowflake fields
     account: str = ""
     user: str = ""
     private_key_path: str = ""
@@ -288,6 +289,14 @@ class DatabaseConnection(BaseModel):
     warehouse: str = ""
     database: str = ""
     schema_: str = ""
+
+    # Databricks fields (used when database.type == "databricks"). Which fields
+    # matter is disambiguated by `type`; a flat model keeps the config shape
+    # identical across warehouses and preserves ${ENV_VAR} substitution.
+    server_hostname: str = ""
+    http_path: str = ""
+    access_token: str = ""
+    catalog: str = ""
 
     model_config = {"populate_by_name": True}
 
