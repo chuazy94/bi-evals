@@ -6,7 +6,7 @@ import sqlglot
 from sqlglot import exp
 
 
-def extract_tables(sql: str, dialect: str = "snowflake") -> set[str]:
+def extract_tables(sql: str, dialect: str) -> set[str]:
     """Extract physical table names from SQL, normalized to uppercase.
 
     Returns fully qualified names where available (e.g. "DB.SCHEMA.TABLE").
@@ -27,7 +27,7 @@ def extract_tables(sql: str, dialect: str = "snowflake") -> set[str]:
     return tables
 
 
-def extract_select_columns(sql: str, dialect: str = "snowflake") -> set[str]:
+def extract_select_columns(sql: str, dialect: str) -> set[str]:
     """Extract source column names referenced in SELECT expressions.
 
     Walks every SELECT expression and collects the underlying Column nodes,
@@ -64,7 +64,7 @@ def extract_select_columns(sql: str, dialect: str = "snowflake") -> set[str]:
     return columns
 
 
-def extract_output_aliases(sql: str, dialect: str = "snowflake") -> set[str]:
+def extract_output_aliases(sql: str, dialect: str) -> set[str]:
     """Extract the output alias names defined anywhere via ``AS`` in the SQL.
 
     These are the *result* column names (e.g. ``SUM(x) AS GROSS_REVENUE`` →
@@ -94,9 +94,7 @@ def extract_output_aliases(sql: str, dialect: str = "snowflake") -> set[str]:
     return aliases
 
 
-def extract_columns_with_tables(
-    sql: str, dialect: str = "snowflake"
-) -> set[tuple[str | None, str]]:
+def extract_columns_with_tables(sql: str, dialect: str) -> set[tuple[str | None, str]]:
     """Extract every ``(table, column)`` pair referenced in the SQL.
 
     The table component is the column's owning table (resolved via alias
@@ -188,9 +186,7 @@ def extract_columns_with_tables(
     return pairs
 
 
-def extract_filter_columns(
-    sql: str, dialect: str = "snowflake"
-) -> set[tuple[str, str]]:
+def extract_filter_columns(sql: str, dialect: str) -> set[tuple[str, str]]:
     """Extract (column_name, operator) pairs from WHERE clauses.
 
     Returns uppercase column names paired with operator class names.

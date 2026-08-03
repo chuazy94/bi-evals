@@ -257,9 +257,13 @@ class TestDemoScorerPhase3:
 
         dimensions = [
             check_execution(mock_generated_result),
-            check_table_alignment(result.extracted_sql, GOLDEN_TEST.reference_sql),
-            check_column_alignment(mock_generated_result, GOLDEN_TEST),
-            check_filter_correctness(result.extracted_sql, GOLDEN_TEST.reference_sql),
+            check_table_alignment(
+                result.extracted_sql, GOLDEN_TEST.reference_sql, "snowflake"
+            ),
+            check_column_alignment(mock_generated_result, GOLDEN_TEST, "snowflake"),
+            check_filter_correctness(
+                result.extracted_sql, GOLDEN_TEST.reference_sql, "snowflake"
+            ),
             check_row_completeness(
                 mock_generated_result,
                 MOCK_REFERENCE_RESULT,
@@ -281,6 +285,7 @@ class TestDemoScorerPhase3:
             check_no_hallucinated_columns(
                 mock_generated_result,
                 MOCK_REFERENCE_RESULT,
+                "snowflake",
             ),
             check_skill_path_correctness(trace_dicts, GOLDEN_TEST),
         ]

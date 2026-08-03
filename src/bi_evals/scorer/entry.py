@@ -197,19 +197,24 @@ def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
     enabled = set(config.scoring.dimensions)
     results: list[DimensionResult] = []
 
+    # The sqlglot dialect the scorer parses SQL with, derived from the configured
+    # warehouse. Resolved once here and threaded into every structural dimension
+    # so no evaluator silently falls back to a hardcoded dialect.
+    dialect = config.database.dialect
+
     execution_passed = generated_result.success
 
     if "execution" in enabled:
         results.append(check_execution(generated_result))
 
     if "table_alignment" in enabled and reference_sql:
-        results.append(check_table_alignment(generated_sql, reference_sql))
+        results.append(check_table_alignment(generated_sql, reference_sql, dialect))
 
     if "column_alignment" in enabled:
-        results.append(check_column_alignment(generated_sql, golden))
+        results.append(check_column_alignment(generated_sql, golden, dialect))
 
     if "filter_correctness" in enabled and reference_sql:
-        results.append(check_filter_correctness(generated_sql, reference_sql))
+        results.append(check_filter_correctness(generated_sql, reference_sql, dialect))
 
     def _cascade(name: str) -> DimensionResult:
         # Upstream execution failure: a genuine FAIL (the agent's SQL never
@@ -250,7 +255,9 @@ def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
         )
 
     if "no_hallucinated_columns" in enabled and reference_sql:
-        results.append(check_no_hallucinated_columns(generated_sql, reference_sql))
+        results.append(
+            check_no_hallucinated_columns(generated_sql, reference_sql, dialect)
+        )
 
     if "skill_path_correctness" in enabled:
         # Capability check first (Build Stage 2): distinguish "can't know"
@@ -281,7 +288,7 @@ def get_assert(output: str, context: dict[str, Any]) -> dict[str, Any]:
                 results.append(check_skill_path_correctness(trace_steps, golden))
 
     if "anti_pattern_compliance" in enabled:
-        results.append(check_anti_pattern_compliance(generated_sql, golden))
+        results.append(check_anti_pattern_compliance(generated_sql, golden, dialect))
 
     # Convert to Promptfoo GradingResult with componentResults. The explicit
     # `status` key is the primary channel to ingest; the reason-string prefix
