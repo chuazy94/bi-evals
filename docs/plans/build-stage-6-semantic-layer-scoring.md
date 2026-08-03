@@ -2,7 +2,7 @@
 
 > **Status: proposal, post-MVP.** `CLAUDE.md` lists "No semantic layer integration" as an explicit
 > MVP non-goal, and the north star is first-run setup speed. This is a genuinely valuable capability
-> but should be framed as **Build Stage 5, which builds on Build Stage 2 (open-envelope trace)** — see
+> but should be framed as **Build Stage 6, which builds on Build Stage 2 (open-envelope trace)** — see
 > `STATUS.md`'s "Remaining — Build Stages" — not as an MVP item. This doc records the review + research
 > from the discussion so the design is captured before any code.
 
@@ -64,6 +64,36 @@ Sources:
 - Snowflake Semantic Views — <https://docs.snowflake.com/en/user-guide/views-semantic/overview>,
   Cortex Analyst <https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-analyst>
 - dbt LLM Semantic Layer benchmark — <https://github.com/dbt-labs/dbt-llm-sl-bench>
+
+### OSI / Apache Ossie — an emerging open standard for the *model* (not the query)
+
+Apache Ossie (incubating; formerly Open Semantic Interchange / OSI) is a vendor-neutral, Apache-2.0
+YAML standard for semantic metadata, backed by 50+ orgs including Snowflake, Databricks, and dbt Labs.
+Its self-described purpose is to kill *"Metric Drift"* (inconsistent KPIs across dashboards) and AI
+*"Hallucinations"* from conflicting data logic — the same failure modes `metric_definition_integrity`
+below targets. Worth folding into this plan, but with three precise boundaries, because the spec is
+narrower than "a canonical semantic layer format" might suggest:
+
+- **OSI is a MODEL format, not a QUERY format.** It defines `SemanticModel` → `datasets` → `fields` /
+  `relationships` / `metrics`. It does **not** define what an agent *selected* for a given question.
+  So OSI does **not** replace this plan's canonical `SemanticQuery` envelope, and the four *selection*
+  dimensions (`metric_selection`, `dimension_selection`, `semantic_grain_correctness`,
+  `semantic_filter_correctness`) still need the per-vendor query parsers as designed.
+- **Where OSI *does* fit: `metric_definition_integrity`.** OSI's `metrics[].expression` is exactly the
+  metric formula that dimension checks. If vendors ship OSI exports, the plan's N bespoke definition
+  loaders (`semantic_manifest.json` for dbt, view DDL for Snowflake, `/meta` for Cube) collapse toward
+  **one OSI loader** — a standards-aligned source for definition integrity / semantic-drift detection.
+- **Grain is not in OSI.** OSI marks time only with a boolean `dimension.is_time` role flag — no
+  explicit grain levels (month/quarter/day). `semantic_grain_correctness` must therefore keep sourcing
+  grain from the query surface, *not* from an OSI model.
+
+**Maturity flag:** Ossie is still incubating (*"has yet to be fully endorsed by the ASF"*). Consume it
+as an *optional input* to definition loading now; do **not** harden bi-evals' canonical schema against
+it until it graduates. Revisit whether OSI should become the canonical definition source once stable.
+
+Sources:
+- Apache Ossie project — <https://ossie.apache.org/>
+- Core spec — <https://github.com/apache/ossie/blob/main/core-spec/spec.md>
 
 ## Design: normalize once, score once (same move as the contract pivot)
 
@@ -164,7 +194,7 @@ pattern, recorded here so the work is scoped):
 
 ## Recommended sequencing
 
-- **Frame as Build Stage 5** that depends on Build Stage 2's open envelope — not MVP.
+- **Frame as Build Stage 6** that depends on Build Stage 2's open envelope — not MVP.
 - **Start with Snowflake end-to-end.** Cheapest first target for this stack: already on Snowflake,
   and the semantic selection is parseable straight out of the generated SQL — no new agent capture.
   Prove the canonical schema + dimensions + one parser, then add dbt/Cube as pure adapters.
@@ -181,8 +211,10 @@ Suggested slices:
 
 - **Critical vs. important tier** for `metric_selection` — fail the test outright on wrong metric, or
   let the weighted threshold decide? (Leaning critical — wrong metric is rarely acceptable.)
-- **Definition matching strictness** — exact string, normalized AST (sqlglot), or hash? Normalized AST
-  is most robust but per-dialect.
+- **Definition matching strictness** — *leaning normalized AST (sqlglot).* OSI stores metric formulas
+  as dialect-specific SQL in `metrics[].expression`, so exact-string comparison would thrash across
+  dialects; normalized sqlglot AST (already a dependency) is the robust choice. Open sub-question: the
+  per-dialect parse target when the expression's dialect differs from the execution warehouse.
 - **Filter normalization** — how far to canonicalize operators/values across dialects before
   set-comparison.
 - **Gold semantic query authoring** — hand-written in the golden vs. derived by running a known-good
