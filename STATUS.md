@@ -169,40 +169,50 @@ One ordered backlog. Earlier stages are prerequisites for later ones only where 
 - Explicitly gated behind real demand in the plan doc: ship only once a customer shows up who (a) already emits the SQL attribute, (b) runs a batch pass producing OTLP exports, and (c) can't or won't write a `Runner` loop. If they'd write a `Runner` loop, Part 1 + `submit()` already covers them with far less new code.
 - Not started. Build Stage 2 (its dependency) is merged; Part 1 is merged (PR #49). Waiting on demand signal, not blocked on anything technical.
 
-### Build Stage 4: Onboarding polish
+### Build Stage 4: Multi-warehouse support (near-term priority — conscious north-star override)
+
+- `docs/plans/build-stage-4-multi-warehouse.md` (new, unreleased) — unblocks the Databricks/Genie audience, who **cannot run bi-evals at all** today (`db/factory.py` raises on any non-Snowflake `database.type`, and all three critical dimensions run through the DB client). Two coupled parts: **Part 1** threads a `dialect` from `database.type` into the scorer — today `sql_utils.py`/`extract_sql` hardcode `dialect="snowflake"` and the `dimensions.py` call sites pass no dialect at all, so Spark-dialect SQL silently mis-parses and the structural dimensions go quietly wrong (green where it should be red). Part 1 is warehouse-neutral and unblocks *every* future warehouse. **Part 2** is the `DatabricksClient` + one factory `elif` (small once Part 1 lands; end-to-end smoke test gated on a real Databricks workspace).
+- Sequenced as a near-term priority per an explicit owner decision to bet on platform **breadth** over Snowflake first-run ergonomics — recorded as a deliberate override of the `CLAUDE.md` MVP north star, not a default. Replaces the old "additional warehouses" bullet in the Deferred stage (which hid the Part 1 prerequisite). Design only — no code yet.
+
+### Build Stage 5: Onboarding polish
 
 - ~~`init push` scaffold~~ — already shipped (Pivot Phase 3.5); `init push` is the listed default on-ramp today.
 - Promote `demo-bi-evals-snowflake` (now a proven, working end-to-end demo — including the CI gate) into a committed `examples/` reference project.
 - CI recipes doc + committed GitHub Actions workflow example (baseline-via-cache pattern; surfaced by user questions after Build Stage 1 shipped).
 - Not started.
 
-### Build Stage 5: Semantic-layer scoring
+### Build Stage 6: Semantic-layer scoring
 
-- `docs/plans/build-stage-5-semantic-layer-scoring.md` (new, unreleased) — closes the "right for the right reason" gap: today's dimensions can pass on a coincidentally-correct result even when the wrong metric/dimension/grain was selected. Proposes a canonical `SemanticQuery` envelope + per-vendor `SemanticLayerParser` (dbt Semantic Layer / Snowflake Semantic Views / Cube), new opt-in golden field `expected_semantic`, and four new dimensions (`metric_selection`, `dimension_selection`, `semantic_grain_correctness`, `semantic_filter_correctness`) plus `metric_definition_integrity` for semantic-drift detection. Sequencing starts with Snowflake (semantic selection parseable straight out of `generated_sql`, zero new agent instrumentation).
-- Design only — no code yet. Builds on Build Stage 2's open envelope. Explicitly out of MVP scope per `CLAUDE.md` — lowest priority of the numbered stages.
+- `docs/plans/build-stage-6-semantic-layer-scoring.md` (new, unreleased) — closes the "right for the right reason" gap: today's dimensions can pass on a coincidentally-correct result even when the wrong metric/dimension/grain was selected. Proposes a canonical `SemanticQuery` envelope + per-vendor `SemanticLayerParser` (dbt Semantic Layer / Snowflake Semantic Views / Cube), new opt-in golden field `expected_semantic`, and four new dimensions (`metric_selection`, `dimension_selection`, `semantic_grain_correctness`, `semantic_filter_correctness`) plus `metric_definition_integrity` for semantic-drift detection. Sequencing starts with Snowflake (semantic selection parseable straight out of `generated_sql`, zero new agent instrumentation).
+- Design only — no code yet. Builds on Build Stage 2's open envelope. Explicitly out of MVP scope per `CLAUDE.md` — one of the lower-priority stages.
 
-### Build Stage 6: Small fixes and cleanups
+### Build Stage 7: Assisted golden authoring (sequenced after Stage 6)
+
+- `docs/plans/build-stage-7-assisted-golden-authoring.md` (new, unreleased) — attacks the golden **cold-start cost**: authoring the first domain's worth of `reference_sql` from scratch is the real adoption friction, *not* the (correct, non-negotiable) requirement to have golden SQL at all. Proposes a two-tier drafter that converts authoring from writing to reviewing: **Tier 1** schema-only (no dependency, ships first, weaker drafts) and **Tier 2** semantic-model-grounded (reuses the Stage 6 `SemanticLayerParser.load_definitions()` loader, so drafts compile from the customer's governed metric/dimension definitions — high-trust review). Directly serves the `CLAUDE.md` north star (*"author your first golden test with light assistance — quickly"*). Explicitly rejects accepting an opaque expected-result-set in place of SQL. Sibling to Stage 9's `production-traffic golden import` (they converge on the same reviewed-golden output — decide at scheduling whether to ship them together).
+- Design only — no code yet. Tier 2 depends on Build Stage 6's semantic-model loader; Tier 1 depends on nothing unbuilt. Chosen sequencing: one stage after Stage 6, both tiers landing there (per roadmap decision).
+
+### Build Stage 8: Small fixes and cleanups
 
 - ~~"9 dimensions" → "10 dimensions" inconsistency in `README.md`~~ — resolved in the SDK-first README rewrite (verified: README says 10, lists 10).
 - `generated_sql` (trace JSON key) vs `extracted_sql` (Python field) naming inconsistency (touches the scorer/ingest contract).
 - Migrate `api_endpoint.py`'s manual `_get_nested` parsing to schema-based validation.
 - `push-limitations.md` §D slightly overstates cost handling ("unless your submission carries them" — the push adapter zeroes cost/tokens regardless; one-word fix).
 
-### Build Stage 7: Deferred / unscheduled
+### Build Stage 9: Deferred / unscheduled
 
-No committed order yet within this stage; pull items forward into Stages 1–6 as they become priorities:
+No committed order yet within this stage; pull items forward into Stages 1–8 as they become priorities:
 
 - DuckDB as a built-in `database.type` (zero-cred demo target)
 - `bi-evals init --from <dir>`
 - Snowflake SSO
-- additional warehouses (Postgres/BigQuery/Redshift/Databricks)
+- additional warehouses (Postgres/BigQuery/Redshift) — Databricks promoted to its own near-term stage (Stage 4, "Multi-warehouse support"); once its Part 1 dialect-threading lands, these become pure client-plus-`elif` adds. See `docs/plans/build-stage-4-multi-warehouse.md`.
 - `mcp-server` adapter
 - SPA viewer rebuild
-- production-traffic golden import
+- production-traffic golden import (sibling to "Assisted golden authoring" at Stage 7 — same reviewed-golden output; consider shipping together, see `docs/plans/build-stage-7-assisted-golden-authoring.md`)
 - OpenAI tool-loop adapter
 - in-process Python wrap adapter (for importable agents, à la Promptfoo's ADK pattern)
 
-### Build Stage 8: Pillars 2 & 3 (post-MVP — see `docs/mvp-eval-platform.md`)
+### Build Stage 10: Pillars 2 & 3 (post-MVP — see `docs/mvp-eval-platform.md`)
 
 Pillar 1 (Accuracy + Explainability) is fully shipped; the next two pillars are out of MVP scope and not yet planned. Lowest priority overall — sequenced last deliberately.
 
@@ -231,7 +241,7 @@ Pillar 1 (Accuracy + Explainability) is fully shipped; the next two pillars are 
 | **Clean schema break over back-compat shim** | Old flat `agent:` configs fail loudly with a migration hint rather than silently mis-parsing |
 | **`agent.adapter` is a `Literal`** | A typo'd adapter fails at config-load with a clear pydantic error, not later at dispatch |
 | **Back-compat property accessors on `AgentConfig`** | `.type`/`.model`/`.endpoint`/`.tools` delegate into nested blocks so reader modules stay adapter-agnostic through the schema break |
-| **Semantic-layer scoring is a canonical-query problem** | dbt Semantic Layer / Snowflake Semantic Views / Cube share one vocabulary (metrics/dimensions/grain/filters) and differ only in query surface dialect — same "normalize once, score once" move as the adapter contract pivot. Proposal only; see `docs/plans/build-stage-5-semantic-layer-scoring.md` |
+| **Semantic-layer scoring is a canonical-query problem** | dbt Semantic Layer / Snowflake Semantic Views / Cube share one vocabulary (metrics/dimensions/grain/filters) and differ only in query surface dialect — same "normalize once, score once" move as the adapter contract pivot. Proposal only; see `docs/plans/build-stage-6-semantic-layer-scoring.md` |
 | Framework, not hardcoded project | Users bring their own skill files, golden tests, DB credentials |
 | Python over original JS design | MVP doc described JS; Python chosen for consistency with data tooling |
 | File-based trace communication | Adapter writes JSON, scorer reads it — handles Promptfoo process isolation |
