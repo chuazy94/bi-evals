@@ -80,36 +80,30 @@ def _load_byo_schema() -> dict[str, Any]:
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def check_snowflake_select_one(config: BiEvalsConfig) -> CheckResult:
-    """Real SELECT 1 against the configured Snowflake. Catches auth + network."""
+def check_warehouse_select_one(config: BiEvalsConfig) -> CheckResult:
+    """Real SELECT 1 against the configured warehouse. Catches auth + network.
+
+    Warehouse-neutral: the label reflects ``database.type`` so the same check
+    serves Snowflake, Databricks, and any future client behind the factory.
+    """
+    label = f"{config.database.type.title()} reachability"
     try:
         client = create_db_client(config.database)
         result = client.execute("SELECT 1")
         error = getattr(result, "error", None)
         if error:
-            return CheckResult(
-                "Snowflake reachability",
-                "fail",
-                f"SELECT 1 returned error: {error}",
-            )
+            return CheckResult(label, "fail", f"SELECT 1 returned error: {error}")
         row_count = getattr(result, "row_count", 0)
         if row_count < 1:
-            return CheckResult(
-                "Snowflake reachability",
-                "fail",
-                "SELECT 1 returned no rows",
-            )
-        return CheckResult(
-            "Snowflake reachability",
-            "ok",
-            f"SELECT 1 returned {row_count} row(s)",
-        )
+            return CheckResult(label, "fail", "SELECT 1 returned no rows")
+        return CheckResult(label, "ok", f"SELECT 1 returned {row_count} row(s)")
     except Exception as e:
-        return CheckResult(
-            "Snowflake reachability",
-            "fail",
-            f"{type(e).__name__}: {e}",
-        )
+        return CheckResult(label, "fail", f"{type(e).__name__}: {e}")
+
+
+# Back-compat alias: existing callers/tests reference this name. The check is
+# warehouse-neutral now.
+check_snowflake_select_one = check_warehouse_select_one
 
 
 def check_promptfoo_available() -> CheckResult:

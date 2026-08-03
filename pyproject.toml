@@ -23,6 +23,9 @@ dependencies = [
 [project.optional-dependencies]
 # Runner.traced_call() only — not needed for anything else in bi-evals.
 otel = ["opentelemetry-api>=1.20"]
+# Only needed when database.type == "databricks". Snowflake-only users don't
+# pull this in. Install with: uv add "bi-evals[databricks]".
+databricks = ["databricks-sql-connector>=3.0"]
 
 [dependency-groups]
 dev = [

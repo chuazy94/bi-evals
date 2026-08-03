@@ -111,6 +111,41 @@ SNOWFLAKE_DATABASE=...
 SNOWFLAKE_SCHEMA=...
 ```
 
+### Databricks
+
+To score against a Databricks SQL warehouse instead, install the extra and use the
+`databricks` database type. (`bi-evals init` scaffolds Snowflake today — for Databricks,
+write the `database:` block by hand as below.)
+
+```bash
+uv add "bi-evals[databricks]"     # pulls in databricks-sql-connector
+```
+
+```yaml
+database:
+  type: databricks
+  connection:
+    server_hostname: "${DATABRICKS_SERVER_HOSTNAME}"   # dbc-xxxx.cloud.databricks.com
+    http_path: "${DATABRICKS_HTTP_PATH}"               # /sql/1.0/warehouses/xxxxxxxx
+    access_token: "${DATABRICKS_TOKEN}"                # a personal access token (PAT)
+    catalog: "${DATABRICKS_CATALOG}"                   # optional (Unity Catalog)
+    schema: "${DATABRICKS_SCHEMA}"                      # optional
+  query_timeout: 30
+```
+
+```
+DATABRICKS_SERVER_HOSTNAME=dbc-xxxxxxxx-xxxx.cloud.databricks.com
+DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/xxxxxxxxxxxxxxxx
+DATABRICKS_TOKEN=dapi...
+DATABRICKS_CATALOG=main
+DATABRICKS_SCHEMA=default
+```
+
+The scorer parses your generated and reference SQL using the Databricks (Spark) dialect
+automatically — it's derived from `database.type`, so backtick-quoted identifiers and
+Spark-specific syntax are handled correctly. Verify connectivity before spending anything:
+`bi-evals doctor` runs a real `SELECT 1` against the configured warehouse.
+
 ---
 
 ## Step 4 — Write your first golden test
