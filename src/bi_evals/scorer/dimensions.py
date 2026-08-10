@@ -460,9 +460,24 @@ def check_value_accuracy(
             if gen_val is None or ref_val is None:
                 mismatches.append(f"{ref_col}: {gen_val} vs {ref_val}")
                 continue
-            if isinstance(gen_val, (int, float)) and isinstance(ref_val, (int, float)):
+            if isinstance(gen_val, bool) or isinstance(ref_val, bool):
+                # bool is a subclass of int — compare exactly, not numerically.
+                if gen_val != ref_val:
+                    mismatches.append(f"{ref_col}: {gen_val} vs {ref_val}")
+            elif isinstance(gen_val, (int, float)) and isinstance(
+                ref_val, (int, float)
+            ):
                 denom = max(abs(ref_val), 1)
                 if abs(gen_val - ref_val) / denom > tolerance:
+                    mismatches.append(f"{ref_col}: {gen_val} vs {ref_val}")
+            else:
+                # Non-numeric values (labels, categories, dates-as-strings) have
+                # no tolerance to apply — they either match or they don't.
+                # Without this, a wrong bucket label like 'SILVER' vs 'GOLD'
+                # would silently pass value_accuracy.
+                if _normalize_value(gen_val, tolerance) != _normalize_value(
+                    ref_val, tolerance
+                ):
                     mismatches.append(f"{ref_col}: {gen_val} vs {ref_val}")
 
     if matched_count == 0:

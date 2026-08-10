@@ -376,6 +376,28 @@ class TestValueAccuracy:
         r = check_value_accuracy(gen, ref, _golden(row_comparison=rc), _scoring())
         assert r.passed
 
+    def test_fail_string_label_mismatch(self) -> None:
+        """A wrong categorical label must fail — tolerance is numeric-only.
+
+        Regression: non-numeric pairs used to fall through every comparison
+        branch, so a semantic-layer bucket computed with the wrong thresholds
+        ('SILVER' where the golden says 'GOLD') silently passed.
+        """
+        ref = _qr(["ID", "TIER"], [{"ID": 1, "TIER": "GOLD"}])
+        gen = _qr(["ID", "TIER"], [{"ID": 1, "TIER": "SILVER"}])
+        rc = RowComparison(enabled=True, key_columns=["ID"], value_columns=["TIER"])
+        r = check_value_accuracy(gen, ref, _golden(row_comparison=rc), _scoring())
+        assert not r.passed
+        assert "TIER" in r.reason
+
+    def test_pass_string_label_case_insensitive(self) -> None:
+        """Matching labels differing only in case/whitespace still pass."""
+        ref = _qr(["ID", "TIER"], [{"ID": 1, "TIER": "GOLD"}])
+        gen = _qr(["ID", "TIER"], [{"ID": 1, "TIER": " gold "}])
+        rc = RowComparison(enabled=True, key_columns=["ID"], value_columns=["TIER"])
+        r = check_value_accuracy(gen, ref, _golden(row_comparison=rc), _scoring())
+        assert r.passed
+
     def test_pass_positional_column_mapping(self) -> None:
         """Different column aliases should still match by position."""
         ref = _qr(
