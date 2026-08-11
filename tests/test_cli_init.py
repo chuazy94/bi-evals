@@ -32,7 +32,9 @@ class TestInitBareErrors:
 class TestInitDev:
     def _scaffold(self, tmp_path: Path) -> Path:
         runner = CliRunner()
-        result = runner.invoke(cli, ["init", "dev", "--dir", str(tmp_path)])
+        result = runner.invoke(
+            cli, ["init", "dev", "--dir", str(tmp_path), "--warehouse", "snowflake"]
+        )
         assert result.exit_code == 0, result.output
         return tmp_path
 
@@ -64,7 +66,9 @@ class TestInitDev:
 
     def test_next_steps_mention_skills(self, tmp_path: Path) -> None:
         runner = CliRunner()
-        result = runner.invoke(cli, ["init", "dev", "--dir", str(tmp_path)])
+        result = runner.invoke(
+            cli, ["init", "dev", "--dir", str(tmp_path), "--warehouse", "snowflake"]
+        )
         assert "system-prompt.md" in result.output
         assert "skill" in result.output.lower()
 
@@ -72,7 +76,17 @@ class TestInitDev:
 class TestInitApiEndpoint:
     def _scaffold(self, tmp_path: Path) -> Path:
         runner = CliRunner()
-        result = runner.invoke(cli, ["init", "api_endpoint", "--dir", str(tmp_path)])
+        result = runner.invoke(
+            cli,
+            [
+                "init",
+                "api_endpoint",
+                "--dir",
+                str(tmp_path),
+                "--warehouse",
+                "snowflake",
+            ],
+        )
         assert result.exit_code == 0, result.output
         return tmp_path
 
@@ -107,7 +121,17 @@ class TestInitApiEndpoint:
 
     def test_next_steps_mention_endpoint_and_adapter(self, tmp_path: Path) -> None:
         runner = CliRunner()
-        result = runner.invoke(cli, ["init", "api_endpoint", "--dir", str(tmp_path)])
+        result = runner.invoke(
+            cli,
+            [
+                "init",
+                "api_endpoint",
+                "--dir",
+                str(tmp_path),
+                "--warehouse",
+                "snowflake",
+            ],
+        )
         assert "endpoint" in result.output.lower()
         assert "adapter_example.py" in result.output
 
@@ -118,12 +142,16 @@ class TestInitIdempotent:
     @pytest.mark.parametrize("scaffold", ["dev", "api_endpoint"])
     def test_existing_config_preserved(self, tmp_path: Path, scaffold: str) -> None:
         runner = CliRunner()
-        runner.invoke(cli, ["init", scaffold, "--dir", str(tmp_path)])
+        runner.invoke(
+            cli, ["init", scaffold, "--dir", str(tmp_path), "--warehouse", "snowflake"]
+        )
         config_path = tmp_path / "bi-evals.yaml"
         marker = "# USER EDIT MARKER — DO NOT OVERWRITE\n"
         config_path.write_text(marker + config_path.read_text())
         # Re-run init — existing file should be left alone
-        runner.invoke(cli, ["init", scaffold, "--dir", str(tmp_path)])
+        runner.invoke(
+            cli, ["init", scaffold, "--dir", str(tmp_path), "--warehouse", "snowflake"]
+        )
         assert config_path.read_text().startswith(marker)
 
 
@@ -146,13 +174,39 @@ class TestInitWarehouse:
         assert config.database.type == "databricks"
 
     @pytest.mark.parametrize("scaffold", ALL_SCAFFOLDS)
-    def test_defaults_to_snowflake(self, tmp_path: Path, scaffold: str) -> None:
+    def test_snowflake_config_loads(self, tmp_path: Path, scaffold: str) -> None:
         runner = CliRunner()
-        result = runner.invoke(cli, ["init", scaffold, "--dir", str(tmp_path)])
+        result = runner.invoke(
+            cli, ["init", scaffold, "--dir", str(tmp_path), "--warehouse", "snowflake"]
+        )
         assert result.exit_code == 0, result.output
         config = BiEvalsConfig.load(tmp_path / "bi-evals.yaml")
         assert config.database.type == "snowflake"
         assert "DATABRICKS" not in (tmp_path / ".env").read_text()
+
+    @pytest.mark.parametrize("scaffold", ALL_SCAFFOLDS)
+    def test_warehouse_is_required(self, tmp_path: Path, scaffold: str) -> None:
+        """No silent default — mirrors bare `init` refusing to guess a scaffold.
+
+        Defaulting to Snowflake would hand a Databricks user a plausible-looking
+        project that only fails later, at connection time.
+        """
+        runner = CliRunner()
+        result = runner.invoke(cli, ["init", scaffold, "--dir", str(tmp_path)])
+        assert result.exit_code != 0
+        assert "--warehouse" in result.output
+        # Both choices are named, so the error is self-service.
+        assert "snowflake" in result.output and "databricks" in result.output
+
+    @pytest.mark.parametrize("scaffold", ALL_SCAFFOLDS)
+    def test_missing_warehouse_writes_nothing(
+        self, tmp_path: Path, scaffold: str
+    ) -> None:
+        """The failure is clean: no half-scaffolded directory left behind."""
+        target = tmp_path / "proj"
+        runner = CliRunner()
+        runner.invoke(cli, ["init", scaffold, "--dir", str(target)])
+        assert not target.exists()
 
     def test_databricks_env_has_databricks_keys(self, tmp_path: Path) -> None:
         runner = CliRunner()

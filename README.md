@@ -46,11 +46,14 @@ mkdir my-evals && cd my-evals
 uv init
 uv add "bi-evals @ git+https://github.com/chuazy94/bi-evals"   # not yet on PyPI
 # or from a local checkout: uv add /path/to/bi-evals
-uv run bi-evals init push --dir .
+uv run bi-evals init push --dir . --warehouse snowflake
 ```
 
-This writes a push-shaped `bi-evals.yaml`, `.env` / `.env.example` (Snowflake-only), an example
-golden test, and `golden/`, `results/`, `reports/` directories.
+This writes a push-shaped `bi-evals.yaml`, `.env` / `.env.example` (warehouse credentials
+only), an example golden test, and `golden/`, `results/`, `reports/` directories.
+
+`--warehouse` is required (`snowflake` or `databricks`) — there is no default, so a project
+is never silently scaffolded for the wrong warehouse.
 
 ### 2. Configure your warehouse
 

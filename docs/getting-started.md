@@ -68,12 +68,16 @@ activated venv).
 ## Step 2 — Scaffold the project
 
 ```bash
-bi-evals init push --dir .
+bi-evals init push --dir . --warehouse snowflake
 ```
 
 This writes a push-shaped `bi-evals.yaml` (`agent.adapter: push`), `.env` / `.env.example`
-(Snowflake-only — push needs no agent URL), an example golden, and `golden/`, `results/`,
-`reports/` directories.
+(warehouse credentials only — push needs no agent URL), an example golden, and `golden/`,
+`results/`, `reports/` directories.
+
+`--warehouse` is required and takes `snowflake` or `databricks` — there is no default, so a
+project is never silently scaffolded for the wrong warehouse. See
+[Databricks](#databricks) below.
 
 (For a live HTTP agent use `bi-evals init api_endpoint` — it additionally ships
 `adapter_example.py`, a FastAPI shim demonstrating the response contract; see Step 5b. For
