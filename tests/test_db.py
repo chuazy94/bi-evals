@@ -161,6 +161,20 @@ class TestDatabricksClient:
         assert result.rows[0] == {"REGION": "EU", "TOTAL": 100}
 
     @patch("databricks.sql.connect")
+    def test_query_timeout_reaches_the_driver(
+        self, mock_connect: MagicMock, databricks_config: DatabaseConfig
+    ) -> None:
+        """`query_timeout` must actually take effect, not sit in a dead field.
+
+        Databricks' cursor.execute() has no `timeout` kwarg (unlike Snowflake's),
+        so the value is applied at connect time via the driver's `_socket_timeout`.
+        """
+        DatabricksClient(databricks_config)
+
+        kwargs = mock_connect.call_args.kwargs
+        assert kwargs["_socket_timeout"] == databricks_config.query_timeout
+
+    @patch("databricks.sql.connect")
     def test_execute_sql_error_sets_error_not_raises(
         self, mock_connect: MagicMock, databricks_config: DatabaseConfig
     ) -> None:
@@ -191,6 +205,7 @@ class TestDatabricksClient:
             server_hostname="dbc-abc.cloud.databricks.com",
             http_path="/sql/1.0/warehouses/abc123",
             access_token="dapi-token",
+            _socket_timeout=30,
             catalog="main",
             schema="analytics",
         )

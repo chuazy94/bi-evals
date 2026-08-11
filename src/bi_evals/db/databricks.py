@@ -7,6 +7,10 @@ names so downstream row-matching is warehouse-agnostic.
 
 ``databricks-sql-connector`` is an optional dependency (the ``databricks`` extra),
 imported lazily so Snowflake-only users never need it.
+
+One deliberate divergence from ``SnowflakeClient``: ``query_timeout`` is applied
+at **connect** time via the driver's ``_socket_timeout``, because Databricks'
+``cursor.execute()`` accepts no ``timeout`` kwarg. See ``__init__``.
 """
 
 from __future__ import annotations
@@ -57,13 +61,26 @@ class DatabricksClient:
         if conn.schema_:
             session_kwargs["schema"] = conn.schema_
 
+        # `query_timeout` is applied at connect time, not per-execute: unlike
+        # snowflake-connector-python, databricks-sql-connector's cursor.execute()
+        # takes no `timeout` kwarg. `_socket_timeout` is the driver's documented
+        # equivalent — "the timeout in seconds for socket send, recv and connect
+        # operations" — and does reach the HTTP transport (verified against a live
+        # warehouse: it lands on the Thrift transport's socket timeout).
+        #
+        # Caveat, also verified live: this bounds each socket *operation*, not the
+        # query end-to-end. A query whose server-side work outlasts the value can
+        # still succeed, because the driver keeps polling within the timeout. It
+        # protects against a wedged connection, not a slow query. Databricks has
+        # no client-side statement timeout; use a server-side one
+        # (`SET STATEMENT_TIMEOUT`) if you need a hard cap.
         self._conn = databricks_sql.connect(
             server_hostname=hostname,
             http_path=http_path,
             access_token=token,
+            _socket_timeout=config.query_timeout,
             **session_kwargs,
         )
-        self._timeout = config.query_timeout
 
     def execute(self, sql: str) -> QueryResult:
         cursor = self._conn.cursor()
