@@ -57,6 +57,107 @@ def init(ctx: click.Context) -> None:
         )
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Warehouse fragments — substituted into every mode's config/.env templates
+#
+# The adapter (push/api_endpoint/dev) and the warehouse are independent choices,
+# so they're kept as separate axes: one set of mode templates carrying a
+# {database_block} / {env_block} placeholder, filled per warehouse here. Adding
+# a warehouse means adding one entry to each dict, not another mode template.
+# ────────────────────────────────────────────────────────────────────────────
+
+_DATABASE_BLOCKS = {
+    "snowflake": """\
+database:
+  type: snowflake
+  connection:
+    account: "${SNOWFLAKE_ACCOUNT}"
+    user: "${SNOWFLAKE_USER}"
+    private_key_path: "${SNOWFLAKE_PRIVATE_KEY_PATH}"
+    private_key_passphrase: "${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}"  # optional, if key is encrypted
+    warehouse: "${SNOWFLAKE_WAREHOUSE}"
+    database: "${SNOWFLAKE_DATABASE}"
+    schema: "${SNOWFLAKE_SCHEMA}"
+  query_timeout: 30
+""",
+    # Requires the extra:  uv add "bi-evals[databricks]"
+    "databricks": """\
+database:
+  type: databricks
+  connection:
+    server_hostname: "${DATABRICKS_SERVER_HOSTNAME}"   # dbc-xxxx.cloud.databricks.com
+    http_path: "${DATABRICKS_HTTP_PATH}"               # /sql/1.0/warehouses/xxxx
+    access_token: "${DATABRICKS_TOKEN}"                # personal access token (dapi...)
+    catalog: "${DATABRICKS_CATALOG}"                   # optional (Unity Catalog)
+    schema: "${DATABRICKS_SCHEMA}"                     # optional
+  query_timeout: 120
+""",
+}
+
+# NB: env comments go on their own line, never trailing a KEY=VALUE — python-dotenv
+# reads "KEY=  # hint" as the literal value "# hint" rather than as empty, so an
+# unfilled scaffold would silently produce a garbage hostname.
+_ENV_BLOCKS = {
+    "snowflake": """\
+SNOWFLAKE_ACCOUNT=
+SNOWFLAKE_USER=
+SNOWFLAKE_PRIVATE_KEY_PATH=~/.ssh/snowflake_rsa_key.p8
+SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
+SNOWFLAKE_WAREHOUSE=
+SNOWFLAKE_DATABASE=
+SNOWFLAKE_SCHEMA=
+""",
+    "databricks": """\
+# Requires the extra:  uv add "bi-evals[databricks]"
+# Both values come from: SQL Warehouse > Connection details.
+# server_hostname e.g. dbc-xxxx.cloud.databricks.com
+DATABRICKS_SERVER_HOSTNAME=
+# http_path e.g. /sql/1.0/warehouses/xxxx
+DATABRICKS_HTTP_PATH=
+# A personal access token (dapi...)
+DATABRICKS_TOKEN=
+# Optional: Unity Catalog defaults for the session
+DATABRICKS_CATALOG=
+DATABRICKS_SCHEMA=
+""",
+}
+
+#: Warehouses `bi-evals init --warehouse` can scaffold. Keys of both dicts above.
+WAREHOUSE_CHOICES = tuple(_DATABASE_BLOCKS)
+
+_WAREHOUSE_LABELS = {"snowflake": "Snowflake", "databricks": "Databricks"}
+
+
+def _render(template: str, warehouse: str) -> str:
+    """Fill a mode template's warehouse placeholders.
+
+    Plain ``str.replace`` rather than ``str.format`` — the templates are full of
+    literal ``${ENV_VAR}`` braces that ``format`` would choke on.
+    """
+    return template.replace(
+        "{database_block}", _DATABASE_BLOCKS[warehouse].rstrip("\n")
+    ).replace("{env_block}", _ENV_BLOCKS[warehouse])
+
+
+def _warehouse_option(f):
+    """Shared --warehouse option for every init subcommand."""
+    return click.option(
+        "--warehouse",
+        "-w",
+        type=click.Choice(WAREHOUSE_CHOICES),
+        default="snowflake",
+        show_default=True,
+        help="Warehouse to scaffold the database config and credentials for.",
+    )(f)
+
+
+def _echo_warehouse_extra(warehouse: str) -> None:
+    """Warn about the optional driver a non-default warehouse needs."""
+    if warehouse == "databricks":
+        click.echo('Install the driver:  uv add "bi-evals[databricks]"')
+        click.echo()
+
+
 @init.command("push")
 @click.option(
     "--dir",
@@ -65,18 +166,21 @@ def init(ctx: click.Context) -> None:
     default=".",
     help="Directory to scaffold the project in.",
 )
-def init_push(target_dir: str) -> None:
+@_warehouse_option
+def init_push(target_dir: str, warehouse: str) -> None:
     """Scaffold a push project (you run your agent, bi-evals scores its output)."""
     target = Path(target_dir).resolve()
     target.mkdir(parents=True, exist_ok=True)
 
-    _scaffold_project(target, mode="push")
+    _scaffold_project(target, mode="push", warehouse=warehouse)
+    label = _WAREHOUSE_LABELS[warehouse]
     click.echo(f"Scaffolded push bi-evals project in {target}")
     click.echo()
+    _echo_warehouse_extra(warehouse)
     click.echo("Next steps:")
-    click.echo("  1. Edit bi-evals.yaml — configure your Snowflake connection")
+    click.echo(f"  1. Edit bi-evals.yaml — configure your {label} connection")
     click.echo("  2. Create golden tests in golden/ (question + reference_sql)")
-    click.echo("  3. Edit .env with your Snowflake credentials")
+    click.echo(f"  3. Edit .env with your {label} credentials")
     click.echo("  4. Run your agent over the goldens and score — either with the SDK:")
     click.echo(
         "       import bi_evals; r = bi_evals.Runner('bi-evals.yaml')\n"
@@ -96,22 +200,25 @@ def init_push(target_dir: str) -> None:
     default=".",
     help="Directory to scaffold the project in.",
 )
-def init_api_endpoint(target_dir: str) -> None:
+@_warehouse_option
+def init_api_endpoint(target_dir: str, warehouse: str) -> None:
     """Scaffold an api_endpoint project (bi-evals calls your agent over HTTP)."""
     target = Path(target_dir).resolve()
     target.mkdir(parents=True, exist_ok=True)
 
-    _scaffold_project(target, mode="api_endpoint")
+    _scaffold_project(target, mode="api_endpoint", warehouse=warehouse)
+    label = _WAREHOUSE_LABELS[warehouse]
     click.echo(f"Scaffolded api_endpoint bi-evals project in {target}")
     click.echo()
+    _echo_warehouse_extra(warehouse)
     click.echo("Next steps:")
     click.echo(
         "  1. Edit bi-evals.yaml — set agent.api_endpoint.url (and headers if needed) to point at your agent"
     )
-    click.echo("  2. Edit bi-evals.yaml — configure your database connection")
+    click.echo(f"  2. Edit bi-evals.yaml — configure your {label} connection")
     click.echo("  3. Create golden tests in golden/")
     click.echo(
-        "  4. Edit .env with BI_AGENT_URL, BI_AGENT_TOKEN (if applicable), and Snowflake credentials"
+        f"  4. Edit .env with BI_AGENT_URL, BI_AGENT_TOKEN (if applicable), and {label} credentials"
     )
     click.echo(
         "  5. See adapter_example.py for a reference FastAPI shim if your agent isn't HTTP-reachable yet"
@@ -127,7 +234,8 @@ def init_api_endpoint(target_dir: str) -> None:
     default=".",
     help="Directory to scaffold the project in.",
 )
-def init_dev(target_dir: str) -> None:
+@_warehouse_option
+def init_dev(target_dir: str, warehouse: str) -> None:
     """Scaffold the dev-only driving adapter (bi-evals runs Claude + skill files).
 
     Not a production-fidelity setup — it evaluates a local rebuild of an agent.
@@ -136,9 +244,11 @@ def init_dev(target_dir: str) -> None:
     target = Path(target_dir).resolve()
     target.mkdir(parents=True, exist_ok=True)
 
-    _scaffold_project(target, mode="dev")
+    _scaffold_project(target, mode="dev", warehouse=warehouse)
+    label = _WAREHOUSE_LABELS[warehouse]
     click.echo(f"Scaffolded dev (anthropic_tool_loop) bi-evals project in {target}")
     click.echo()
+    _echo_warehouse_extra(warehouse)
     click.echo("Next steps:")
     click.echo(
         "  1. Create your system-prompt.md and skill files (e.g. skills/SKILL.md, skills/knowledge/*.md)"
@@ -146,10 +256,10 @@ def init_dev(target_dir: str) -> None:
     click.echo(
         "  2. Edit bi-evals.yaml — point agent.anthropic_tool_loop.tools[].config.base_dir to your skill/knowledge files"
     )
-    click.echo("  3. Edit bi-evals.yaml — configure your database connection")
+    click.echo(f"  3. Edit bi-evals.yaml — configure your {label} connection")
     click.echo("  4. Create golden tests in golden/")
     click.echo(
-        "  5. Edit .env with ANTHROPIC_API_KEY and Snowflake credentials (next to bi-evals.yaml; loaded automatically)"
+        f"  5. Edit .env with ANTHROPIC_API_KEY and {label} credentials (next to bi-evals.yaml; loaded automatically)"
     )
     click.echo("  6. Run: bi-evals run")
 
@@ -838,7 +948,7 @@ def _echo_cost_alert(alert: store_queries.CostAlert) -> None:
             )
 
 
-def _scaffold_project(target: Path, *, mode: str) -> None:
+def _scaffold_project(target: Path, *, mode: str, warehouse: str = "snowflake") -> None:
     """Create eval infrastructure files. Mode-aware: 'dev' or 'api_endpoint'.
 
     The 'dev' mode (dev-only driving adapter) writes a Claude-harness config
@@ -850,6 +960,9 @@ def _scaffold_project(target: Path, *, mode: str) -> None:
     Neither mode scaffolds skill/knowledge files — in 'dev' mode the user
     provides those; in 'api_endpoint' mode they live with the user's agent.
     """
+    if warehouse not in _DATABASE_BLOCKS:
+        raise ValueError(f"unknown warehouse: {warehouse!r}")
+
     if mode == "dev":
         config_template = _TEMPLATE_CONFIG_BUILTIN
         env_template = _TEMPLATE_ENV_BUILTIN
@@ -868,17 +981,17 @@ def _scaffold_project(target: Path, *, mode: str) -> None:
     # bi-evals.yaml
     config_file = target / "bi-evals.yaml"
     if not config_file.exists():
-        config_file.write_text(config_template)
+        config_file.write_text(_render(config_template, warehouse))
 
     # .env.example (reference; safe to commit if you version this folder)
     env_example = target / ".env.example"
     if not env_example.exists():
-        env_example.write_text(env_template)
+        env_example.write_text(_render(env_template, warehouse))
 
     # .env (sample placeholders; fill with real values — do not commit secrets)
     dot_env = target / ".env"
     if not dot_env.exists():
-        dot_env.write_text(sample_env)
+        dot_env.write_text(_render(sample_env, warehouse))
 
     # Directory structure — eval infrastructure only
     for d in ["golden", "results", "reports"]:
@@ -927,17 +1040,7 @@ agent:
           base_dir: "path/to/your/skill/"               # Path to your existing skill/knowledge files
     max_rounds: 10
 
-database:
-  type: snowflake
-  connection:
-    account: "${SNOWFLAKE_ACCOUNT}"
-    user: "${SNOWFLAKE_USER}"
-    private_key_path: "${SNOWFLAKE_PRIVATE_KEY_PATH}"
-    private_key_passphrase: "${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}"  # optional, if key is encrypted
-    warehouse: "${SNOWFLAKE_WAREHOUSE}"
-    database: "${SNOWFLAKE_DATABASE}"
-    schema: "${SNOWFLAKE_SCHEMA}"
-  query_timeout: 30
+{database_block}
 
 golden_tests:
   dir: "golden/"
@@ -969,28 +1072,14 @@ storage:
 
 _TEMPLATE_ENV_BUILTIN = """\
 ANTHROPIC_API_KEY=sk-ant-...
-SNOWFLAKE_ACCOUNT=
-SNOWFLAKE_USER=
-SNOWFLAKE_PRIVATE_KEY_PATH=~/.ssh/snowflake_rsa_key.p8
-SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
-SNOWFLAKE_WAREHOUSE=
-SNOWFLAKE_DATABASE=
-SNOWFLAKE_SCHEMA=
-"""
+{env_block}"""
 
 _SAMPLE_DOT_ENV_BUILTIN = """\
 # Local credentials for this Built-in mode eval project (gitignored).
 # Replace placeholder values before running bi-evals run.
 
 ANTHROPIC_API_KEY=sk-ant-...
-SNOWFLAKE_ACCOUNT=
-SNOWFLAKE_USER=
-SNOWFLAKE_PRIVATE_KEY_PATH=~/.ssh/snowflake_rsa_key.p8
-SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
-SNOWFLAKE_WAREHOUSE=
-SNOWFLAKE_DATABASE=
-SNOWFLAKE_SCHEMA=
-"""
+{env_block}"""
 
 # ────────────────────────────────────────────────────────────────────────────
 # BYO mode templates — bi-evals calls your existing agent over HTTP
@@ -1017,17 +1106,7 @@ agent:
     # Set them explicitly if your endpoint uses different field names or nests its response
     # (dot-notation supported, e.g. "response.sql").
 
-database:
-  type: snowflake
-  connection:
-    account: "${SNOWFLAKE_ACCOUNT}"
-    user: "${SNOWFLAKE_USER}"
-    private_key_path: "${SNOWFLAKE_PRIVATE_KEY_PATH}"
-    private_key_passphrase: "${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}"  # optional, if key is encrypted
-    warehouse: "${SNOWFLAKE_WAREHOUSE}"
-    database: "${SNOWFLAKE_DATABASE}"
-    schema: "${SNOWFLAKE_SCHEMA}"
-  query_timeout: 30
+{database_block}
 
 golden_tests:
   dir: "golden/"
@@ -1062,14 +1141,7 @@ storage:
 _TEMPLATE_ENV_BYO = """\
 BI_AGENT_URL=http://localhost:8000/ask
 BI_AGENT_TOKEN=
-SNOWFLAKE_ACCOUNT=
-SNOWFLAKE_USER=
-SNOWFLAKE_PRIVATE_KEY_PATH=~/.ssh/snowflake_rsa_key.p8
-SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
-SNOWFLAKE_WAREHOUSE=
-SNOWFLAKE_DATABASE=
-SNOWFLAKE_SCHEMA=
-"""
+{env_block}"""
 
 _SAMPLE_DOT_ENV_BYO = """\
 # Local credentials for this BYO mode eval project (gitignored).
@@ -1078,14 +1150,7 @@ _SAMPLE_DOT_ENV_BYO = """\
 
 BI_AGENT_URL=http://localhost:8000/ask
 BI_AGENT_TOKEN=
-SNOWFLAKE_ACCOUNT=
-SNOWFLAKE_USER=
-SNOWFLAKE_PRIVATE_KEY_PATH=~/.ssh/snowflake_rsa_key.p8
-SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
-SNOWFLAKE_WAREHOUSE=
-SNOWFLAKE_DATABASE=
-SNOWFLAKE_SCHEMA=
-"""
+{env_block}"""
 
 # ────────────────────────────────────────────────────────────────────────────
 # push mode templates — you run your agent, submit results, bi-evals scores them
@@ -1106,17 +1171,7 @@ agent:
     input_file: "results.jsonl"   # the file `bi-evals score --input` reads; the
                                    # SDK writes its own results/sdk_<ts>.jsonl
 
-database:
-  type: snowflake
-  connection:
-    account: "${SNOWFLAKE_ACCOUNT}"
-    user: "${SNOWFLAKE_USER}"
-    private_key_path: "${SNOWFLAKE_PRIVATE_KEY_PATH}"
-    private_key_passphrase: "${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}"  # optional, if key is encrypted
-    warehouse: "${SNOWFLAKE_WAREHOUSE}"
-    database: "${SNOWFLAKE_DATABASE}"
-    schema: "${SNOWFLAKE_SCHEMA}"
-  query_timeout: 30
+{database_block}
 
 golden_tests:
   dir: "golden/"
@@ -1149,28 +1204,14 @@ storage:
 """
 
 _TEMPLATE_ENV_PUSH = """\
-SNOWFLAKE_ACCOUNT=
-SNOWFLAKE_USER=
-SNOWFLAKE_PRIVATE_KEY_PATH=~/.ssh/snowflake_rsa_key.p8
-SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
-SNOWFLAKE_WAREHOUSE=
-SNOWFLAKE_DATABASE=
-SNOWFLAKE_SCHEMA=
-"""
+{env_block}"""
 
 _SAMPLE_DOT_ENV_PUSH = """\
 # Local credentials for this push eval project (gitignored).
 # Replace placeholder values before scoring. push needs only the warehouse —
 # bi-evals executes your submitted SQL to grade it; it never calls your agent.
 
-SNOWFLAKE_ACCOUNT=
-SNOWFLAKE_USER=
-SNOWFLAKE_PRIVATE_KEY_PATH=~/.ssh/snowflake_rsa_key.p8
-SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=
-SNOWFLAKE_WAREHOUSE=
-SNOWFLAKE_DATABASE=
-SNOWFLAKE_SCHEMA=
-"""
+{env_block}"""
 
 _TEMPLATE_BYO_ADAPTER = '''\
 """Reference FastAPI adapter for BYO mode.

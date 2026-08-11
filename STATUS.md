@@ -2,7 +2,9 @@
 
 ## Summary
 
-bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is the test runner; all custom logic (provider/adapters, tools, scoring, storage, reporting, viewer) is Python. The MVP (Pillar 1: Accuracy + Explainability per `docs/mvp-eval-platform.md`) is complete and exceeded. The project has completed the **response-evaluation architecture pivot** (`docs/plans/pivot-phase-1-integration-analysis.md`, `docs/plans/pivot-phases-overview.md`): the agent layer is **one canonical contract `{generated_sql, trace}`, many adapters** — bi-evals scores the real agent's response and never rebuilds the agent. The framework tagged its first release, **v0.1.0** (2026-06-16), the README leads with the SDK on-ramp, **Build Stage 1 (CI regression gating) is merged (PR #46)** — `compare` and the SDK can now fail a build on regressions or a pass-rate floor — and **Build Stage 2 (capability check) is merged (PR #47)** — the scorer now distinguishes "couldn't know" from "know it failed" for dimensions the submission lacks data for, with pre-flight warnings and a report Capability panel. A follow-on fix (**PR #48**) generalized the CTE-mangling bug Stage 2's live testing surfaced: SQL extraction from prose now validates candidates with sqlglot's real parser instead of shape-specific regexes. **Build Stage 3, Part 1 (`Runner.traced_call()`) is merged (PR #49)** — an SDK helper correlating bi-evals runs into a customer's own OTel trace dashboard.
+bi-evals is a configurable Python framework for evaluating SQL-generating BI agents. Promptfoo is the test runner; all custom logic (provider/adapters, tools, scoring, storage, reporting, viewer) is Python. The MVP (Pillar 1: Accuracy + Explainability per `docs/mvp-eval-platform.md`) is complete and exceeded. The project has completed the **response-evaluation architecture pivot** (`docs/plans/pivot-phase-1-integration-analysis.md`, `docs/plans/pivot-phases-overview.md`): the agent layer is **one canonical contract `{generated_sql, trace}`, many adapters** — bi-evals scores the real agent's response and never rebuilds the agent. The framework tagged its first release, **v0.1.0** (2026-06-16), and Build Stages 1–3 are merged: **CI regression gating** (PR #46), the **capability check** (PR #47) that distinguishes "couldn't know" from "know it failed", sqlglot-validated **SQL extraction** (PR #48), and **`Runner.traced_call()`** (PR #49) for OTel correlation.
+
+**Build Stage 4 (multi-warehouse) is in review** — Part 1 threads the warehouse dialect from config into every scorer call site (removing the hardcoded Snowflake default that silently misparsed Spark SQL), Part 2 adds `DatabricksClient`, and `bi-evals init` gained a required `--warehouse`. Two scoring bugs found while validating it against a live Databricks warehouse were split out and merged ahead of it (**PR #52**).
 
 > **Phase numbering.** The original MVP phases (Phase 1–7.8) are historical and shipped. The response-evaluation architecture work is numbered separately as **Pivot Phase 1, 2, …** to avoid colliding with them.
 
@@ -10,7 +12,7 @@ What works today:
 
 - **`bi_evals.Runner` SDK** (`import bi_evals`) — the primary on-ramp. `runner.golden_cases()` yields questions, `runner.submit(case, generated_sql=..., trace=...)` records answers, `runner.score()` runs the push pipeline and returns an assertable `RunReport` (`pass_rate`, `failures`, truthy iff `failed == 0`). `Runner(verbose=True)` streams progress (loaded/submitted/scored heartbeats) to stderr — no logging setup required.
 - **`bi-evals score --input results.jsonl`** — score a submission the customer's own agent produced (push adapter), no live agent and no API spend. Each row is `{golden_file, generated_sql | response_text, trace?}`; `response_text` (the agent's raw prose answer) is accepted and the SQL extracted from it. Validates the JSONL up front (per-row errors, missing/duplicate-golden detection). The SDK's `score()` is a thin wrapper over the same `runner_core.run_push_score` the CLI uses — one pipeline, two front doors.
-- `bi-evals init push` (the default on-ramp; Snowflake-only `.env`, next steps point at the SDK) / `init api_endpoint` (ships `adapter_example.py`, a FastAPI shim demonstrating the response contract) / `init dev` (dev-only driving adapter) scaffold projects with the adapter-nested config shape; bare `bi-evals init` errors with a hint listing push first.
+- `bi-evals init push` (the default on-ramp; next steps point at the SDK) / `init api_endpoint` (ships `adapter_example.py`, a FastAPI shim demonstrating the response contract) / `init dev` (dev-only driving adapter) scaffold projects with the adapter-nested config shape; bare `bi-evals init` errors with a hint listing push first. All three take **`--warehouse snowflake|databricks`** (default `snowflake`), which selects the `database:` block and credential env vars and prints the driver-install hint for the non-default warehouse.
 - `bi-evals doctor` validates a project's runtime setup before a paid eval run. **api_endpoint**: synthetic POST + JSON Schema validation + scoring-coverage report. **push**: warehouse reachable + Promptfoo on PATH + submission file parses. **dev (anthropic_tool_loop)**: Anthropic API key reachable, system prompt + tool `base_dir`s exist, Snowflake `SELECT 1`, `npx` on PATH.
 - `bi-evals run` runs the full eval end-to-end (live adapters) and auto-ingests into DuckDB; `--filter`, `--dry-run`, `--repeats N`, `--no-cache`, `--yes`, `--verbose`.
 - `bi-evals ingest <path>` backfills existing eval JSON.
@@ -20,9 +22,10 @@ What works today:
 - `bi-evals ui` starts a local FastAPI + Jinja viewer: runs list (project filter, meta refresh, compare shortcuts, triage filters + "regressed since" badge), single-run view, per-test drilldown (generated SQL, reference SQL, per-dimension reasons, files-read, full trace JSON).
 - `bi-evals cost [--last-n N]`, `bi-evals flakiness [--last-n N] [--limit N]`, `bi-evals view` (Promptfoo web UI).
 - **Adapter architecture**: `agent.adapter` selects an adapter from a registry — `push` (replay submitted results), `api_endpoint` (POST to the live agent), `anthropic_tool_loop` (dev-only; runs Claude + skill files locally). All normalise into the canonical `AgentResult` the scorer consumes; the scorer is adapter-agnostic.
-- **10-dimension scorer** with tiered/weighted pass-fail. Row matching is **position-tolerant**: when the agent names output columns differently from the golden's reference, rows match by ordinal position rather than falsely failing (the values are what matter, not the labels).
+- **10-dimension scorer** with tiered/weighted pass-fail. Row matching is **position-tolerant**: when the agent names output columns differently from the golden's reference, rows match by ordinal position rather than falsely failing (the values are what matter, not the labels). `value_accuracy` compares non-numeric values (labels, category buckets) exactly — numeric tolerance applies only to numbers (PR #52).
+- **`DescribeTableTool` is warehouse-agnostic** — reads Snowflake's `NAME`/`TYPE` and Databricks' `COL_NAME`/`DATA_TYPE` DESCRIBE shapes, skipping Databricks' trailing partition-metadata rows (PR #52).
 - Multi-model evaluation (dev adapter), repeat-run variance, `FileReaderTool` + `DescribeTableTool`, `SnowflakeClient`, `GoldenTest` with `last_verified_at` and `anti_patterns`.
-- **497 unit tests passing, 0 warnings.** Strict YAML loading; old flat `agent:` configs rejected at load with a migration hint.
+- **536 unit tests passing**, 0 warnings. Strict YAML loading; old flat `agent:` configs rejected at load with a migration hint.
 
 ---
 
@@ -140,6 +143,25 @@ Implements Part 1 of `docs/plans/build-stage-3-otel.md`. A thin context manager 
 - Part 2 (file-based OTLP batch-ingest adapter) is **not built** — the plan doc gates it behind a real customer who has already committed to emitting a `generated_sql` span attribute (no OTel convention covers this) *and* can't write a `Runner` loop; that evidence doesn't exist yet.
 - **`tests/test_sdk.py`** (4 new tests, `TestTracedCall`): opens exactly one span tagged correctly, yields a live span, re-raises body exceptions without swallowing them (span still closes/exports), and confirms the submission row `submit()` builds is byte-identical with or without `traced_call()` wrapping it.
 
+### Build Stage 4 — Multi-warehouse support (in review)
+
+Implements `docs/plans/build-stage-4-multi-warehouse.md`. A conscious override of the MVP north star, recorded in the plan doc: warehouse breadth doesn't speed up the existing Snowflake user's first run, it makes bi-evals usable *at all* for a Databricks shop.
+
+- **Part 1 — dialect threading** (`83df91e`). The scorer parsed SQL at a hardcoded Snowflake dialect, and the call sites in `dimensions.py` passed no dialect at all, silently riding that default. Against Spark SQL the structural dimensions (`table_alignment`, `column_alignment`, `filter_correctness`, `no_hallucinated_columns`, `anti_pattern_compliance`) would misfire — green where it should be red. `database.type` now maps to a sqlglot dialect (`config.py`), threaded explicitly to every `sql_utils` call site. The per-function `dialect: str = "snowflake"` defaults were **removed** rather than kept, so a missing dialect fails loudly instead of silently misparsing. Warehouse-neutral: it benefits every future warehouse, not just Databricks.
+- **Part 2 — `DatabricksClient`** (`f173a20`). `db/databricks.py` implementing the `DatabaseClient` protocol over `databricks-sql-connector`; one `elif` in `db/factory.py`; Databricks fields on `DatabaseConnection`; results normalised to uppercase column names so row-matching stays warehouse-agnostic; errors captured into `QueryResult.error`, never raised, per the protocol contract. `databricks-sql-connector` is an **optional extra** (`uv add "bi-evals[databricks]"`) so Snowflake-only users don't pull it in.
+- **`doctor` needed no Databricks branch** — its DB check already resolves through `create_db_client` and labels itself from `config.database.type`, so the plan's item 4 was satisfied by existing generalization. Verified live: `Databricks reachability [ok] (SELECT 1 returned 1 row(s))`.
+- **Tests**: dialect mapping + Spark-dialect extraction in `tests/test_scorer.py` (incl. the negative case that the Snowflake dialect *cannot* parse the Spark query), `DatabricksClient` in `tests/test_db.py`. 519 passing on the branch.
+- **Validated end-to-end against a real Databricks SQL warehouse** (`samples.wanderbricks`): `doctor` 5/5 ok, correct reference SQL scores 3/3 with every dimension passing, deliberately-wrong SQL scores 0/3. That validation is what surfaced the two PR #52 bugs below.
+- **`init --warehouse databricks`** scaffolds the Databricks `database:` block and `DATABRICKS_*` env vars across all three adapters, printing the `uv add "bi-evals[databricks]"` hint. Warehouse and adapter are separate axes — one set of mode templates carrying `{database_block}`/`{env_block}` placeholders, filled per warehouse, so a third warehouse is two dict entries rather than three more templates. Snowflake scaffolds are byte-identical to before (verified by diffing all three against the pre-change output). Env comments sit on their own lines: python-dotenv reads a trailing `KEY=  # hint` as the literal value `"# hint"`, which would have silently produced a garbage hostname from an unfilled scaffold. **`tests/test_cli_init.py::TestInitWarehouse`** (10 tests; 7 fail without the feature).
+- **Not done per the plan's checklist**: no Databricks golden in `tmp/my-evals/` — the live Databricks project lives separately in `tmp/evals-databricks/`.
+
+### Warehouse-agnostic scoring bugfixes (PR #52, merged)
+
+Two independent bugs, both surfaced by running against a **live Databricks warehouse** while building an eval project over the Wanderbricks sample dataset — neither was visible from reading the code, and neither had existing test coverage.
+
+- **`describe_table` returned blank columns on Databricks** (`tools/describe_table.py`). The tool read Snowflake's `DESCRIBE TABLE` keys (`NAME`/`TYPE`); Databricks returns `COL_NAME`/`DATA_TYPE`. Every column rendered as `- ()` with name and type empty, so the agent received an effectively blank schema and had nothing to write SQL from — precisely the failure `describe_table` exists to prevent. Now reads both spellings and skips the trailing partition/detail rows Databricks appends (blank or `# ...` col_name). **`tests/test_describe_table.py`** is new — the tool previously had *no* coverage; 3 of its 6 cases fail against the pre-fix implementation.
+- **`value_accuracy` silently passed mismatched string values** (`scorer/dimensions.py`). The comparison only recorded a mismatch when *both* values were numeric; any non-numeric pair (category labels, bucket names, dates-as-strings) fell through every branch and was treated as matching. This defeats the dimension for semantic-layer goldens where the label *is* the thing under test — a query bucketing customers with wrong thresholds returns `'SILVER'` where the golden says `'GOLD'`, every numeric column identical, and scored as a **pass**. Found via a deliberately-wrong negative control the suite failed to catch. Non-numeric values now compare exactly through the existing `_normalize_value` (case/whitespace-insensitive, consistent with row-key comparison); booleans branch first since `bool` subclasses `int`. **Behavior change**: runs whose SQL produced wrong string values previously passed this dimension and will now fail — re-ingest before comparing against pre-fix baselines.
+
 ### Housekeeping
 
 - **v0.1.0 tagged** (2026-06-16) — first versioned baseline; `CHANGELOG.md` added (Keep a Changelog format); `pyproject.toml` version now dynamic via `hatch.version`.
@@ -147,13 +169,13 @@ Implements Part 1 of `docs/plans/build-stage-3-otel.md`. A thin context manager 
 
 **Validated end-to-end:** the push path was run against `mock-bi-agent` (a FastAPI TPCH agent) + real Snowflake `SNOWFLAKE_SAMPLE_DATA.TPCH_SF10`; that run is what surfaced the PR #37 scorer bug. All three real goldens now pass. Build Stage 2's capability check was validated the same way against `tmp/my-evals` (see plan doc + PR #47 for the scenario matrix), and the same CTE golden was re-verified end-to-end against Snowflake after PR #48's generalized extraction fix.
 
-**Total: 497 unit tests passing, 0 warnings.**
+**Total: 536 unit tests passing, 0 warnings.**
 
 ---
 
 ## Remaining — Build Stages
 
-One ordered backlog. Earlier stages are prerequisites for later ones only where noted; otherwise the order reflects priority against the MVP north star, not a hard dependency chain.
+One ordered backlog, renumbered on `main` in `d14c579`. Earlier stages are prerequisites for later ones only where noted; otherwise the order reflects priority against the MVP north star, not a hard dependency chain.
 
 ### Build Stage 1: CI regression gating — ✅ implemented (PR #46, merged)
 
@@ -163,33 +185,40 @@ One ordered backlog. Earlier stages are prerequisites for later ones only where 
 
 - Done; see the "Build Stage 2" entry under **Completed**. Unblocks Build Stage 3.
 
+### Build Stage 3, Part 1: `Runner.traced_call()` — ✅ implemented (PR #49, merged)
+
+- Done; see the "Build Stage 3, Part 1" entry under **Completed**.
+
 ### Build Stage 3, Part 2: File-based OTLP batch-ingest adapter (`agent.adapter: otel`)
 
-- `docs/plans/build-stage-3-otel.md` — Part 1 (`Runner.traced_call()`) is merged (PR #49); see the "Build Stage 3, Part 1" entry under **Completed**. Part 2 is a new adapter (`OtelReplayAdapter`, mirroring `PushReplayAdapter`) for the narrower case of an agent that ran independently of any bi-evals-authored loop and already emits a `bi_evals.generated_sql`-shaped span attribute — no OTel convention covers "the final SQL," so this is genuine new instrumentation on the customer's side, not a free read of existing spans.
+- `docs/plans/build-stage-3-otel.md`. A new adapter (`OtelReplayAdapter`, mirroring `PushReplayAdapter`) for the narrower case of an agent that ran independently of any bi-evals-authored loop and already emits a `bi_evals.generated_sql`-shaped span attribute — no OTel convention covers "the final SQL," so this is genuine new instrumentation on the customer's side, not a free read of existing spans.
 - Explicitly gated behind real demand in the plan doc: ship only once a customer shows up who (a) already emits the SQL attribute, (b) runs a batch pass producing OTLP exports, and (c) can't or won't write a `Runner` loop. If they'd write a `Runner` loop, Part 1 + `submit()` already covers them with far less new code.
-- Not started. Build Stage 2 (its dependency) is merged; Part 1 is merged (PR #49). Waiting on demand signal, not blocked on anything technical.
+- Not started. Waiting on demand signal, not blocked on anything technical.
 
-### Build Stage 4: Multi-warehouse support (near-term priority — conscious north-star override)
+### Build Stage 4: Multi-warehouse support — ✅ implemented (in review)
 
-- `docs/plans/build-stage-4-multi-warehouse.md` (new, unreleased) — unblocks the Databricks/Genie audience, who **cannot run bi-evals at all** today (`db/factory.py` raises on any non-Snowflake `database.type`, and all three critical dimensions run through the DB client). Two coupled parts: **Part 1** threads a `dialect` from `database.type` into the scorer — today `sql_utils.py`/`extract_sql` hardcode `dialect="snowflake"` and the `dimensions.py` call sites pass no dialect at all, so Spark-dialect SQL silently mis-parses and the structural dimensions go quietly wrong (green where it should be red). Part 1 is warehouse-neutral and unblocks *every* future warehouse. **Part 2** is the `DatabricksClient` + one factory `elif` (small once Part 1 lands; end-to-end smoke test gated on a real Databricks workspace).
-- Sequenced as a near-term priority per an explicit owner decision to bet on platform **breadth** over Snowflake first-run ergonomics — recorded as a deliberate override of the `CLAUDE.md` MVP north star, not a default. Replaces the old "additional warehouses" bullet in the Deferred stage (which hid the Part 1 prerequisite). Design only — no code yet.
+- `docs/plans/build-stage-4-multi-warehouse.md`. Both parts are implemented and validated live against a real Databricks warehouse; see the "Build Stage 4" entry under **Completed** for detail.
+- `bi-evals init` scaffolds Databricks via a **required** `--warehouse` (no default) — see the Completed entry.
+- Left undone within the stage: no Databricks golden lives in `tmp/my-evals/` per CLAUDE.md's live-project rule — the Databricks project is separate, at `tmp/evals-databricks/`.
+- Beyond Databricks, the plan's other warehouses (BigQuery, Postgres, Redshift) are untouched; Part 1's dialect threading is the shared prerequisite and is done.
 
 ### Build Stage 5: Onboarding polish
 
 - ~~`init push` scaffold~~ — already shipped (Pivot Phase 3.5); `init push` is the listed default on-ramp today.
-- Promote `demo-bi-evals-snowflake` (now a proven, working end-to-end demo — including the CI gate) into a committed `examples/` reference project.
+- Promote `demo-bi-evals-snowflake` (a proven, working end-to-end demo — including the CI gate) into a committed `examples/` reference project.
 - CI recipes doc + committed GitHub Actions workflow example (baseline-via-cache pattern; surfaced by user questions after Build Stage 1 shipped).
 - Not started.
 
 ### Build Stage 6: Semantic-layer scoring
 
-- `docs/plans/build-stage-6-semantic-layer-scoring.md` (new, unreleased) — closes the "right for the right reason" gap: today's dimensions can pass on a coincidentally-correct result even when the wrong metric/dimension/grain was selected. Proposes a canonical `SemanticQuery` envelope + per-vendor `SemanticLayerParser` (dbt Semantic Layer / Snowflake Semantic Views / Cube), new opt-in golden field `expected_semantic`, and four new dimensions (`metric_selection`, `dimension_selection`, `semantic_grain_correctness`, `semantic_filter_correctness`) plus `metric_definition_integrity` for semantic-drift detection. Sequencing starts with Snowflake (semantic selection parseable straight out of `generated_sql`, zero new agent instrumentation).
-- Design only — no code yet. Builds on Build Stage 2's open envelope. Explicitly out of MVP scope per `CLAUDE.md` — one of the lower-priority stages.
+- `docs/plans/build-stage-6-semantic-layer-scoring.md` — closes the "right for the right reason" gap: today's dimensions can pass on a coincidentally-correct result even when the wrong metric/dimension/grain was selected. Proposes a canonical `SemanticQuery` envelope + per-vendor `SemanticLayerParser` (dbt Semantic Layer / Snowflake Semantic Views / Cube), new opt-in golden field `expected_semantic`, and four new dimensions (`metric_selection`, `dimension_selection`, `semantic_grain_correctness`, `semantic_filter_correctness`) plus `metric_definition_integrity` for semantic-drift detection. Sequencing starts with Snowflake (semantic selection parseable straight out of `generated_sql`, zero new agent instrumentation). Notes Apache Ossie (OSI) as a model-only, standards-aligned source for `metric_definition_integrity`.
+- Design only — no code yet. Builds on Build Stage 2's open envelope. Explicitly out of MVP scope per `CLAUDE.md`.
+- Partially anticipated by PR #52's `value_accuracy` fix: label columns (the output of a semantic bucket) are now compared exactly, so a wrong-threshold answer fails on values even before these dimensions exist.
 
-### Build Stage 7: Assisted golden authoring (sequenced after Stage 6)
+### Build Stage 7: Assisted golden authoring
 
-- `docs/plans/build-stage-7-assisted-golden-authoring.md` (new, unreleased) — attacks the golden **cold-start cost**: authoring the first domain's worth of `reference_sql` from scratch is the real adoption friction, *not* the (correct, non-negotiable) requirement to have golden SQL at all. Proposes a two-tier drafter that converts authoring from writing to reviewing: **Tier 1** schema-only (no dependency, ships first, weaker drafts) and **Tier 2** semantic-model-grounded (reuses the Stage 6 `SemanticLayerParser.load_definitions()` loader, so drafts compile from the customer's governed metric/dimension definitions — high-trust review). Directly serves the `CLAUDE.md` north star (*"author your first golden test with light assistance — quickly"*). Explicitly rejects accepting an opaque expected-result-set in place of SQL. Sibling to Stage 9's `production-traffic golden import` (they converge on the same reviewed-golden output — decide at scheduling whether to ship them together).
-- Design only — no code yet. Tier 2 depends on Build Stage 6's semantic-model loader; Tier 1 depends on nothing unbuilt. Chosen sequencing: one stage after Stage 6, both tiers landing there (per roadmap decision).
+- `docs/plans/build-stage-7-assisted-golden-authoring.md` — a two-tier drafter to cut the golden cold-start cost. Its grounded tier depends on Stage 6's semantic loader.
+- Design only — no code yet. Directly serves the MVP north star ("authors their first golden tests with light assistance — quickly"), which is worth weighing against its position after Stages 5–6.
 
 ### Build Stage 8: Small fixes and cleanups
 
@@ -197,20 +226,18 @@ One ordered backlog. Earlier stages are prerequisites for later ones only where 
 - `generated_sql` (trace JSON key) vs `extracted_sql` (Python field) naming inconsistency (touches the scorer/ingest contract).
 - Migrate `api_endpoint.py`'s manual `_get_nested` parsing to schema-based validation.
 - `push-limitations.md` §D slightly overstates cost handling ("unless your submission carries them" — the push adapter zeroes cost/tokens regardless; one-word fix).
+- `DescribeTableTool`'s `input_schema` description still names `DATABASE.SCHEMA.TABLE` first; harmless, but Databricks users see Snowflake-shaped guidance.
 
 ### Build Stage 9: Deferred / unscheduled
 
-No committed order yet within this stage; pull items forward into Stages 1–8 as they become priorities:
+No committed order yet within this stage; pull items forward as they become priorities:
 
 - DuckDB as a built-in `database.type` (zero-cred demo target)
 - `bi-evals init --from <dir>`
 - Snowflake SSO
-- additional warehouses (Postgres/BigQuery/Redshift) — Databricks promoted to its own near-term stage (Stage 4, "Multi-warehouse support"); once its Part 1 dialect-threading lands, these become pure client-plus-`elif` adds. See `docs/plans/build-stage-4-multi-warehouse.md`.
+- remaining warehouses (Postgres/BigQuery/Redshift) — now unblocked by Stage 4 Part 1
 - `mcp-server` adapter
 - SPA viewer rebuild
-- production-traffic golden import (sibling to "Assisted golden authoring" at Stage 7 — same reviewed-golden output; consider shipping together, see `docs/plans/build-stage-7-assisted-golden-authoring.md`)
-- OpenAI tool-loop adapter
-- in-process Python wrap adapter (for importable agents, à la Promptfoo's ADK pattern)
 
 ### Build Stage 10: Pillars 2 & 3 (post-MVP — see `docs/mvp-eval-platform.md`)
 
@@ -241,7 +268,7 @@ Pillar 1 (Accuracy + Explainability) is fully shipped; the next two pillars are 
 | **Clean schema break over back-compat shim** | Old flat `agent:` configs fail loudly with a migration hint rather than silently mis-parsing |
 | **`agent.adapter` is a `Literal`** | A typo'd adapter fails at config-load with a clear pydantic error, not later at dispatch |
 | **Back-compat property accessors on `AgentConfig`** | `.type`/`.model`/`.endpoint`/`.tools` delegate into nested blocks so reader modules stay adapter-agnostic through the schema break |
-| **Semantic-layer scoring is a canonical-query problem** | dbt Semantic Layer / Snowflake Semantic Views / Cube share one vocabulary (metrics/dimensions/grain/filters) and differ only in query surface dialect — same "normalize once, score once" move as the adapter contract pivot. Proposal only; see `docs/plans/build-stage-6-semantic-layer-scoring.md` |
+| **Semantic-layer scoring is a canonical-query problem** | dbt Semantic Layer / Snowflake Semantic Views / Cube share one vocabulary (metrics/dimensions/grain/filters) and differ only in query surface dialect — same "normalize once, score once" move as the adapter contract pivot. Proposal only; see `docs/plans/build-stage-5-semantic-layer-scoring.md` |
 | Framework, not hardcoded project | Users bring their own skill files, golden tests, DB credentials |
 | Python over original JS design | MVP doc described JS; Python chosen for consistency with data tooling |
 | File-based trace communication | Adapter writes JSON, scorer reads it — handles Promptfoo process isolation |
@@ -255,3 +282,5 @@ Pillar 1 (Accuracy + Explainability) is fully shipped; the next two pillars are 
 | Anti-patterns non-critical by default | A violation that still produced correct rows is a warning, not a hard fail |
 | Viewer is intentionally throwaway | Jinja + FastAPI now; the data layer (`store/queries.py`, `report/builder.py`) is the durable asset |
 | Verify quotes before citing | WebFetch/WebSearch summaries are interpretation; pull verbatim source text before quoting in a durable doc (corrected twice in the Promptfoo research) |
+| Tolerance is numeric-only | `value_tolerance` is meaningless for labels and categories — non-numeric values match exactly or not at all. The alternative (letting them fall through) made `value_accuracy` unable to fail on the one column a semantic-layer golden most cares about (PR #52) |
+| Dialect defaults fail loudly, not silently | Build Stage 4 removed the per-function `dialect: str = "snowflake"` defaults in `sql_utils`. A hardcoded default meant a Databricks agent's Spark SQL was parsed against Snowflake grammar and the structural dimensions misfired *green* — the worst failure mode. The default now survives only at the config boundary |
