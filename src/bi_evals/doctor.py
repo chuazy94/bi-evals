@@ -101,11 +101,6 @@ def check_warehouse_select_one(config: BiEvalsConfig) -> CheckResult:
         return CheckResult(label, "fail", f"{type(e).__name__}: {e}")
 
 
-# Back-compat alias: existing callers/tests reference this name. The check is
-# warehouse-neutral now.
-check_snowflake_select_one = check_warehouse_select_one
-
-
 def check_promptfoo_available() -> CheckResult:
     if shutil.which("npx") is None:
         return CheckResult(
@@ -200,7 +195,7 @@ def check_builtin_setup(config: BiEvalsConfig) -> list[CheckResult]:
     results.append(check_anthropic_api_key())
     results.append(check_system_prompt(config))
     results.extend(check_tool_base_dirs(config))
-    results.append(check_snowflake_select_one(config))
+    results.append(check_warehouse_select_one(config))
     results.append(check_promptfoo_available())
     return results
 
@@ -219,7 +214,7 @@ def check_push_setup(config: BiEvalsConfig) -> list[CheckResult]:
             "ok",
             "No live agent to validate — submit results with `bi-evals score --input`.",
         ),
-        check_snowflake_select_one(config),
+        check_warehouse_select_one(config),
         check_promptfoo_available(),
     ]
 
@@ -532,7 +527,7 @@ def check_byo_endpoint(config: BiEvalsConfig) -> list[CheckResult]:
         )
 
     # 5. Snowflake (still needed — scorer runs both queries)
-    results.append(check_snowflake_select_one(config))
+    results.append(check_warehouse_select_one(config))
 
     # 6. Promptfoo
     results.append(check_promptfoo_available())
