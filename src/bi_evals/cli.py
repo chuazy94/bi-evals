@@ -140,13 +140,18 @@ def _render(template: str, warehouse: str) -> str:
 
 
 def _warehouse_option(f):
-    """Shared --warehouse option for every init subcommand."""
+    """Shared --warehouse option for every init subcommand.
+
+    Required, with no default — mirroring the bare-``init`` behaviour above.
+    Silently defaulting to Snowflake hands a Databricks user a plausible-looking
+    project that only fails later, at connection time, with nothing pointing
+    back at the scaffold as the cause.
+    """
     return click.option(
         "--warehouse",
         "-w",
         type=click.Choice(WAREHOUSE_CHOICES),
-        default="snowflake",
-        show_default=True,
+        required=True,
         help="Warehouse to scaffold the database config and credentials for.",
     )(f)
 
@@ -948,7 +953,7 @@ def _echo_cost_alert(alert: store_queries.CostAlert) -> None:
             )
 
 
-def _scaffold_project(target: Path, *, mode: str, warehouse: str = "snowflake") -> None:
+def _scaffold_project(target: Path, *, mode: str, warehouse: str) -> None:
     """Create eval infrastructure files. Mode-aware: 'dev' or 'api_endpoint'.
 
     The 'dev' mode (dev-only driving adapter) writes a Claude-harness config
