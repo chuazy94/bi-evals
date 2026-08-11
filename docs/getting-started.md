@@ -113,13 +113,16 @@ SNOWFLAKE_SCHEMA=...
 
 ### Databricks
 
-To score against a Databricks SQL warehouse instead, install the extra and use the
-`databricks` database type. (`bi-evals init` scaffolds Snowflake today — for Databricks,
-write the `database:` block by hand as below.)
+To score against a Databricks SQL warehouse instead, pass `--warehouse databricks` to
+any `init` scaffold and install the extra:
 
 ```bash
-uv add "bi-evals[databricks]"     # pulls in databricks-sql-connector
+bi-evals init push --warehouse databricks    # or api_endpoint / dev
+uv add "bi-evals[databricks]"                # pulls in databricks-sql-connector
 ```
+
+That scaffolds the `database:` block and `DATABRICKS_*` env vars below for you; fill in
+`.env` and run `bi-evals doctor` to confirm the warehouse is reachable.
 
 ```yaml
 database:

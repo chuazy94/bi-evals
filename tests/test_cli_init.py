@@ -125,3 +125,86 @@ class TestInitIdempotent:
         # Re-run init — existing file should be left alone
         runner.invoke(cli, ["init", scaffold, "--dir", str(tmp_path)])
         assert config_path.read_text().startswith(marker)
+
+
+class TestInitWarehouse:
+    """`--warehouse` selects the database block and credential env vars.
+
+    The warehouse is orthogonal to the adapter, so every scaffold supports it.
+    """
+
+    ALL_SCAFFOLDS = ["push", "api_endpoint", "dev"]
+
+    @pytest.mark.parametrize("scaffold", ALL_SCAFFOLDS)
+    def test_databricks_config_loads(self, tmp_path: Path, scaffold: str) -> None:
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["init", scaffold, "--dir", str(tmp_path), "--warehouse", "databricks"]
+        )
+        assert result.exit_code == 0, result.output
+        config = BiEvalsConfig.load(tmp_path / "bi-evals.yaml")
+        assert config.database.type == "databricks"
+
+    @pytest.mark.parametrize("scaffold", ALL_SCAFFOLDS)
+    def test_defaults_to_snowflake(self, tmp_path: Path, scaffold: str) -> None:
+        runner = CliRunner()
+        result = runner.invoke(cli, ["init", scaffold, "--dir", str(tmp_path)])
+        assert result.exit_code == 0, result.output
+        config = BiEvalsConfig.load(tmp_path / "bi-evals.yaml")
+        assert config.database.type == "snowflake"
+        assert "DATABRICKS" not in (tmp_path / ".env").read_text()
+
+    def test_databricks_env_has_databricks_keys(self, tmp_path: Path) -> None:
+        runner = CliRunner()
+        runner.invoke(
+            cli, ["init", "push", "--dir", str(tmp_path), "--warehouse", "databricks"]
+        )
+        for path in (".env", ".env.example"):
+            env_text = (tmp_path / path).read_text()
+            assert "DATABRICKS_SERVER_HOSTNAME" in env_text
+            assert "DATABRICKS_HTTP_PATH" in env_text
+            assert "DATABRICKS_TOKEN" in env_text
+            assert "SNOWFLAKE_ACCOUNT" not in env_text
+
+    @pytest.mark.parametrize("env_name", [".env", ".env.example"])
+    def test_databricks_env_values_are_empty_not_comments(
+        self, tmp_path: Path, env_name: str
+    ) -> None:
+        """Regression: a trailing "KEY=  # hint" makes the hint the *value*.
+
+        python-dotenv does not strip inline comments, so an unfilled scaffold
+        would resolve server_hostname to "# dbc-xxxx..." rather than "".
+
+        Asserts on the generated file rather than a loaded config: the repo-root
+        .env leaks into os.environ at import time (test_demo_routing.py reads it
+        eagerly), so a config-level assertion here is not hermetic.
+        """
+        runner = CliRunner()
+        runner.invoke(
+            cli, ["init", "push", "--dir", str(tmp_path), "--warehouse", "databricks"]
+        )
+        for line in (tmp_path / env_name).read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            key, _, value = stripped.partition("=")
+            assert "#" not in value, (
+                f"{key} in {env_name} has an inline comment; python-dotenv would "
+                f"read it as the literal value {value.strip()!r}"
+            )
+
+    def test_databricks_prints_driver_hint(self, tmp_path: Path) -> None:
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["init", "push", "--dir", str(tmp_path), "--warehouse", "databricks"]
+        )
+        assert 'uv add "bi-evals[databricks]"' in result.output
+        assert "Databricks connection" in result.output
+
+    def test_rejects_unknown_warehouse(self, tmp_path: Path) -> None:
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["init", "push", "--dir", str(tmp_path), "--warehouse", "oracle"]
+        )
+        assert result.exit_code != 0
+        assert "oracle" in result.output
